@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset Password — HF Data Library</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+  </div>
+</nav>
+
+<section class="section">
+  <div class="container" style="max-width:400px;">
+    <h2 style="text-align:center; margin-bottom:1.5rem;">Reset password</h2>
+
+    <div id="reset-form" class="register-form" style="max-width:100%;">
+      <div class="form-group">
+        <label for="new-password">New password</label>
+        <input type="password" id="new-password" placeholder="Minimum 8 characters">
+      </div>
+      <div class="form-group">
+        <label for="confirm-password">Confirm password</label>
+        <input type="password" id="confirm-password" placeholder="Repeat password">
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="resetPassword()">Set New Password</button>
+      <div id="reset-result" style="margin-top:1rem; display:none;"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+if (!token) {
+  document.getElementById('reset-form').innerHTML = '<p style="color:var(--red);">Invalid link. No reset token found.</p>';
+}
+
+async function resetPassword() {
+  const password = document.getElementById('new-password').value;
+  const confirm = document.getElementById('confirm-password').value;
+  const result = document.getElementById('reset-result');
+
+  if (password.length < 8) { result.style.display='block'; result.innerHTML='<p style="color:var(--red);">Minimum 8 characters.</p>'; return; }
+  if (password !== confirm) { result.style.display='block'; result.innerHTML='<p style="color:var(--red);">Passwords do not match.</p>'; return; }
+
+  try {
+    const r = await fetch('https://api.hfdatalibrary.com/v1/auth/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password })
+    });
+    const data = await r.json();
+    result.style.display = 'block';
+
+    if (r.ok) {
+      document.getElementById('reset-form').innerHTML =
+        '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.5rem; text-align:center;">' +
+          '<strong style="color:#065f46;">Password reset!</strong>' +
+          '<p style="color:#047857; margin-top:0.5rem;">You can now <a href="download.html#register">log in</a> with your new password.</p>' +
+        '</div>';
+    } else {
+      result.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Reset failed.') + '</p>';
+    }
+  } catch (e) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red);">Connection error.</p>';
+  }
+}
+</script>
+
+</body>
+</html>

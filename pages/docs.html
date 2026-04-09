@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — HF Data Library</title>
+  <meta name="description" content="Full methodology documentation for the HF Data Library. Nine-step cleaning pipeline, data sources, adjustment methods, and quality metrics.">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html" class="active">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Documentation</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Everything you need to know about the data: sources, cleaning, variables, and quality.</p>
+  </div>
+</section>
+
+<!-- Doc navigation cards -->
+<section class="section">
+  <div class="container">
+    <div class="grid-3">
+      <a href="versions.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">&#128202;</div>
+        <h3>Data Versions</h3>
+        <p>Raw, Clean, and Filled — what each version contains and who should use it.</p>
+      </a>
+      <a href="dictionary.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">&#128214;</div>
+        <h3>Data Dictionary</h3>
+        <p>Every column, data type, and description. All 27 computed academic variables.</p>
+      </a>
+      <a href="api.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">{&thinsp;}</div>
+        <h3>API Reference</h3>
+        <p>REST endpoints, authentication, rate limits, response formats, and examples.</p>
+      </a>
+      <a href="code.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">&#128187;</div>
+        <h3>Sample Code</h3>
+        <p>Python, R, and Stata examples. Jupyter notebooks for common research tasks.</p>
+      </a>
+      <a href="changelog.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">&#128221;</div>
+        <h3>Changelog</h3>
+        <p>Every data update, versioned and documented. What changed and when.</p>
+      </a>
+      <a href="issues.html" class="card" style="text-decoration:none; color:inherit;">
+        <div class="card-icon">&#9888;</div>
+        <h3>Known Issues</h3>
+        <p>Living errata log. Every discovered issue documented with date and resolution.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Methodology -->
+<section class="section section-alt">
+  <div class="container" style="max-width:900px;">
+    <h2>Methodology</h2>
+
+    <h3>Data sources</h3>
+    <p><strong>Primary source (pre-March 2022):</strong> PiTrading, which provides historical consolidated-tape data derived from the CTA (NYSE-listed) and UTP (Nasdaq-listed) feeds. These are the same feeds that underlie CRSP and TAQ. The data arrives as one-minute OHLCV bars, adjusted for stock splits and dividends.</p>
+    <p><strong>Secondary source (post-March 2022):</strong> IEX Exchange HIST, which provides full-depth pcap files from the IEX exchange. I parse these into one-minute OHLCV bars using the same aggregation logic. IEX represents approximately 2–3% of consolidated volume, so these bars capture IEX-only activity, not the full tape.</p>
+    <p>The splice boundary (March 2022) is documented, and both sources are flagged in the <code>source</code> column of every file.</p>
+
+    <h3 style="margin-top:2.5rem;">Nine-step cleaning pipeline</h3>
+    <p>Version 2 (Clean) applies the following pipeline. Each step is applied in order. A bar that fails any step is removed.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Step</th>
+            <th>Rule</th>
+            <th>Rationale</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">1</td>
+            <td>Remove bars outside 09:30–16:00 ET</td>
+            <td>Pre/post-market bars have different microstructure properties</td>
+          </tr>
+          <tr>
+            <td class="mono">2</td>
+            <td>Remove bars with non-positive prices (Open, High, Low, or Close &le; 0)</td>
+            <td>Clearly erroneous</td>
+          </tr>
+          <tr>
+            <td class="mono">3</td>
+            <td>Remove bars where High &lt; Low</td>
+            <td>OHLC violation — impossible in valid trade data</td>
+          </tr>
+          <tr>
+            <td class="mono">4</td>
+            <td>Remove bars where Open or Close falls outside [Low, High]</td>
+            <td>OHLC violation — Open and Close must be within the bar's range</td>
+          </tr>
+          <tr>
+            <td class="mono">5</td>
+            <td>Remove duplicate timestamps (keep first occurrence)</td>
+            <td>Source data occasionally contains exact duplicates</td>
+          </tr>
+          <tr>
+            <td class="mono">6</td>
+            <td>Remove bars with zero volume</td>
+            <td>No trade occurred — price is stale or indicative</td>
+          </tr>
+          <tr>
+            <td class="mono">7</td>
+            <td>Remove bars where |log return| &gt; 25% (relative to previous close)</td>
+            <td>Extreme outlier filter — returns exceeding 25% in one minute are almost certainly errors</td>
+          </tr>
+          <tr>
+            <td class="mono">8</td>
+            <td>Brownlees-Gallo filter: remove bars where |close &minus; median| &gt; 3 &times; MAD, computed over a 50-bar centered window</td>
+            <td>Adaptive outlier detection that accounts for local price level</td>
+          </tr>
+          <tr>
+            <td class="mono">9</td>
+            <td>Splice-boundary adjustment: verify continuity at the PiTrading/IEX transition (March 2022)</td>
+            <td>Ensures no artificial price jump at the source-change boundary</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Bars removed:</strong> 388,559 (0.025% of total). The cleaning is conservative by design.</p>
+
+    <h3 style="margin-top:2.5rem;">Gap-filling (Version 3: Filled)</h3>
+    <p>The regular trading day has 390 one-minute bars (09:30–15:59 ET). When a bar is missing in the Clean version, Version 3 fills it using Last Observation Carried Forward (LOCF): the previous bar's Close price is propagated to Open, High, Low, and Close, and Volume is set to zero. Every filled bar is flagged with <code>is_filled = True</code>.</p>
+    <p>LOCF introduces known biases (stale prices suppress volatility, compress spreads, and dampen autocorrelation). These biases are documented and quantified in the accompanying paper. Researchers who need a regular grid should use Version 3 with awareness of these effects.</p>
+
+    <h3 style="margin-top:2.5rem;">Coverage</h3>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>1,391 tickers</strong> — U.S. equities and ETFs</li>
+      <li><strong>Majority begin December 30, 2002</strong> — 45 tickers have history back to January 1991</li>
+      <li><strong>Updated weekly</strong> — new bars added every Sunday via automated pipeline</li>
+      <li><strong>Trading hours only</strong> — 09:30–16:00 Eastern Time</li>
+      <li><strong>Split/dividend adjusted</strong> — all prices adjusted for corporate actions</li>
+    </ul>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

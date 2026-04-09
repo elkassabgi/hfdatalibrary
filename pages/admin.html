@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel — HF Data Library</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .admin-stat { text-align:center; padding:1.5rem; }
+    .admin-stat .num { font-family: var(--font-mono); font-size:2rem; font-weight:700; color:var(--navy); }
+    .admin-stat .label { font-size:0.8rem; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.05em; }
+    .user-row { display:grid; grid-template-columns: 2fr 2fr 1.5fr 1fr 1fr 1fr 0.75fr; gap:0.5rem; align-items:center; padding:0.75rem 1rem; border-bottom:1px solid var(--gray-200); font-size:0.85rem; }
+    .user-row:hover { background:var(--gray-50); }
+    .user-header { font-weight:600; color:var(--gray-600); background:var(--gray-50); border-radius:var(--radius) var(--radius) 0 0; }
+    .badge { display:inline-block; padding:0.15em 0.5em; border-radius:4px; font-size:0.75rem; font-weight:600; }
+    .badge-active { background:#ecfdf5; color:#059669; }
+    .badge-inactive { background:#fef2f2; color:#dc2626; }
+    .badge-admin { background:#eff6ff; color:#2563eb; }
+    .btn-sm { padding:0.3rem 0.6rem; font-size:0.8rem; }
+    .btn-danger { background:#dc2626; color:#fff; }
+    .btn-danger:hover { background:#b91c1c; color:#fff; }
+    .btn-success { background:#059669; color:#fff; }
+    .btn-success:hover { background:#047857; color:#fff; }
+    .detail-modal { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center; }
+    .detail-modal.open { display:flex; }
+    .detail-content { background:#fff; border-radius:var(--radius-lg); padding:2rem; max-width:800px; width:90%; max-height:80vh; overflow-y:auto; }
+    .login-box { max-width:400px; margin:4rem auto; }
+    #admin-content { display:none; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <ul class="nav-links">
+      <li><a href="admin.html" class="active" style="color:var(--gold);">Admin Panel</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- Login form -->
+<div id="admin-login" class="section">
+  <div class="container login-box">
+    <h2 style="text-align:center; margin-bottom:1.5rem;">Admin Login</h2>
+    <div class="register-form" style="max-width:100%;">
+      <div class="form-group">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" placeholder="Enter admin email" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" placeholder="Password" autocomplete="off">
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="adminLogin()">Log In</button>
+      <p id="login-error" style="color:var(--red); margin-top:0.75rem; display:none;"></p>
+    </div>
+  </div>
+</div>
+
+<!-- Admin content -->
+<div id="admin-content">
+
+  <!-- Stats -->
+  <section class="section" style="padding:2rem 0;">
+    <div class="container">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+        <h2 style="margin:0;">Dashboard</h2>
+        <div>
+          <span id="admin-name" style="color:var(--gray-500); margin-right:1rem;"></span>
+          <button class="btn btn-sm btn-outline" style="color:var(--gray-600); border-color:var(--gray-300);" onclick="adminLogout()">Logout</button>
+        </div>
+      </div>
+      <div class="grid-4" id="stats-grid">
+        <div class="card admin-stat"><div class="num" id="stat-users">-</div><div class="label">Total Users</div></div>
+        <div class="card admin-stat"><div class="num" id="stat-downloads">-</div><div class="label">Total Downloads</div></div>
+        <div class="card admin-stat"><div class="num" id="stat-today-logins">-</div><div class="label">Logins (24h)</div></div>
+        <div class="card admin-stat"><div class="num" id="stat-bytes">-</div><div class="label">Data Served</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recent registrations -->
+  <section style="padding:1rem 0;">
+    <div class="container">
+      <h3 style="margin-bottom:1rem;">Recent Registrations</h3>
+      <div id="recent-users"></div>
+    </div>
+  </section>
+
+  <!-- All users -->
+  <section class="section" style="padding:2rem 0;">
+    <div class="container">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3>All Users</h3>
+        <button class="btn btn-sm btn-primary" onclick="loadUsers()">Refresh</button>
+      </div>
+      <div style="border:1px solid var(--gray-200); border-radius:var(--radius-lg); overflow:hidden;">
+        <div class="user-row user-header">
+          <div>Name</div><div>Email</div><div>Institution</div><div>Country</div><div>Role</div><div>Downloads</div><div>Status</div>
+        </div>
+        <div id="users-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download log -->
+  <section style="padding:1rem 0 3rem;">
+    <div class="container">
+      <h3 style="margin-bottom:1rem;">Recent Downloads</h3>
+      <div class="table-wrap">
+        <table id="download-table">
+          <thead><tr><th>Time</th><th>User</th><th>Email</th><th>Ticker</th><th>Version</th><th>Size</th><th>IP</th></tr></thead>
+          <tbody id="download-log"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- User detail modal -->
+<div class="detail-modal" id="user-modal">
+  <div class="detail-content" id="modal-content"></div>
+</div>
+
+<script>
+const API = 'https://api.hfdatalibrary.com';
+let sessionToken = localStorage.getItem('hfd_admin_session');
+
+// ── Login ──
+async function adminLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const err = document.getElementById('login-error');
+
+  try {
+    const r = await fetch(API + '/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await r.json();
+    if (data.session) {
+      sessionToken = data.session;
+      localStorage.setItem('hfd_admin_session', sessionToken);
+      showAdmin(data.user.name);
+    } else {
+      err.style.display = 'block';
+      err.textContent = data.error || 'Login failed';
+    }
+  } catch (e) {
+    err.style.display = 'block';
+    err.textContent = 'Connection error';
+  }
+}
+
+function adminLogout() {
+  fetch(API + '/v1/auth/logout', { method: 'POST', headers: authHeaders() });
+  localStorage.removeItem('hfd_admin_session');
+  sessionToken = null;
+  document.getElementById('admin-login').style.display = 'block';
+  document.getElementById('admin-content').style.display = 'none';
+}
+
+function authHeaders() {
+  return { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' };
+}
+
+// ── Show admin panel ──
+async function showAdmin(name) {
+  document.getElementById('admin-login').style.display = 'none';
+  document.getElementById('admin-content').style.display = 'block';
+  document.getElementById('admin-name').textContent = name || '';
+  loadStats();
+  loadUsers();
+  loadDownloads();
+}
+
+// ── Load stats ──
+async function loadStats() {
+  try {
+    const r = await fetch(API + '/v1/admin/stats', { headers: authHeaders() });
+    if (r.status === 403) { adminLogout(); return; }
+    const d = await r.json();
+    document.getElementById('stat-users').textContent = d.total_users;
+    document.getElementById('stat-downloads').textContent = d.total_downloads;
+    document.getElementById('stat-today-logins').textContent = d.today_logins;
+    const gb = (d.total_bytes_served / 1e9).toFixed(2);
+    document.getElementById('stat-bytes').textContent = gb + ' GB';
+
+    // Recent registrations
+    const html = d.recent_registrations.map(u =>
+      '<div style="display:flex; gap:1rem; padding:0.5rem 0; border-bottom:1px solid var(--gray-100); font-size:0.85rem;">' +
+        '<strong>' + u.name + '</strong>' +
+        '<span style="color:var(--gray-500);">' + u.email + '</span>' +
+        '<span>' + u.institution + '</span>' +
+        '<span style="color:var(--gray-400);">' + u.country + '</span>' +
+        '<span style="color:var(--gray-400);">' + u.created_at + '</span>' +
+      '</div>'
+    ).join('');
+    document.getElementById('recent-users').innerHTML = html || '<p style="color:var(--gray-400);">No users yet.</p>';
+  } catch (e) {
+    console.error('Stats error:', e);
+  }
+}
+
+// ── Load users ──
+async function loadUsers() {
+  try {
+    const r = await fetch(API + '/v1/admin/users?limit=200', { headers: authHeaders() });
+    if (r.status === 403) { adminLogout(); return; }
+    const d = await r.json();
+
+    const html = d.users.map(u =>
+      '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;">' +
+        '<div><strong>' + esc(u.name) + '</strong></div>' +
+        '<div style="font-size:0.8rem;">' + esc(u.email) + '</div>' +
+        '<div>' + esc(u.institution) + '</div>' +
+        '<div>' + esc(u.country) + '</div>' +
+        '<div>' + esc(u.role) + '</div>' +
+        '<div class="mono">' + u.download_count + '</div>' +
+        '<div>' +
+          (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
+          (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') +
+        '</div>' +
+      '</div>'
+    ).join('');
+
+    document.getElementById('users-list').innerHTML = html || '<div style="padding:1rem; color:var(--gray-400);">No users.</div>';
+  } catch (e) {
+    console.error('Users error:', e);
+  }
+}
+
+// ── Show user detail ──
+async function showUser(id) {
+  try {
+    const r = await fetch(API + '/v1/admin/users/' + id, { headers: authHeaders() });
+    const d = await r.json();
+    const u = d.user;
+
+    const logins = d.recent_logins.map(l =>
+      '<tr><td>' + l.timestamp + '</td><td>' + l.ip_address + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
+    ).join('');
+
+    const dls = d.recent_downloads.map(dl =>
+      '<tr><td>' + dl.timestamp + '</td><td>' + dl.ticker + '</td><td>' + dl.version + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + dl.ip_address + '</td></tr>'
+    ).join('');
+
+    document.getElementById('modal-content').innerHTML =
+      '<div style="display:flex; justify-content:space-between; align-items:start;">' +
+        '<div><h2 style="margin-bottom:0.25rem;">' + esc(u.name) + '</h2>' +
+        '<p style="color:var(--gray-500); margin:0;">' + esc(u.email) + '</p></div>' +
+        '<button onclick="closeModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--gray-400);">&#10005;</button>' +
+      '</div>' +
+      '<div class="grid-3" style="margin:1.5rem 0; gap:1rem;">' +
+        '<div><strong>Institution:</strong><br>' + esc(u.institution) + '</div>' +
+        '<div><strong>Country:</strong><br>' + esc(u.country) + '</div>' +
+        '<div><strong>Role:</strong><br>' + esc(u.role) + '</div>' +
+        '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
+        '<div><strong>Registered:</strong><br>' + u.created_at + '</div>' +
+        '<div><strong>Last Login:</strong><br>' + (u.last_login_at || 'Never') + '</div>' +
+        '<div><strong>Last IP:</strong><br><code>' + (u.last_login_ip || '-') + '</code></div>' +
+        '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
+        '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
+      '</div>' +
+      '<div style="margin-bottom:1.5rem; display:flex; gap:0.5rem;">' +
+        (u.is_active
+          ? '<button class="btn btn-sm btn-danger" onclick="toggleUser(' + u.id + ', false)">Revoke Access</button>'
+          : '<button class="btn btn-sm btn-success" onclick="toggleUser(' + u.id + ', true)">Reactivate</button>') +
+      '</div>' +
+      '<div style="margin-bottom:1rem;"><strong>Notes:</strong><br>' +
+        '<textarea id="user-notes" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px; font-family:var(--font-sans); font-size:0.85rem; min-height:60px;">' + esc(u.notes || '') + '</textarea>' +
+        '<button class="btn btn-sm btn-primary" style="margin-top:0.5rem;" onclick="saveNotes(' + u.id + ')">Save Notes</button>' +
+      '</div>' +
+      '<h4 style="margin-top:1.5rem;">Login History</h4>' +
+      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>IP</th><th>User Agent</th><th>Status</th></tr></thead><tbody>' + (logins || '<tr><td colspan="4" style="color:var(--gray-400);">No logins</td></tr>') + '</tbody></table></div>' +
+      '<h4 style="margin-top:1.5rem;">Download History</h4>' +
+      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Ticker</th><th>Version</th><th>Size</th><th>IP</th></tr></thead><tbody>' + (dls || '<tr><td colspan="5" style="color:var(--gray-400);">No downloads</td></tr>') + '</tbody></table></div>';
+
+    document.getElementById('user-modal').classList.add('open');
+  } catch (e) {
+    console.error('User detail error:', e);
+  }
+}
+
+async function toggleUser(id, active) {
+  await fetch(API + '/v1/admin/users/' + id, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ is_active: active })
+  });
+  closeModal();
+  loadUsers();
+  loadStats();
+}
+
+async function saveNotes(id) {
+  const notes = document.getElementById('user-notes').value;
+  await fetch(API + '/v1/admin/users/' + id, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ notes })
+  });
+  alert('Notes saved.');
+}
+
+function closeModal() {
+  document.getElementById('user-modal').classList.remove('open');
+}
+
+// ── Load downloads ──
+async function loadDownloads() {
+  try {
+    const r = await fetch(API + '/v1/admin/downloads?limit=50', { headers: authHeaders() });
+    const d = await r.json();
+    document.getElementById('download-log').innerHTML = d.downloads.map(dl =>
+      '<tr><td class="mono" style="font-size:0.8rem;">' + dl.timestamp + '</td><td>' + esc(dl.name || '-') + '</td><td style="font-size:0.8rem;">' + esc(dl.email || '-') + '</td><td><strong>' + dl.ticker + '</strong></td><td>' + dl.version + '</td><td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td class="mono" style="font-size:0.8rem;">' + dl.ip_address + '</td></tr>'
+    ).join('') || '<tr><td colspan="7" style="color:var(--gray-400);">No downloads yet.</td></tr>';
+  } catch (e) {
+    console.error('Downloads error:', e);
+  }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Auto-login if session exists ──
+(async function() {
+  if (sessionToken) {
+    try {
+      const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
+      if (r.ok) {
+        const u = await r.json();
+        showAdmin(u.name);
+      } else {
+        localStorage.removeItem('hfd_admin_session');
+        sessionToken = null;
+      }
+    } catch (e) {
+      localStorage.removeItem('hfd_admin_session');
+      sessionToken = null;
+    }
+  }
+})();
+
+// Enter key on password field
+document.getElementById('login-password').addEventListener('keyup', function(e) {
+  if (e.key === 'Enter') adminLogin();
+});
+</script>
+
+</body>
+</html>

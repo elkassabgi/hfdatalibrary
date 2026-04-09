@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Versions — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html" class="active">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Data Versions</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Three cleaning levels. Choose the one that matches your research design.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:900px;">
+
+    <p style="font-size:1.05rem; margin-bottom:2.5rem;">Every ticker is available in three versions. The same underlying trade data, processed to different levels. You choose what's appropriate for your research question.</p>
+
+    <!-- Version 1: Raw -->
+    <div class="card version-card raw" style="margin-bottom:2rem; padding:2.5rem;">
+      <span class="version-tag raw">Version 1</span>
+      <h2 style="margin-top:0.5rem;">Raw</h2>
+      <p style="font-size:1.05rem;">Data as received from the source. No outlier removal, no gap-filling. The only modification is splice-boundary adjustment at the PiTrading/IEX transition (March 2022). Prices are split and dividend adjusted by the source.</p>
+
+      <div class="grid-2" style="margin-top:1.5rem; gap:1.5rem;">
+        <div>
+          <h4>What's in it</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>One-minute OHLCV bars where trades occurred</li>
+            <li>Gaps where no trades happened (no bars for those minutes)</li>
+            <li>Possible duplicates, outside-hours bars, OHLC violations</li>
+            <li>1,533,403,126 total bars</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Best for</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>Market microstructure research</li>
+            <li>Studying data quality and missingness patterns</li>
+            <li>Comparing with your own cleaning pipeline</li>
+            <li>Auditing the cleaning steps applied in Version 2</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Version 2: Clean -->
+    <div class="card version-card clean" style="margin-bottom:2rem; padding:2.5rem;">
+      <span class="version-tag clean">Version 2</span>
+      <h2 style="margin-top:0.5rem;">Clean</h2>
+      <p style="font-size:1.05rem;">Nine-step cleaning pipeline applied. Outside-hours bars removed, OHLC violations removed, duplicates removed, Brownlees-Gallo outlier filter applied. Gaps are preserved — if no trade occurred, there is no bar.</p>
+
+      <div class="grid-2" style="margin-top:1.5rem; gap:1.5rem;">
+        <div>
+          <h4>What's in it</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>One-minute OHLCV bars, cleaned</li>
+            <li>388,559 bars removed (0.025% of total)</li>
+            <li>Gaps preserved as-is (irregular time series)</li>
+            <li>1,533,014,567 total bars</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Best for</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>Volatility estimation (realized variance, bipower variation)</li>
+            <li>Spread measurement (Roll, Corwin-Schultz)</li>
+            <li>Jump detection (BNS test)</li>
+            <li>Most empirical finance research</li>
+          </ul>
+        </div>
+      </div>
+
+      <div style="margin-top:1.5rem; padding:1rem; background: var(--blue-pale); border-radius:var(--radius);">
+        <strong>Recommended default.</strong> Unless your research specifically requires filled data or raw data, start here.
+      </div>
+    </div>
+
+    <!-- Version 3: Filled -->
+    <div class="card version-card filled" style="margin-bottom:2rem; padding:2.5rem;">
+      <span class="version-tag filled">Version 3</span>
+      <h2 style="margin-top:0.5rem;">Filled</h2>
+      <p style="font-size:1.05rem;">Clean data with LOCF (Last Observation Carried Forward) gap-filling. Every trading day has exactly 390 bars (09:30–15:59 ET). Missing bars are filled with the last observed close price; volume is set to zero. Every filled bar is flagged.</p>
+
+      <div class="grid-2" style="margin-top:1.5rem; gap:1.5rem;">
+        <div>
+          <h4>What's in it</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>Regular 390-bar daily grid</li>
+            <li>Filled bars flagged with <code>is_filled = True</code></li>
+            <li>Volume = 0 for filled bars</li>
+            <li>2,342,519,726 total bars</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Best for</h4>
+          <ul style="margin-left:1.25rem;">
+            <li>Machine learning models requiring regular grids</li>
+            <li>Backtesting systems</li>
+            <li>Time-series models (GARCH, HAR, etc.)</li>
+            <li>Any analysis requiring equally-spaced observations</li>
+          </ul>
+        </div>
+      </div>
+
+      <div style="margin-top:1.5rem; padding:1rem; background: #fef9ee; border-radius:var(--radius); border: 1px solid #fde68a;">
+        <strong>Known biases.</strong> LOCF introduces stale prices that suppress realized volatility, compress spreads, inflate autocorrelation, and reduce jump detection power. These effects are systematic and scale with gap rate. The accompanying paper quantifies these biases across all 1,391 tickers. Use this version with awareness of these effects.
+      </div>
+    </div>
+
+    <!-- Comparison -->
+    <h2 style="margin-top:3rem;">Side-by-side comparison</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Property</th><th>Raw</th><th>Clean</th><th>Filled</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Total bars</td><td class="mono" data-meta="bars-raw">1,533,403,126</td><td class="mono" data-meta="bars-clean">1,533,014,567</td><td class="mono" data-meta="bars-filled">2,342,519,726</td></tr>
+          <tr><td>Bars removed</td><td class="mono">0</td><td class="mono" data-meta="bars-removed">388,559</td><td class="mono" data-meta="bars-removed">388,559</td></tr>
+          <tr><td>Bars filled</td><td class="mono">0</td><td class="mono">0</td><td class="mono">809,505,159</td></tr>
+          <tr><td>Regular grid?</td><td>No</td><td>No</td><td>Yes (390/day)</td></tr>
+          <tr><td>Gaps preserved?</td><td>Yes</td><td>Yes</td><td>No (filled)</td></tr>
+          <tr><td>Outliers removed?</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Filled flag?</td><td>N/A</td><td>N/A</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="text-align:center; margin-top:3rem;">
+      <a href="download.html" class="btn btn-primary">Download Data</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

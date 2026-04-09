@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Dictionary — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html" class="active">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Data Dictionary</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Complete column definitions and computed academic variable specifications.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:1000px;">
+    <h2>Parquet file schema</h2>
+    <p>Each file contains one-minute OHLCV bars for a single U.S. equity or ETF.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Column</th><th>Type</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">datetime</td><td class="mono">datetime64</td><td>Bar timestamp (Eastern Time), format: YYYY-MM-DD HH:MM:SS</td></tr>
+          <tr><td class="mono">Date</td><td class="mono">string</td><td>Trading date, format: MM/DD/YYYY</td></tr>
+          <tr><td class="mono">Time</td><td class="mono">string</td><td>Bar time, format: HHMM (24-hour)</td></tr>
+          <tr><td class="mono">Open</td><td class="mono">float64</td><td>Opening price of the 1-minute bar (split/dividend adjusted)</td></tr>
+          <tr><td class="mono">High</td><td class="mono">float64</td><td>Highest price during the 1-minute bar</td></tr>
+          <tr><td class="mono">Low</td><td class="mono">float64</td><td>Lowest price during the 1-minute bar</td></tr>
+          <tr><td class="mono">Close</td><td class="mono">float64</td><td>Closing price of the 1-minute bar</td></tr>
+          <tr><td class="mono">Volume</td><td class="mono">int64</td><td>Number of shares traded during the 1-minute bar</td></tr>
+          <tr><td class="mono">source</td><td class="mono">string</td><td>Data source: "pitrading" (pre-2022) or "alpaca" (post-2022, IEX via Alpaca)</td></tr>
+          <tr><td class="mono">is_filled</td><td class="mono">bool</td><td>True if this bar was gap-filled (Version 3 only)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="margin-top:3rem;">Computed academic variables (27 measures)</h2>
+    <p>Computed daily for each ticker in each cleaning version.</p>
+
+    <h3>Volatility (5 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1</td><td>Realized variance (5-min)</td><td>RV = &Sigma; r<sub>t,i</sub>&sup2; using 5-minute sampled returns</td></tr>
+          <tr><td class="mono">2</td><td>Realized variance (1-min)</td><td>RV = &Sigma; r<sub>t,i</sub>&sup2; using all 1-minute returns</td></tr>
+          <tr><td class="mono">3</td><td>Bipower variation</td><td>BV = (&pi;/2) &Sigma; |r<sub>t,i</sub>| |r<sub>t,i-1</sub>| (Barndorff-Nielsen and Shephard 2004)</td></tr>
+          <tr><td class="mono">4</td><td>Parkinson range volatility</td><td>&sigma;&sup2; = (1/4 ln 2) (ln H/L)&sup2; (Parkinson 1980)</td></tr>
+          <tr><td class="mono">5</td><td>Yang-Zhang volatility</td><td>OHLC-based estimator (Yang and Zhang 2000)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Spreads (2 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">6</td><td>Roll implied spread</td><td>S = 2&radic;(&minus;Cov(r<sub>t</sub>, r<sub>t-1</sub>)) in basis points (Roll 1984)</td></tr>
+          <tr><td class="mono">7</td><td>Corwin-Schultz spread</td><td>High-low spread estimator (Corwin and Schultz 2012)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Autocorrelation (3 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">8</td><td>AC(1)</td><td>First-order autocorrelation of 1-minute log returns</td></tr>
+          <tr><td class="mono">9</td><td>VR(5)</td><td>Variance ratio: Var(5-min returns) / [5 &times; Var(1-min returns)]</td></tr>
+          <tr><td class="mono">10</td><td>VR(10)</td><td>Variance ratio: Var(10-min returns) / [10 &times; Var(1-min returns)]</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Jump detection (3 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">11</td><td>BNS z-statistic</td><td>z = (RV &minus; BV) / &radic;(&theta; &times; max(1, QV/BV&sup2;)) (Barndorff-Nielsen and Shephard 2006)</td></tr>
+          <tr><td class="mono">12</td><td>BNS jump (1%)</td><td>Indicator: 1 if z &gt; 2.326</td></tr>
+          <tr><td class="mono">13</td><td>BNS jump (5%)</td><td>Indicator: 1 if z &gt; 1.645</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Liquidity (4 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">14</td><td>Amihud illiquidity</td><td>|r<sub>daily</sub>| / dollar volume (Amihud 2002)</td></tr>
+          <tr><td class="mono">15</td><td>Daily dollar volume</td><td>&Sigma; (Close<sub>i</sub> &times; Volume<sub>i</sub>)</td></tr>
+          <tr><td class="mono">16</td><td>Daily share volume</td><td>&Sigma; Volume<sub>i</sub></td></tr>
+          <tr><td class="mono">17</td><td>Number of trades</td><td>Count of observed (non-filled) bars</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Data quality (6 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">18</td><td>Gap rate</td><td>Fraction of the 390-bar daily grid with no trade</td></tr>
+          <tr><td class="mono">19</td><td>Observed bars</td><td>Number of bars with actual trades</td></tr>
+          <tr><td class="mono">20</td><td>Filled bars</td><td>Number of bars filled by LOCF (Version 3)</td></tr>
+          <tr><td class="mono">21</td><td>Longest gap</td><td>Maximum consecutive missing bars in the day</td></tr>
+          <tr><td class="mono">22</td><td>is_filled count</td><td>Count of filled bars in the day</td></tr>
+          <tr><td class="mono">23</td><td>Max bars since last trade</td><td>Largest gap between consecutive observed bars</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Returns (4 measures)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">24</td><td>Open-to-close return</td><td>ln(Close<sub>last</sub> / Open<sub>first</sub>)</td></tr>
+          <tr><td class="mono">25</td><td>Overnight return</td><td>ln(Open<sub>today</sub> / Close<sub>yesterday</sub>)</td></tr>
+          <tr><td class="mono">26</td><td>Daily high-low range</td><td>ln(High<sub>max</sub> / Low<sub>min</sub>)</td></tr>
+          <tr><td class="mono">27</td><td>Intraday return std</td><td>Standard deviation of 1-minute log returns</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

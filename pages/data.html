@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Overview — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .quality-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--gray-200); }
+    .quality-fill { background: var(--green); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html" class="active">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Data Overview</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;"><span data-meta="tickers-short">1,391</span> U.S. equities and ETFs. 1-minute bars. December 2002 through present.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+
+    <!-- Summary stats -->
+    <div class="grid-4" style="margin-bottom:3rem;">
+      <div class="card" style="text-align:center;">
+        <span class="stat-number" style="color:var(--navy);" data-meta="tickers-short">1,391</span>
+        <p style="margin:0; font-size:0.85rem; color:var(--gray-500);">Tickers</p>
+      </div>
+      <div class="card" style="text-align:center;">
+        <span class="stat-number" style="color:var(--navy);" data-meta="bars-clean-short">1.53B</span>
+        <p style="margin:0; font-size:0.85rem; color:var(--gray-500);">Bars (Clean)</p>
+      </div>
+      <div class="card" style="text-align:center;">
+        <span class="stat-number" style="color:var(--navy);" data-meta="trading-days">5,847</span>
+        <p style="margin:0; font-size:0.85rem; color:var(--gray-500);">Trading Days</p>
+      </div>
+      <div class="card" style="text-align:center;">
+        <span class="stat-number" style="color:var(--navy);" data-meta="variables">27</span>
+        <p style="margin:0; font-size:0.85rem; color:var(--gray-500);">Academic Variables</p>
+      </div>
+    </div>
+
+    <!-- Dynamic update notice — populated by site.js from metadata.json -->
+    <div id="update-notice"></div>
+
+    <!-- Coverage -->
+    <h2>Coverage by liquidity quintile</h2>
+    <p style="margin-bottom:1.5rem;">Tickers are sorted by average daily dollar volume into five quintiles. Data quality varies systematically with liquidity.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Quintile</th>
+            <th>Tickers</th>
+            <th>Description</th>
+            <th>Avg. gap rate</th>
+            <th>Data completeness</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Q5</strong> (most liquid)</td>
+            <td class="mono">278</td>
+            <td>Large-cap, heavily traded (AAPL, MSFT, SPY...)</td>
+            <td class="mono" data-meta="q5-gap">2.1%</td>
+            <td>
+              <div class="quality-bar"><div class="quality-fill" style="width:97.9%" data-bar="q5-completeness"></div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Q4</strong></td>
+            <td class="mono">278</td>
+            <td>Mid-to-large cap</td>
+            <td class="mono" data-meta="q4-gap">8.4%</td>
+            <td>
+              <div class="quality-bar"><div class="quality-fill" style="width:91.6%" data-bar="q4-completeness"></div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Q3</strong></td>
+            <td class="mono">279</td>
+            <td>Mid-cap</td>
+            <td class="mono" data-meta="q3-gap">18.7%</td>
+            <td>
+              <div class="quality-bar"><div class="quality-fill" style="width:81.3%" data-bar="q3-completeness"></div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Q2</strong></td>
+            <td class="mono">278</td>
+            <td>Small-to-mid cap</td>
+            <td class="mono" data-meta="q2-gap">32.5%</td>
+            <td>
+              <div class="quality-bar"><div class="quality-fill" style="width:67.5%" data-bar="q2-completeness"></div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Q1</strong> (least liquid)</td>
+            <td class="mono">278</td>
+            <td>Small-cap, thinly traded</td>
+            <td class="mono" data-meta="q1-gap">51.8%</td>
+            <td>
+              <div class="quality-bar"><div class="quality-fill" style="width:48.2%" data-bar="q1-completeness"></div></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:0.85rem; color:var(--gray-500); margin-top:0.5rem;">Gap rate = fraction of the 390-bar daily grid (09:30–15:59 ET) with no observed trade.</p>
+
+    <!-- Sources -->
+    <h2 style="margin-top:3rem;">Data sources</h2>
+    <div class="grid-2" style="gap:1.5rem;">
+      <div class="card">
+        <h3>PiTrading (pre-March 2022)</h3>
+        <p>Consolidated tape data derived from CTA (NYSE-listed) and UTP (Nasdaq-listed) feeds. Same underlying data as CRSP and TAQ. One-minute OHLCV bars, split and dividend adjusted.</p>
+        <p style="margin:0;"><strong>Coverage:</strong> December 2002 – March 2022 (45 tickers back to January 1991)</p>
+      </div>
+      <div class="card">
+        <h3>IEX Exchange HIST (post-March 2022)</h3>
+        <p>Full-depth pcap files from the IEX exchange, parsed into one-minute OHLCV bars. IEX represents ~2–3% of consolidated volume. Single-exchange view, not full tape.</p>
+        <p style="margin:0;"><strong>Coverage:</strong> March 2022 – present (updated weekly)</p>
+      </div>
+    </div>
+
+    <!-- Timeframes -->
+    <h2 style="margin-top:3rem;">Available timeframes</h2>
+    <p>All three versions (Raw, Clean, Filled) are available in eight timeframes, aggregated from the base 1-minute bars:</p>
+    <div class="grid-4" style="gap:0.75rem; margin-top:1rem;">
+      <div class="card" style="text-align:center; padding:1rem;"><strong>1-min</strong><br><span style="font-size:0.8rem; color:var(--gray-500);">Base data</span></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>5-min</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>15-min</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>30-min</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>Hourly</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>Daily</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>Weekly</strong></div>
+      <div class="card" style="text-align:center; padding:1rem;"><strong>Monthly</strong></div>
+    </div>
+
+    <div style="text-align:center; margin-top:3rem;">
+      <a href="download.html" class="btn btn-primary">Download Data</a>
+      <a href="docs.html" class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);">Read Documentation</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

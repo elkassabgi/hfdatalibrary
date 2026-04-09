@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .search-box {
+      display: flex; gap: 0.5rem; max-width: 500px;
+      margin: 0 auto 2rem;
+    }
+    .search-box input {
+      flex: 1; padding: 0.75rem 1rem;
+      border: 2px solid var(--gray-200); border-radius: var(--radius);
+      font-size: 1rem; font-family: var(--font-sans);
+    }
+    .search-box input:focus { outline: none; border-color: var(--blue); }
+    .search-box button {
+      padding: 0.75rem 1.5rem; background: var(--blue); color: #fff;
+      border: none; border-radius: var(--radius); font-weight: 600;
+      cursor: pointer;
+    }
+    .download-card {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 1.25rem 1.5rem; border: 1px solid var(--gray-200);
+      border-radius: var(--radius); margin-bottom: 0.75rem;
+      transition: all 0.15s;
+    }
+    .download-card:hover { border-color: var(--blue); background: var(--blue-pale); }
+    .download-info h4 { font-family: var(--font-sans); margin-bottom: 0.25rem; }
+    .download-info p { margin: 0; font-size: 0.85rem; color: var(--gray-500); }
+    .download-size { font-family: var(--font-mono); font-size: 0.85rem; color: var(--gray-500); margin-right: 1rem; }
+    .register-form {
+      background: var(--gray-50); border: 1px solid var(--gray-200);
+      border-radius: var(--radius-lg); padding: 2rem;
+      max-width: 500px;
+    }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; font-weight: 500; margin-bottom: 0.35rem; font-size: 0.9rem; }
+    .form-group input, .form-group select {
+      width: 100%; padding: 0.625rem 0.875rem;
+      border: 1px solid var(--gray-300); border-radius: 6px;
+      font-size: 0.95rem; font-family: var(--font-sans);
+    }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--blue); }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html" class="active">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Download</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Individual tickers, pre-packaged bundles, or the full dataset. All free.</p>
+  </div>
+</section>
+
+<!-- Free access banner -->
+<div style="background: #ecfdf5; border-bottom: 1px solid #a7f3d0; padding: 0.75rem 0; text-align:center;">
+  <div class="container" style="font-size:0.95rem; color:#065f46;">
+    <strong>100% Free Access</strong> — Registration required to download data. We track usage for citation metrics only.
+  </div>
+</div>
+
+<!-- Auth bar -->
+<div id="auth-bar" style="background:var(--gray-50); border-bottom:1px solid var(--gray-200); padding:0.75rem 0;">
+  <div class="container" style="display:flex; justify-content:space-between; align-items:center;">
+    <div id="auth-status"></div>
+    <div id="auth-actions"></div>
+  </div>
+</div>
+
+<!-- Search -->
+<section class="section">
+  <div class="container">
+    <h2 style="text-align:center; margin-bottom:1.5rem;">Search for a ticker</h2>
+    <div class="search-box">
+      <input type="text" id="ticker-search" placeholder="Enter ticker symbol (e.g., AAPL, SPY, MSFT)..." autocomplete="off">
+      <button onclick="searchTicker()">Search</button>
+    </div>
+    <div id="search-results"></div>
+
+    <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <!-- Bundles -->
+    <h2 id="bulk" style="margin-bottom:1.5rem;">Pre-packaged bundles</h2>
+    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Download groups of tickers in a single file. All versions included (Raw, Clean, Filled).</p>
+
+    <div class="download-card">
+      <div class="download-info">
+        <h4>S&amp;P 500</h4>
+        <p>All current S&amp;P 500 constituents — 500 tickers, all versions</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="download-size">~42 GB</span>
+        <a href="#" class="btn btn-primary">Download</a>
+      </div>
+    </div>
+
+    <div class="download-card">
+      <div class="download-info">
+        <h4>Nasdaq 100</h4>
+        <p>All current Nasdaq 100 constituents — 100 tickers, all versions</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="download-size">~12 GB</span>
+        <a href="#" class="btn btn-primary">Download</a>
+      </div>
+    </div>
+
+    <div class="download-card">
+      <div class="download-info">
+        <h4>Liquidity Quintile 5 (Most Liquid)</h4>
+        <p>The 278 most actively traded tickers by daily dollar volume</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="download-size">~35 GB</span>
+        <a href="#" class="btn btn-primary">Download</a>
+      </div>
+    </div>
+
+    <div class="download-card">
+      <div class="download-info">
+        <h4>Liquidity Quintile 1 (Least Liquid)</h4>
+        <p>The 278 least actively traded tickers — highest gap rates</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="download-size">~8 GB</span>
+        <a href="#" class="btn btn-primary">Download</a>
+      </div>
+    </div>
+
+    <div class="download-card" style="border-color: var(--gold); background: #fef9ee;">
+      <div class="download-info">
+        <h4>Full Dataset</h4>
+        <p>All 1,391 tickers, all versions (Raw, Clean, Filled), all timeframes</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="download-size">~120 GB</span>
+        <a href="#" class="btn btn-gold">Download All</a>
+      </div>
+    </div>
+
+    <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <!-- Registration / Login -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: start;">
+      <div>
+        <h2 id="register" style="margin-bottom:1rem;">Create a free account</h2>
+        <p>Register once to get full access to all data downloads and the REST API. No credit card. No subscription. No limits on data.</p>
+        <p>Your account gives you:</p>
+        <ul style="margin-left:1.5rem; margin-bottom:1rem;">
+          <li>Unlimited data downloads (browser or API)</li>
+          <li>Personal API key for programmatic access</li>
+          <li>JSON, CSV, and parquet formats</li>
+          <li>300 API requests per minute</li>
+        </ul>
+        <p style="font-size:0.85rem; color:var(--gray-500);">We collect your name and institution for usage analytics and citation tracking only. We will never share your information.</p>
+
+        <div style="margin-top:2rem; padding-top:2rem; border-top:1px solid var(--gray-200);">
+          <h3>Already have an account?</h3>
+          <div class="register-form" style="max-width:100%; margin-top:1rem;">
+            <div class="form-group">
+              <label for="login-email">Email</label>
+              <input type="email" id="login-email" placeholder="jsmith@university.edu">
+            </div>
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input type="password" id="login-password" placeholder="Password">
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="loginUser()">Log In</button>
+            <p style="margin-top:0.5rem; font-size:0.85rem;"><a href="#" onclick="requestReset(); return false;">Forgot password?</a></p>
+            <div id="login-result" style="margin-top:0.75rem; display:none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="register-form">
+        <h3 style="margin-bottom:1rem;">Register</h3>
+        <div class="form-group">
+          <label for="reg-name">Full name</label>
+          <input type="text" id="reg-name" placeholder="Jane Smith">
+        </div>
+        <div class="form-group">
+          <label for="reg-email">Email</label>
+          <input type="email" id="reg-email" placeholder="jsmith@university.edu">
+        </div>
+        <div class="form-group">
+          <label for="reg-password">Password</label>
+          <input type="password" id="reg-password" placeholder="Minimum 8 characters">
+        </div>
+        <div class="form-group">
+          <label for="reg-institution">Institution</label>
+          <input type="text" id="reg-institution" placeholder="University of Example">
+        </div>
+        <div class="form-group">
+          <label for="reg-country">Country</label>
+          <input type="text" id="reg-country" placeholder="United States">
+        </div>
+        <div class="form-group">
+          <label for="reg-role">Role</label>
+          <select id="reg-role">
+            <option value="">Select...</option>
+            <option value="faculty">Faculty / Professor</option>
+            <option value="postdoc">Postdoctoral researcher</option>
+            <option value="phd">PhD student</option>
+            <option value="masters">Master's student</option>
+            <option value="undergrad">Undergraduate student</option>
+            <option value="industry">Industry researcher</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="registerUser()" id="reg-btn">Create Account</button>
+        <div id="reg-result" style="margin-top:1rem; display:none;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+const API = 'https://api.hfdatalibrary.com';
+let currentUser = null;
+let sessionToken = localStorage.getItem('hfd_session');
+
+// ── Auth State ──
+async function checkAuth() {
+  const bar = document.getElementById('auth-status');
+  const actions = document.getElementById('auth-actions');
+
+  if (!sessionToken) {
+    bar.innerHTML = '<span style="color:var(--gray-500);">Not logged in — <a href="#register">register or log in</a> to download data.</span>';
+    actions.innerHTML = '';
+    currentUser = null;
+    return;
+  }
+
+  try {
+    const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + sessionToken } });
+    if (r.ok) {
+      currentUser = await r.json();
+      bar.innerHTML = '<span>Logged in as <strong>' + currentUser.name + '</strong> (' + currentUser.institution + ')</span>';
+      actions.innerHTML = '<span style="font-size:0.8rem; color:var(--gray-400); margin-right:1rem;">API Key: <code>' + currentUser.api_key + '</code></span>' +
+        '<button class="btn btn-sm btn-outline" style="color:var(--gray-600); border-color:var(--gray-300); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="logout()">Logout</button>';
+    } else {
+      localStorage.removeItem('hfd_session');
+      sessionToken = null;
+      currentUser = null;
+      checkAuth();
+    }
+  } catch (e) {
+    bar.innerHTML = '<span style="color:var(--gray-500);">Not logged in</span>';
+    currentUser = null;
+  }
+}
+
+async function logout() {
+  await fetch(API + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + sessionToken } });
+  localStorage.removeItem('hfd_session');
+  sessionToken = null;
+  currentUser = null;
+  checkAuth();
+}
+
+checkAuth();
+
+// ── Login ──
+async function loginUser() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const result = document.getElementById('login-result');
+
+  if (!email || !password) { result.style.display = 'block'; result.innerHTML = '<p style="color:var(--red); margin:0;">Enter email and password.</p>'; return; }
+
+  try {
+    const r = await fetch(API + '/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await r.json();
+    result.style.display = 'block';
+    if (data.session) {
+      sessionToken = data.session;
+      localStorage.setItem('hfd_session', sessionToken);
+      result.innerHTML = '<p style="color:#059669; margin:0;">Login successful!</p>';
+      checkAuth();
+    } else {
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Login failed.') + '</p>';
+    }
+  } catch (e) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error.</p>';
+  }
+}
+
+async function requestReset() {
+  const email = document.getElementById('login-email').value.trim();
+  if (!email) { alert('Enter your email first, then click "Forgot password?"'); return; }
+  await fetch(API + '/v1/auth/reset-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  alert('If that email is registered, a reset link has been sent.');
+}
+
+document.getElementById('login-password').addEventListener('keyup', function(e) { if (e.key === 'Enter') loginUser(); });
+
+// ── Ticker Search ──
+async function searchTicker() {
+  const q = document.getElementById('ticker-search').value.trim().toUpperCase();
+  if (!q) return;
+  const results = document.getElementById('search-results');
+  results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Searching...</p>';
+
+  try {
+    const r = await fetch(API + '/v1/symbols/' + q);
+    if (r.ok) {
+      const data = await r.json();
+      const versions = Object.entries(data.versions).map(([v, info]) =>
+        '<div class="download-card" style="margin-bottom:0.5rem;">' +
+          '<div class="download-info"><h4>' + q + ' — ' + v + '</h4>' +
+          '<p>Size: ' + (info.size_bytes / 1e6).toFixed(1) + ' MB</p></div>' +
+          '<a href="' + API + '/v1/download/' + q + '?version=' + v + '" class="btn btn-primary">Download</a>' +
+        '</div>'
+      ).join('');
+      results.innerHTML = versions;
+    } else {
+      // Try partial match from full list
+      const r2 = await fetch(API + '/v1/symbols');
+      const all = await r2.json();
+      const matches = all.symbols.filter(s => s.ticker.includes(q)).slice(0, 10);
+      if (matches.length > 0) {
+        results.innerHTML = matches.map(s =>
+          '<div class="download-card" style="margin-bottom:0.5rem;">' +
+            '<div class="download-info"><h4>' + s.ticker + '</h4>' +
+            '<p>Size: ' + (s.size_bytes / 1e6).toFixed(1) + ' MB</p></div>' +
+            '<a href="' + API + '/v1/download/' + s.ticker + '?version=clean" class="btn btn-primary">Download</a>' +
+          '</div>'
+        ).join('');
+      } else {
+        results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">No results found for <strong>' + q + '</strong></p>';
+      }
+    }
+  } catch (e) {
+    results.innerHTML = '<p style="text-align:center; color:var(--red);">Error connecting to API. Please try again.</p>';
+  }
+}
+document.getElementById('ticker-search').addEventListener('keyup', function(e) {
+  if (e.key === 'Enter') searchTicker();
+});
+
+// ── Registration ──
+async function registerUser() {
+  const name = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const institution = document.getElementById('reg-institution').value.trim();
+  const country = document.getElementById('reg-country').value.trim();
+  const role = document.getElementById('reg-role').value;
+  const result = document.getElementById('reg-result');
+  const btn = document.getElementById('reg-btn');
+
+  if (!name || !email || !password || !institution || !country || !role) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Please fill in all fields.</p>';
+    return;
+  }
+  if (password.length < 8) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Password must be at least 8 characters.</p>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Creating account...';
+
+  try {
+    const r = await fetch(API + '/v1/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password, institution, country, role })
+    });
+    const data = await r.json();
+
+    result.style.display = 'block';
+    if (data.api_key) {
+      sessionToken = data.session;
+      localStorage.setItem('hfd_session', sessionToken);
+      result.innerHTML =
+        '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.25rem;">' +
+          '<strong style="color:#065f46;">Account created! You are now logged in.</strong>' +
+          '<p style="margin:0.5rem 0 0; font-size:0.9rem;">Your API key (for programmatic access):</p>' +
+          '<code style="display:block; margin-top:0.5rem; padding:0.75rem; background:#fff; border:1px solid #d1d5db; border-radius:4px; font-size:0.95rem; word-break:break-all;">' + data.api_key + '</code>' +
+          '<p style="margin:0.75rem 0 0; font-size:0.8rem; color:#6b7280;">You can now download data from the search above or use the API.</p>' +
+        '</div>';
+      checkAuth();
+    } else {
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Registration failed.') + '</p>';
+    }
+  } catch (e) {
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Error connecting to API. Please try again.</p>';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Create Account';
+}
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

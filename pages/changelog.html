@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Changelog — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html" class="active">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Changelog</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Every data update, versioned and documented.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:800px;">
+
+    <div style="background: var(--blue-pale); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 2.5rem;">
+      Data is updated weekly via automated pipeline. Each update adds the latest week of trading data for all 1,391 tickers across all three cleaning versions.
+    </div>
+
+    <h2>v1.0 — April 9, 2026 (Initial release)</h2>
+    <ul style="margin-left: 1.5rem; margin-bottom: 2rem; line-height: 2;">
+      <li>1,391 U.S. equities and ETFs</li>
+      <li>Three cleaning versions: Raw, Clean, Filled</li>
+      <li>Coverage: January 1991 through April 2026 (majority from December 2002)</li>
+      <li>Primary source: PiTrading consolidated tape (pre-March 2022)</li>
+      <li>Secondary source: IEX Exchange HIST via Alpaca (post-March 2022)</li>
+      <li>Nine-step cleaning pipeline</li>
+      <li>27 pre-computed academic variables per ticker per day</li>
+      <li>Parquet file format</li>
+      <li>REST API with JSON, CSV, and parquet response formats</li>
+    </ul>
+
+    <h3>Data processing timeline</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Event</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-03-25</td><td>IEX/Alpaca data backfill completed (March 2022 – March 2026)</td></tr>
+          <tr><td class="mono">2026-03-30</td><td>Three-version analysis pipeline built (Raw, Clean, Filled)</td></tr>
+          <tr><td class="mono">2026-04-03</td><td>Holistic audit and cleaning pipeline finalized</td></tr>
+          <tr><td class="mono">2026-04-07</td><td>Brownian bridge sigma estimation bug fixed; Monte Carlo recalibrated</td></tr>
+          <tr><td class="mono">2026-04-08</td><td>Full-dataset bridge grid (1,391 tickers &times; 5 sigmas) completed</td></tr>
+          <tr><td class="mono">2026-04-08</td><td>Full-dataset 4-method filling comparison completed</td></tr>
+          <tr><td class="mono">2026-04-09</td><td>v1.0 released</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

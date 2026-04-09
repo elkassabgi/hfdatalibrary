@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .endpoint { margin-bottom: 2.5rem; }
+    .endpoint-header {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .method-badge {
+      display: inline-block; padding: 0.2em 0.6em;
+      border-radius: 4px; font-family: var(--font-mono);
+      font-size: 0.8rem; font-weight: 700;
+    }
+    .method-get { background: #ecfdf5; color: #059669; }
+    .method-post { background: #eff6ff; color: #2563eb; }
+    .endpoint-path {
+      font-family: var(--font-mono); font-size: 1rem;
+      color: var(--gray-800);
+    }
+    .param-table td:first-child { font-family: var(--font-mono); font-size: 0.85rem; white-space: nowrap; }
+    .param-table td:nth-child(2) { font-family: var(--font-mono); font-size: 0.85rem; color: var(--gray-500); }
+    .response-example { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html" class="active">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">API Reference</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Programmatic access to all data. Free API key, 300 requests/minute.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:950px;">
+
+    <h2>Getting started</h2>
+    <p>Base URL: <code>https://api.hfdatalibrary.com/v1</code></p>
+    <p>All requests require an API key passed as a header:</p>
+    <pre><code>curl -H "X-API-Key: your-key-here" \
+  https://api.hfdatalibrary.com/v1/symbols</code></pre>
+    <p>API keys are free. <a href="download.html#register">Register here</a> with your name, institution, and email.</p>
+
+    <div style="background: var(--blue-pale); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0;">
+      <strong>Rate limit:</strong> 300 requests per minute per API key. Responses include <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> headers.
+    </div>
+
+    <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h2>Endpoints</h2>
+
+    <!-- GET /symbols -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/symbols</span>
+      </div>
+      <p>List all available tickers with metadata.</p>
+      <div class="response-example">
+        <pre><code>{
+  "count": 1391,
+  "symbols": [
+    {
+      "ticker": "AAPL",
+      "name": "Apple Inc.",
+      "start_date": "2002-12-30",
+      "end_date": "2026-04-04",
+      "bars_raw": 2847391,
+      "bars_clean": 2846982,
+      "quintile": 5,
+      "source": "pitrading+alpaca"
+    },
+    ...
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- GET /symbols/{ticker} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/symbols/{ticker}</span>
+      </div>
+      <p>Metadata for a single ticker: date range, bar counts, quality scores, data source.</p>
+    </div>
+
+    <!-- GET /bars/{ticker} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/bars/{ticker}</span>
+      </div>
+      <p>Query 1-minute OHLCV bars for a ticker.</p>
+      <h4>Parameters</h4>
+      <div class="table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>start</td><td>date</td><td>earliest</td><td>Start date (YYYY-MM-DD)</td></tr>
+            <tr><td>end</td><td>date</td><td>latest</td><td>End date (YYYY-MM-DD)</td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td>Data version: <code>raw</code>, <code>clean</code>, or <code>filled</code></td></tr>
+            <tr><td>format</td><td>string</td><td>json</td><td>Response format: <code>json</code>, <code>csv</code>, or <code>parquet</code></td></tr>
+            <tr><td>limit</td><td>int</td><td>10000</td><td>Max rows per response (pagination)</td></tr>
+            <tr><td>offset</td><td>int</td><td>0</td><td>Row offset for pagination</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="response-example">
+        <pre><code>GET /bars/AAPL?start=2024-01-02&end=2024-01-02&version=clean&format=json
+
+{
+  "ticker": "AAPL",
+  "version": "clean",
+  "count": 389,
+  "bars": [
+    {
+      "datetime": "2024-01-02 09:30:00",
+      "open": 187.15,
+      "high": 187.28,
+      "low": 186.92,
+      "close": 187.01,
+      "volume": 1284300
+    },
+    ...
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- GET /bars/{ticker}/daily -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/bars/{ticker}/daily</span>
+      </div>
+      <p>Daily OHLCV bars aggregated from intraday data. Same parameters as <code>/bars/{ticker}</code>.</p>
+    </div>
+
+    <!-- GET /variables/{ticker} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/variables/{ticker}</span>
+      </div>
+      <p>All 27 computed academic variables, daily frequency.</p>
+      <h4>Parameters</h4>
+      <div class="table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>start</td><td>date</td><td>earliest</td><td>Start date</td></tr>
+            <tr><td>end</td><td>date</td><td>latest</td><td>End date</td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td>Data version</td></tr>
+            <tr><td>variables</td><td>string</td><td>all</td><td>Comma-separated list: <code>rv_5min,bns_z,amihud</code></td></tr>
+            <tr><td>format</td><td>string</td><td>json</td><td><code>json</code>, <code>csv</code>, or <code>parquet</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="response-example">
+        <pre><code>GET /variables/AAPL?start=2024-01-02&end=2024-01-02&variables=rv_5min,bns_z,amihud
+
+{
+  "ticker": "AAPL",
+  "version": "clean",
+  "data": [
+    {
+      "date": "2024-01-02",
+      "rv_5min": 0.000043,
+      "bns_z": 1.872,
+      "amihud": 2.31e-12
+    }
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- GET /quality/{ticker} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/quality/{ticker}</span>
+      </div>
+      <p>Daily data quality report: gap rate, observed bars, longest gap, bars since last trade.</p>
+    </div>
+
+    <!-- GET /download/{ticker} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/download/{ticker}</span>
+      </div>
+      <p>Download full history for a ticker as a single parquet file. Served directly from R2.</p>
+      <h4>Parameters</h4>
+      <div class="table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code>, <code>clean</code>, or <code>filled</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- GET /bulk/{package} -->
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/bulk/{package}</span>
+      </div>
+      <p>Download pre-packaged bundles.</p>
+      <div class="table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Package</th><th>Contents</th></tr></thead>
+          <tbody>
+            <tr><td>sp500</td><td>All S&amp;P 500 constituents</td></tr>
+            <tr><td>nasdaq100</td><td>All Nasdaq 100 constituents</td></tr>
+            <tr><td>all</td><td>Complete dataset (all 1,391 tickers)</td></tr>
+            <tr><td>sector-tech</td><td>Technology sector</td></tr>
+            <tr><td>sector-healthcare</td><td>Healthcare sector</td></tr>
+            <tr><td>sector-financials</td><td>Financials sector</td></tr>
+            <tr><td>quintile-1</td><td>Q1 (least liquid)</td></tr>
+            <tr><td>quintile-5</td><td>Q5 (most liquid)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h2>Error codes</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">400</td><td>Bad request — invalid parameter (check date format, ticker name)</td></tr>
+          <tr><td class="mono">401</td><td>Unauthorized — missing or invalid API key</td></tr>
+          <tr><td class="mono">404</td><td>Not found — ticker doesn't exist in the dataset</td></tr>
+          <tr><td class="mono">429</td><td>Rate limit exceeded — wait and retry (see Retry-After header)</td></tr>
+          <tr><td class="mono">500</td><td>Server error — please report to aelkassabgi@uca.edu</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+title: "HF Data Library"
+message: "If you use this data, please cite it as below."
+type: dataset
+authors:
+  - family-names: Elkassabgi
+    given-names: Ahmed
+    affiliation: "University of Central Arkansas"
+    orcid: "https://orcid.org/0000-0002-5926-7493"
+    email: aelkassabgi@uca.edu
+url: "https://hfdatalibrary.com"
+repository-code: "https://github.com/aelkassabgi/hfdatalibrary"
+license: CC-BY-4.0
+version: "1.0"
+date-released: "2026-04-09"
+keywords:
+  - high-frequency data
+  - intraday
+  - OHLCV
+  - equity
+  - ETF
+  - market microstructure
+  - realized volatility
+  - financial econometrics
+  - data cleaning
+abstract: >-
+  Free, research-grade, high-frequency (1-minute) OHLCV data for 1,391
+  U.S. equities and ETFs, from December 2002 through the present. Three
+  cleaning versions (Raw, Clean, Filled), 27 pre-computed academic
+  variables, full methodology documentation. Updated weekly.
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Elkassabgi
+      given-names: Ahmed
+  title: "The Sensitivity of High-Frequency Empirical Results to Data Cleaning Methodology"
+  journal: "Journal of Financial Econometrics"
+  year: 2026

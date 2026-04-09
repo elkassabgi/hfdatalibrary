@@ -1,0 +1,27 @@
+{
+  "website_updated": "2026-04-09T06:00:00Z",
+  "data_updated": "2026-04-09T06:00:00Z",
+  "update_summary": "Weekly data update: added trading data through April 4, 2026 for all 1,391 tickers.",
+  "version": "1.0",
+  "tickers": 1391,
+  "bars_raw": 1533403126,
+  "bars_clean": 1533014567,
+  "bars_filled": 2342519726,
+  "bars_removed": 388559,
+  "bars_filled_count": 809505159,
+  "trading_days": 5847,
+  "years_of_data": 23,
+  "academic_variables": 27,
+  "start_date": "2002-12-30",
+  "end_date": "2026-04-04",
+  "earliest_date": "1991-01-02",
+  "quintiles": {
+    "q5": {"tickers": 278, "avg_gap_rate": 0.021, "label": "Most liquid"},
+    "q4": {"tickers": 278, "avg_gap_rate": 0.084, "label": ""},
+    "q3": {"tickers": 279, "avg_gap_rate": 0.187, "label": ""},
+    "q2": {"tickers": 278, "avg_gap_rate": 0.325, "label": ""},
+    "q1": {"tickers": 278, "avg_gap_rate": 0.518, "label": "Least liquid"}
+  },
+  "status": "operational",
+  "next_update": "2026-04-13T06:00:00Z"
+}

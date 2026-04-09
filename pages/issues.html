@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Known Issues — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html" class="active">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Known Issues</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Living errata. Every discovered issue documented with date and resolution.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:800px;">
+
+    <div style="background: #fef9ee; border: 1px solid #fde68a; border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 2.5rem;">
+      <strong>Transparency policy:</strong> All data issues are documented here as they are discovered. If you find an issue, please <a href="contact.html">report it</a>. Reporters are credited.
+    </div>
+
+    <h2>Source limitations</h2>
+
+    <h4>IEX exchange coverage (post-March 2022)</h4>
+    <p><strong>Status:</strong> Known, documented</p>
+    <p>Post-March 2022 data is sourced from IEX Exchange HIST, which captures IEX-only activity (approximately 2–3% of consolidated volume). This means post-2022 bars reflect a single-exchange view rather than the full consolidated tape. Volume figures are lower and some bars may be missing for thinly traded names. The <code>source</code> column identifies affected bars.</p>
+
+    <h4>Splice boundary (March 2022)</h4>
+    <p><strong>Status:</strong> Known, adjusted</p>
+    <p>The transition from PiTrading (consolidated tape) to IEX/Alpaca (single exchange) at March 2022 creates a structural break in volume and potentially in price coverage. Step 9 of the cleaning pipeline checks for artificial price jumps at this boundary. Researchers studying time trends in volume should account for this transition.</p>
+
+    <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h2>No other issues reported</h2>
+    <p style="color: var(--gray-500);">This page will be updated as issues are discovered. Check back after each weekly data update.</p>
+
+    <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h3>Report an issue</h3>
+    <p>Email <a href="mailto:aelkassabgi@uca.edu">aelkassabgi@uca.edu</a> with the ticker, date(s), and description. See the <a href="contact.html">contact page</a> for full reporting guidelines.</p>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

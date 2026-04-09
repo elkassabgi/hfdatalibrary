@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sample Code — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html" class="active">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Sample Code</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Get started in Python, R, or Stata. Copy-paste and run.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:900px;">
+
+    <!-- Language tabs -->
+    <div class="tab-nav">
+      <button class="active" onclick="showTab(event, 'python')">Python</button>
+      <button onclick="showTab(event, 'r')">R</button>
+      <button onclick="showTab(event, 'stata')">Stata</button>
+    </div>
+
+    <!-- Python -->
+    <div id="python" class="tab-content active">
+      <h3>Load a parquet file</h3>
+      <pre><code>import pandas as pd
+
+# Load a single ticker (downloaded from hfdatalibrary.com)
+df = pd.read_parquet("AAPL_clean.parquet")
+print(f"Rows: {len(df):,}")
+print(df.head())</code></pre>
+
+      <h3>Query via API</h3>
+      <pre><code>import requests
+import pandas as pd
+from io import StringIO
+
+API_KEY = "your-key-here"
+BASE = "https://api.hfdatalibrary.com/v1"
+
+# Get 1-minute bars for AAPL, January 2024, clean version
+r = requests.get(
+    f"{BASE}/bars/AAPL",
+    headers={"X-API-Key": API_KEY},
+    params={
+        "start": "2024-01-02",
+        "end": "2024-01-31",
+        "version": "clean",
+        "format": "csv"
+    }
+)
+df = pd.read_csv(StringIO(r.text), parse_dates=["datetime"])
+print(f"Bars: {len(df):,}")
+print(df.head())</code></pre>
+
+      <h3>Compute realized volatility</h3>
+      <pre><code>import numpy as np
+
+# 5-minute sampled realized variance
+df["log_return"] = np.log(df["Close"] / df["Close"].shift(1))
+
+# Sample every 5 minutes
+df_5min = df[df["datetime"].dt.minute % 5 == 0].copy()
+df_5min["log_return"] = np.log(df_5min["Close"] / df_5min["Close"].shift(1))
+
+# Daily RV
+daily_rv = df_5min.groupby(df_5min["datetime"].dt.date)["log_return"].apply(
+    lambda x: (x ** 2).sum()
+)
+print("Daily realized variance (5-min):")
+print(daily_rv.head(10))</code></pre>
+
+      <h3>Compare cleaning versions</h3>
+      <pre><code># Load all three versions
+raw = pd.read_parquet("AAPL_raw.parquet")
+clean = pd.read_parquet("AAPL_clean.parquet")
+filled = pd.read_parquet("AAPL_filled.parquet")
+
+print(f"Raw:    {len(raw):>12,} bars")
+print(f"Clean:  {len(clean):>12,} bars")
+print(f"Filled: {len(filled):>12,} bars")
+
+# Check how many bars were filled
+filled_count = filled["is_filled"].sum()
+print(f"Filled bars: {filled_count:,} ({filled_count/len(filled)*100:.1f}%)")</code></pre>
+
+      <h3>BNS jump detection</h3>
+      <pre><code>import numpy as np
+
+def bns_jump_test(returns):
+    """BNS (2006) jump test. Returns z-statistic."""
+    r = returns.dropna().values
+    n = len(r)
+    if n < 10:
+        return np.nan
+
+    # Realized variance
+    rv = np.sum(r ** 2)
+
+    # Bipower variation
+    bv = (np.pi / 2) * np.sum(np.abs(r[1:]) * np.abs(r[:-1]))
+
+    # Quarticity
+    qv = (n / 3) * np.sum(r[1:] ** 2 * r[:-1] ** 2)
+
+    # Theta for finite-sample correction
+    theta = max(1, qv * n / bv ** 2)
+
+    # Z-statistic
+    z = (rv - bv) / np.sqrt(theta * (2 / n) * bv ** 2)
+    return z
+
+# Apply to daily groups
+df["log_return"] = np.log(df["Close"] / df["Close"].shift(1))
+daily_z = df.groupby(df["datetime"].dt.date)["log_return"].apply(bns_jump_test)
+jump_days = (daily_z > 2.326).sum()  # 1% significance
+print(f"Jump days (1% level): {jump_days}")</code></pre>
+    </div>
+
+    <!-- R -->
+    <div id="r" class="tab-content">
+      <h3>Load a parquet file</h3>
+      <pre><code>library(arrow)
+
+# Load a single ticker
+df <- read_parquet("AAPL_clean.parquet")
+cat(sprintf("Rows: %s\n", format(nrow(df), big.mark=",")))
+head(df)</code></pre>
+
+      <h3>Query via API</h3>
+      <pre><code>library(httr)
+library(readr)
+
+api_key <- "your-key-here"
+base_url <- "https://api.hfdatalibrary.com/v1"
+
+resp <- GET(
+  paste0(base_url, "/bars/AAPL"),
+  add_headers("X-API-Key" = api_key),
+  query = list(
+    start = "2024-01-02",
+    end = "2024-01-31",
+    version = "clean",
+    format = "csv"
+  )
+)
+
+df <- read_csv(content(resp, "text"))
+cat(sprintf("Bars: %s\n", format(nrow(df), big.mark=",")))
+head(df)</code></pre>
+
+      <h3>Compute realized volatility</h3>
+      <pre><code>library(dplyr)
+
+df <- df %>%
+  mutate(
+    log_return = log(Close / lag(Close)),
+    date = as.Date(datetime)
+  )
+
+# Daily realized variance (1-min)
+daily_rv <- df %>%
+  group_by(date) %>%
+  summarise(rv_1min = sum(log_return^2, na.rm = TRUE))
+
+head(daily_rv, 10)</code></pre>
+    </div>
+
+    <!-- Stata -->
+    <div id="stata" class="tab-content">
+      <h3>Load data (via CSV)</h3>
+      <pre><code>* Download CSV from the API or convert parquet to CSV first
+import delimited "AAPL_clean.csv", clear
+describe
+summarize Close Volume</code></pre>
+
+      <h3>Compute realized volatility</h3>
+      <pre><code>* Generate log returns
+gen log_return = ln(Close / Close[_n-1])
+
+* Generate date variable
+gen date = dofc(datetime)
+format date %td
+
+* Daily realized variance
+collapse (sum) rv = log_return_sq, by(date)
+gen log_return_sq = log_return^2
+list in 1/10</code></pre>
+
+      <p style="margin-top:1.5rem; color: var(--gray-500); font-size: 0.9rem;">
+        Note: Stata does not natively read parquet files. Use the API with <code>format=csv</code>,
+        or convert parquet to CSV using Python (<code>pd.read_parquet("file.parquet").to_csv("file.csv")</code>).
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+function showTab(e, id) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  e.target.classList.add('active');
+}
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

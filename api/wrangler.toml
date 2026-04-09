@@ -1,0 +1,20 @@
+name = "hfdatalibrary-api"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+CORS_ORIGIN = "https://hfdatalibrary.com"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "hfdatalibrary-data"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hfdatalibrary-db"
+database_id = "a396506e-e78a-4978-bc38-883056f98810"
+
+# Route will be configured via dashboard — token needs Zone Workers Routes permission
+# [[routes]]
+# pattern = "api.hfdatalibrary.com/*"
+# zone_name = "hfdatalibrary.com"

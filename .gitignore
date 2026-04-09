@@ -1,0 +1,5 @@
+.wrangler/
+api/.wrangler/
+node_modules/
+data/raw/
+data/clean/

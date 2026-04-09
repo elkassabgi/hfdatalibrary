@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HF Data Library — Free High-Frequency U.S. Equity Data for Research</title>
+  <meta name="description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Three cleaning versions, 27 pre-computed academic variables, full documentation. Updated weekly.">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="canonical" href="https://hfdatalibrary.com">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="HF Data Library">
+  <meta property="og:description" content="Free high-frequency U.S. equity data for academic research. 1,391 tickers, 1-minute bars, 2002–present.">
+  <meta property="og:url" content="https://hfdatalibrary.com">
+  <meta property="og:type" content="website">
+
+  <!-- Google Dataset Search -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    "name": "HF Data Library",
+    "description": "Free high-frequency (1-minute) OHLCV data for 1,391 U.S. equities and ETFs, 2002-present. Three cleaning versions (Raw, Clean, Filled), 27 pre-computed academic variables, full methodology documentation.",
+    "url": "https://hfdatalibrary.com",
+    "license": "https://creativecommons.org/licenses/by/4.0/",
+    "creator": {
+      "@type": "Person",
+      "name": "Ahmed Elkassabgi",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "University of Central Arkansas"
+      },
+      "identifier": "https://orcid.org/0000-0002-5926-7493"
+    },
+    "distribution": [
+      {
+        "@type": "DataDownload",
+        "encodingFormat": "application/x-parquet",
+        "contentUrl": "https://hfdatalibrary.com/download"
+      }
+    ],
+    "temporalCoverage": "2002-12-30/..",
+    "spatialCoverage": "United States",
+    "variableMeasured": [
+      "Open/High/Low/Close/Volume",
+      "Realized volatility",
+      "Bipower variation",
+      "Roll implied spread",
+      "Corwin-Schultz spread",
+      "Amihud illiquidity",
+      "BNS jump statistic",
+      "Variance ratios",
+      "Return autocorrelation"
+    ],
+    "keywords": [
+      "high-frequency data",
+      "intraday",
+      "OHLCV",
+      "equity",
+      "ETF",
+      "market microstructure",
+      "realized volatility",
+      "financial econometrics"
+    ],
+    "datePublished": "2026-04-09",
+    "version": "1.0"
+  }
+  </script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="navbar">
+  <div class="container">
+    <a href="/" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="pages/data.html">Data</a></li>
+      <li><a href="pages/docs.html">Documentation</a></li>
+      <li><a href="pages/api.html">API</a></li>
+      <li><a href="pages/download.html">Download</a></li>
+      <li><a href="pages/code.html">Code</a></li>
+      <li><a href="pages/cite.html">Cite</a></li>
+      <li><a href="pages/contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <div class="container">
+    <h1>HF Data <span>Library</span></h1>
+    <p class="subtitle">Free, research-grade, high-frequency U.S. equity data for academics and researchers. Documented, version-controlled, and updated weekly.</p>
+
+    <div class="stats-bar">
+      <div class="stat-item">
+        <span class="stat-number" data-meta="tickers-short">1,391</span>
+        <span class="stat-label">Tickers</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-meta="bars-clean-short">1.53B</span>
+        <span class="stat-label">1-Minute Bars</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-meta="years">23+</span>
+        <span class="stat-label">Years of Data</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-meta="variables">27</span>
+        <span class="stat-label">Academic Variables</span>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <a href="pages/download.html" class="btn btn-primary">Download Data</a>
+      <a href="pages/docs.html" class="btn btn-outline">Read the Docs</a>
+      <a href="pages/api.html" class="btn btn-outline">API Access</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── What This Is ── -->
+<section class="section">
+  <div class="container">
+    <div class="feature-row">
+      <div class="feature-text">
+        <h2>What is this?</h2>
+        <p>One-minute OHLCV bars for 1,391 U.S. equities and ETFs, from December 2002 through the present. Sourced from the consolidated tape (CTA/UTP) via PiTrading and IEX Exchange HIST.</p>
+        <p>Three cleaning versions so you can choose the level of processing appropriate for your research. Twenty-seven pre-computed academic variables per ticker per day. Full methodology documentation.</p>
+        <p>Updated every week. No subscription. No paywall. Licensed under <a href="pages/license.html">CC BY 4.0</a>.</p>
+      </div>
+      <div class="feature-visual">
+        <pre><code># Python — load any ticker in seconds
+import pandas as pd
+
+df = pd.read_parquet("AAPL_clean.parquet")
+print(df.head())
+
+# datetime              Open    High    Low     Close   Volume
+# 2002-12-30 09:30:00   0.98    0.99    0.98    0.98    842900
+# 2002-12-30 09:31:00   0.98    0.99    0.98    0.99    521400
+# ...</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Data Versions ── -->
+<section class="section section-alt">
+  <div class="container">
+    <h2 style="text-align:center; margin-bottom:2.5rem;">Three cleaning versions. You choose.</h2>
+    <div class="grid-3">
+      <div class="card version-card raw">
+        <span class="version-tag raw">Raw</span>
+        <h3>Version 1: Raw</h3>
+        <p>Data as received from the source. No outlier removal, no gap-filling. Prices are split/dividend adjusted. <span data-meta="bars-raw">1,533,403,126</span> bars.</p>
+        <p><strong>Best for:</strong> Market microstructure research, missingness analysis, studying the data itself.</p>
+      </div>
+      <div class="card version-card clean">
+        <span class="version-tag clean">Clean</span>
+        <h3>Version 2: Clean</h3>
+        <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. <span data-meta="bars-clean">1,533,014,567</span> bars.</p>
+        <p><strong>Best for:</strong> Volatility estimation, spread measurement, jump detection — most empirical finance.</p>
+      </div>
+      <div class="card version-card filled">
+        <span class="version-tag filled">Filled</span>
+        <h3>Version 3: Filled</h3>
+        <p>Clean data with LOCF gap-filling to produce a regular 390-bar daily grid (09:30–15:59 ET). Every bar flagged as original or filled. <span data-meta="bars-filled">2,342,519,726</span> bars.</p>
+        <p><strong>Best for:</strong> Machine learning, backtesting systems, time-series models requiring regular grids.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Academic Variables ── -->
+<section class="section">
+  <div class="container">
+    <h2 style="text-align:center; margin-bottom:0.5rem;">27 pre-computed academic variables</h2>
+    <p style="text-align:center; color: var(--gray-500); margin-bottom:2.5rem;">Computed daily for each ticker in each cleaning version. Ready to use in your research.</p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-icon">&#963;</div>
+        <h3>Volatility</h3>
+        <p>Realized variance (1-min, 5-min), bipower variation, Parkinson range, Yang-Zhang OHLC</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#8596;</div>
+        <h3>Spreads</h3>
+        <p>Roll (1984) implied spread, Corwin-Schultz (2012) high-low spread</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#8635;</div>
+        <h3>Autocorrelation</h3>
+        <p>First-order return AC(1), variance ratio VR(5), VR(10)</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#9889;</div>
+        <h3>Jump Detection</h3>
+        <p>BNS z-statistic, jump indicators at 1% and 5% significance</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#36;</div>
+        <h3>Liquidity</h3>
+        <p>Amihud illiquidity, daily dollar volume, share volume, observed trade count</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#9733;</div>
+        <h3>Data Quality</h3>
+        <p>Gap rate, observed/filled bar counts, longest gap, bars since last trade</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How to Access ── -->
+<section class="section section-alt">
+  <div class="container">
+    <h2 style="text-align:center; margin-bottom:2.5rem;">Multiple ways to access the data</h2>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-icon">&#8681;</div>
+        <h3>Browser Download</h3>
+        <p>Download individual tickers or pre-packaged bundles (S&amp;P 500, Nasdaq 100, by sector). Click and go — no account needed for basic downloads.</p>
+        <a href="pages/download.html" class="btn btn-primary" style="margin-top:1rem;">Browse Downloads</a>
+      </div>
+      <div class="card">
+        <div class="card-icon">{&thinsp;}</div>
+        <h3>REST API</h3>
+        <p>Programmatic access to any ticker, date range, and version. JSON, CSV, or parquet. Free API key with 300 requests/minute. Python, R, and Stata examples provided.</p>
+        <a href="pages/api.html" class="btn btn-primary" style="margin-top:1rem;">API Docs</a>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#128230;</div>
+        <h3>Bulk Download</h3>
+        <p>Full dataset dump — all 1,391 tickers, all versions, all timeframes. Parquet format. Updated weekly.</p>
+        <a href="pages/download.html#bulk" class="btn btn-primary" style="margin-top:1rem;">Full Dataset</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Comparison ── -->
+<section class="section">
+  <div class="container">
+    <h2 style="text-align:center; margin-bottom:2.5rem;">How this compares</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="comparison-highlight">HF Data Library</th>
+            <th>CRSP/TAQ</th>
+            <th>Yahoo Finance</th>
+            <th>Polygon.io</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Price</strong></td>
+            <td class="comparison-highlight"><strong>Free</strong></td>
+            <td>$25,000+/yr</td>
+            <td>Free</td>
+            <td>$199+/mo</td>
+          </tr>
+          <tr>
+            <td><strong>Frequency</strong></td>
+            <td class="comparison-highlight">1-minute bars</td>
+            <td>Tick-level</td>
+            <td>Daily only</td>
+            <td>1-minute bars</td>
+          </tr>
+          <tr>
+            <td><strong>Cleaning versions</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">3 versions</span></td>
+            <td>1 version</td>
+            <td><span class="comparison-x">None</span></td>
+            <td><span class="comparison-x">None</span></td>
+          </tr>
+          <tr>
+            <td><strong>Cleaning documentation</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">Full pipeline</span></td>
+            <td>Minimal</td>
+            <td><span class="comparison-x">None</span></td>
+            <td><span class="comparison-x">None</span></td>
+          </tr>
+          <tr>
+            <td><strong>Academic variables</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">27 measures</span></td>
+            <td><span class="comparison-x">None</span></td>
+            <td><span class="comparison-x">None</span></td>
+            <td><span class="comparison-x">None</span></td>
+          </tr>
+          <tr>
+            <td><strong>Data quality scores</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">Per-ticker</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td><span class="comparison-x">No</span></td>
+          </tr>
+          <tr>
+            <td><strong>REST API</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">Free</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td>Unofficial</td>
+            <td>Paid</td>
+          </tr>
+          <tr>
+            <td><strong>DOI / Citable</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">Zenodo DOI</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td><span class="comparison-x">No</span></td>
+          </tr>
+          <tr>
+            <td><strong>License</strong></td>
+            <td class="comparison-highlight">CC BY 4.0</td>
+            <td>Restrictive</td>
+            <td>ToS restricted</td>
+            <td>Commercial</td>
+          </tr>
+          <tr>
+            <td><strong>Updated</strong></td>
+            <td class="comparison-highlight">Weekly (automated)</td>
+            <td>Quarterly</td>
+            <td>Daily</td>
+            <td>Real-time</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Citation (will be added when the paper is published) ── -->
+
+<!-- ── Footer ── -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <h4>HF Data Library</h4>
+        <p>Free, research-grade, high-frequency U.S. equity data. Built and maintained by Ahmed Elkassabgi at the University of Central Arkansas.</p>
+        <p style="margin-top:0.75rem;">Licensed under <a href="pages/license.html">CC BY 4.0</a></p>
+      </div>
+      <div>
+        <h4>Data</h4>
+        <ul>
+          <li><a href="pages/data.html">Browse Tickers</a></li>
+          <li><a href="pages/download.html">Download</a></li>
+          <li><a href="pages/versions.html">Data Versions</a></li>
+          <li><a href="pages/dictionary.html">Data Dictionary</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Documentation</h4>
+        <ul>
+          <li><a href="pages/docs.html">Methodology</a></li>
+          <li><a href="pages/api.html">API Reference</a></li>
+          <li><a href="pages/code.html">Sample Code</a></li>
+          <li><a href="pages/changelog.html">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>About</h4>
+        <ul>
+          <li><a href="pages/cite.html">Cite This Data</a></li>
+          <li><a href="pages/license.html">License</a></li>
+          <li><a href="pages/issues.html">Known Issues</a></li>
+          <li><a href="pages/contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="js/site.js"></script>
+<script>
+function copyText(btn) {
+  const block = btn.parentElement;
+  const text = block.querySelector('p').innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+  });
+}
+</script>
+
+</body>
+</html>
