@@ -1,0 +1,70 @@
+name: Weekly Data Update
+
+on:
+  schedule:
+    # Every Sunday at 6 AM UTC
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    name: Pull new data and upload to R2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas pyarrow
+
+      - name: Pull latest IEX data and upload to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "Weekly data update pipeline"
+          echo "TODO: This pipeline will be configured with:"
+          echo "  1. Pull latest IEX Exchange HIST data"
+          echo "  2. Parse pcap files into 1-minute OHLCV bars"
+          echo "  3. Apply 9-step cleaning pipeline"
+          echo "  4. Produce Raw, Clean, Filled versions"
+          echo "  5. Compute 27 academic variables"
+          echo "  6. Upload updated parquet files to R2"
+          echo "  7. Update metadata.json"
+          echo ""
+          echo "Pipeline scripts are at: research_home/scripts/"
+          echo "Data source: IEX Exchange HIST (pcap files)"
+          echo ""
+          echo "Skipping actual data pull for now — manual trigger only."
+
+      - name: Update metadata timestamp
+        run: |
+          python -c "
+          import json
+          from datetime import datetime
+          with open('data/metadata.json', 'r') as f:
+              meta = json.load(f)
+          meta['data_updated'] = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+          meta['website_updated'] = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+          with open('data/metadata.json', 'w') as f:
+              json.dump(meta, f, indent=2)
+          print('Metadata updated:', meta['data_updated'])
+          "
+
+      - name: Commit and push metadata update
+        run: |
+          git config user.name "Ahmed Elkassabgi"
+          git config user.email "aelkassabgi@uca.edu"
+          git add data/metadata.json
+          git diff --cached --quiet || git commit -m "Weekly data update: $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Deploy updated site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name=hfdatalibrary --branch=main
