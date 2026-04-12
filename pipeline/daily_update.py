@@ -25,10 +25,10 @@ Usage:
 from __future__ import annotations
 import os
 import sys
-import gzip
 import json
 import time
 import argparse
+import tempfile
 import traceback
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -65,17 +65,18 @@ def load_universe() -> Set[str]:
     return set(tickers)
 
 
-def stream_pcap(url: str) -> "io.BufferedReader":
-    """Open a streaming reader over a remote pcap (or pcap.gz) URL.
-
-    The reader is wrapped in gzip.GzipFile if the URL ends with .gz.
-    No full file is ever written to disk.
-    """
+def download_pcap(url: str, dest_path: str) -> int:
+    """Download a remote pcap file to a local path. Returns bytes downloaded."""
     req = urllib.request.Request(url, headers={"User-Agent": "hfdatalibrary-pipeline/1.0"})
-    response = urllib.request.urlopen(req, timeout=600)
-    if url.endswith(".gz"):
-        return gzip.GzipFile(fileobj=response)
-    return response
+    bytes_total = 0
+    with urllib.request.urlopen(req, timeout=600) as response, open(dest_path, "wb") as out:
+        while True:
+            chunk = response.read(8 * 1024 * 1024)  # 8 MB chunks
+            if not chunk:
+                break
+            out.write(chunk)
+            bytes_total += len(chunk)
+    return bytes_total
 
 
 def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
@@ -96,18 +97,35 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
         size_mb = float(raw_size) / 1e6
     except (TypeError, ValueError):
         size_mb = 0
-    print(f"[parse_day] {d}: streaming {url} (~{size_mb:.0f} MB)")
+    print(f"[parse_day] {d}: source pcap ~{size_mb:.0f} MB at {url}")
 
-    pcap_stream = stream_pcap(url)
+    # iex_parser only accepts a file path, so we have to download to disk first.
+    # The compressed file is ~9 GB. We delete it immediately after parsing.
+    tmp_dir = tempfile.mkdtemp(prefix="iex_pcap_")
+    pcap_path = os.path.join(tmp_dir, f"iex_tops_{d.strftime('%Y%m%d')}.pcap.gz")
+    print(f"[parse_day] {d}: downloading to {pcap_path}")
+    t_start = time.time()
+    bytes_downloaded = download_pcap(url, pcap_path)
+    t_dl = time.time() - t_start
+    print(f"[parse_day] {d}: downloaded {bytes_downloaded/1e9:.2f} GB in {t_dl/60:.1f} min")
 
     trades_count = 0
     by_symbol: Dict[str, List] = {}
 
-    for trade in parse_tops_pcap(pcap_stream, universe=universe):
-        trades_count += 1
-        by_symbol.setdefault(trade.symbol, []).append(trade)
-        if trades_count % 1_000_000 == 0:
-            print(f"[parse_day]   parsed {trades_count:,} trades...")
+    try:
+        for trade in parse_tops_pcap(pcap_path, universe=universe):
+            trades_count += 1
+            by_symbol.setdefault(trade.symbol, []).append(trade)
+            if trades_count % 1_000_000 == 0:
+                print(f"[parse_day]   parsed {trades_count:,} trades...")
+    finally:
+        # Always delete the pcap to free disk space, even on error
+        try:
+            os.remove(pcap_path)
+            os.rmdir(tmp_dir)
+            print(f"[parse_day] {d}: deleted pcap, freed {bytes_downloaded/1e9:.2f} GB")
+        except OSError:
+            pass
 
     print(f"[parse_day] {d}: parsed {trades_count:,} trades for {len(by_symbol):,} tickers")
 
