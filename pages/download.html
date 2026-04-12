@@ -61,6 +61,7 @@
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="data.html">Data</a></li>
+      <li><a href="tickers.html">Tickers</a></li>
       <li><a href="docs.html">Documentation</a></li>
       <li><a href="api.html">API</a></li>
       <li><a href="download.html" class="active">Download</a></li>
@@ -197,61 +198,226 @@
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <!-- Bundles -->
-    <h2 id="bulk" style="margin-bottom:1.5rem;">Pre-packaged bundles</h2>
-    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Download groups of tickers in a single file. Both versions included (Raw and Clean).</p>
+    <h2 id="bulk" style="margin-bottom:0.5rem;">Pre-packaged bundles</h2>
+    <p style="color: var(--gray-600); margin-bottom:2rem;">Download groups of tickers using the custom bundle builder above. Select a category below to auto-populate the builder, choose your timeframe and version, then download.</p>
+
+    <!-- Index Bundles -->
+    <h3 style="margin-bottom:1rem; color:var(--navy);">By Index</h3>
 
     <div class="download-card">
       <div class="download-info">
         <h4>S&amp;P 500</h4>
-        <p>All current S&amp;P 500 constituents — 500 tickers, all versions</p>
+        <p>Current and former S&amp;P 500 constituents in our universe</p>
       </div>
       <div style="display:flex; align-items:center;">
-        <span class="download-size">~42 GB</span>
-        <a href="#" class="btn btn-primary">Download</a>
+        <button class="btn btn-primary" onclick="loadBundle('sp500')">Select Tickers</button>
       </div>
     </div>
 
     <div class="download-card">
       <div class="download-info">
         <h4>Nasdaq 100</h4>
-        <p>All current Nasdaq 100 constituents — 100 tickers, all versions</p>
+        <p>Current and former Nasdaq 100 constituents in our universe</p>
       </div>
       <div style="display:flex; align-items:center;">
-        <span class="download-size">~12 GB</span>
-        <a href="#" class="btn btn-primary">Download</a>
+        <button class="btn btn-primary" onclick="loadBundle('nasdaq100')">Select Tickers</button>
       </div>
     </div>
 
     <div class="download-card">
       <div class="download-info">
-        <h4>Liquidity Quintile 5 (Most Liquid)</h4>
-        <p>The 278 most actively traded tickers by daily dollar volume</p>
+        <h4>Dow Jones 30</h4>
+        <p>All 30 Dow Jones Industrial Average components</p>
       </div>
       <div style="display:flex; align-items:center;">
-        <span class="download-size">~35 GB</span>
-        <a href="#" class="btn btn-primary">Download</a>
+        <button class="btn btn-primary" onclick="loadBundle('dow30')">Select Tickers</button>
+      </div>
+    </div>
+
+    <!-- Type Bundles -->
+    <h3 style="margin-top:2rem; margin-bottom:1rem; color:var(--navy);">By Type</h3>
+
+    <div class="download-card">
+      <div class="download-info">
+        <h4>All ETFs</h4>
+        <p>All 573 exchange-traded funds — broad market, sector, international, fixed income, commodity, leveraged</p>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <button class="btn btn-primary" onclick="loadBundle('etf')">Select Tickers</button>
       </div>
     </div>
 
     <div class="download-card">
       <div class="download-info">
-        <h4>Liquidity Quintile 1 (Least Liquid)</h4>
-        <p>The 278 least actively traded tickers — highest gap rates</p>
+        <h4>All Stocks</h4>
+        <p>All 818 individual equities</p>
       </div>
       <div style="display:flex; align-items:center;">
-        <span class="download-size">~8 GB</span>
-        <a href="#" class="btn btn-primary">Download</a>
+        <button class="btn btn-primary" onclick="loadBundle('stock')">Select Tickers</button>
       </div>
     </div>
+
+    <!-- Sector Bundles -->
+    <h3 style="margin-top:2rem; margin-bottom:1rem; color:var(--navy);">By Sector (Stocks)</h3>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.75rem;">
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Technology</h4>
+          <p>146 tickers — AAPL, MSFT, NVDA, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Technology')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Healthcare</h4>
+          <p>89 tickers — JNJ, UNH, PFE, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Healthcare')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Financials</h4>
+          <p>94 tickers — JPM, BAC, GS, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Financials')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Consumer Discretionary</h4>
+          <p>134 tickers — AMZN, TSLA, HD, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Consumer Discretionary')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Industrials</h4>
+          <p>88 tickers — CAT, UPS, HON, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Industrials')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Energy</h4>
+          <p>42 tickers — XOM, CVX, COP, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Energy')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Communication Services</h4>
+          <p>55 tickers — GOOG, META, DIS, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Communication Services')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Consumer Staples</h4>
+          <p>45 tickers — PG, KO, WMT, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Consumer Staples')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Materials</h4>
+          <p>39 tickers — LIN, APD, NEM, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Materials')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Real Estate</h4>
+          <p>36 tickers — AMT, PLD, SPG, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Real Estate')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Utilities</h4>
+          <p>29 tickers — NEE, DUK, SO, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Utilities')">Select</button>
+      </div>
+    </div>
+
+    <!-- ETF Bundles -->
+    <h3 style="margin-top:2rem; margin-bottom:1rem; color:var(--navy);">By ETF Category</h3>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.75rem;">
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Broad Market ETFs</h4>
+          <p>94 ETFs — SPY, QQQ, IWM, DIA, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Broad Market')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Sector ETFs</h4>
+          <p>103 ETFs — XLF, XLE, XLK, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Sector')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>International ETFs</h4>
+          <p>115 ETFs — EFA, EEM, VWO, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','International')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Fixed Income ETFs</h4>
+          <p>61 ETFs — TLT, AGG, HYG, LQD, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Fixed Income')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Commodity ETFs</h4>
+          <p>45 ETFs — GLD, SLV, USO, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Commodity')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Leveraged / Inverse ETFs</h4>
+          <p>115 ETFs — TQQQ, SQQQ, SPXU, etc.</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="loadBundle('sector','Leveraged/Inverse')">Select</button>
+      </div>
+    </div>
+
+    <!-- Liquidity Bundles -->
+    <h3 style="margin-top:2rem; margin-bottom:1rem; color:var(--navy);">By Liquidity</h3>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.75rem;">
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Q5 — Most Liquid</h4>
+          <p>278 tickers with the highest trading volume</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="filterTickers('q5')">Select</button>
+      </div>
+      <div class="download-card" style="margin-bottom:0;">
+        <div class="download-info">
+          <h4>Q1 — Least Liquid</h4>
+          <p>278 tickers with the lowest trading volume</p>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="filterTickers('q1')">Select</button>
+      </div>
+    </div>
+
+    <!-- Full Dataset -->
+    <h3 style="margin-top:2rem; margin-bottom:1rem; color:var(--navy);">Full Dataset</h3>
 
     <div class="download-card" style="border-color: var(--gold); background: #fef9ee;">
       <div class="download-info">
-        <h4>Full Dataset</h4>
-        <p>All 1,391 tickers, both versions (Raw and Clean), all timeframes</p>
+        <h4>Everything</h4>
+        <p>All 1,391 tickers — stocks and ETFs, all sectors, all indices</p>
       </div>
       <div style="display:flex; align-items:center;">
-        <span class="download-size">~120 GB</span>
-        <a href="#" class="btn btn-gold">Download All</a>
+        <button class="btn btn-gold" onclick="filterTickers('all')">Select All Tickers</button>
       </div>
     </div>
 
@@ -449,6 +615,7 @@ checkAuth();
 // ── Custom Bundle Builder ──
 let allTickers = [];
 let selectedTickers = new Set();
+let tickerMeta = {};
 
 (async function loadAllTickers() {
   try {
@@ -458,7 +625,29 @@ let selectedTickers = new Set();
       allTickers = d.symbols.map(s => s.ticker);
     }
   } catch (e) {}
+  // Also load ticker metadata for bundle filtering
+  try {
+    const r2 = await fetch('../data/ticker_meta.json');
+    if (r2.ok) tickerMeta = await r2.json();
+  } catch (e) {}
 })();
+
+function loadBundle(type, value) {
+  if (!Object.keys(tickerMeta).length) { alert('Ticker metadata still loading. Try again.'); return; }
+  selectedTickers.clear();
+  for (const [ticker, info] of Object.entries(tickerMeta)) {
+    if (!allTickers.includes(ticker)) continue;
+    if (type === 'sp500' && info.indices && info.indices.includes('S&P 500')) selectedTickers.add(ticker);
+    else if (type === 'nasdaq100' && info.indices && info.indices.includes('Nasdaq 100')) selectedTickers.add(ticker);
+    else if (type === 'dow30' && info.indices && info.indices.includes('Dow 30')) selectedTickers.add(ticker);
+    else if (type === 'etf' && info.type === 'ETF') selectedTickers.add(ticker);
+    else if (type === 'stock' && info.type === 'Stock') selectedTickers.add(ticker);
+    else if (type === 'sector' && info.sector === value) selectedTickers.add(ticker);
+  }
+  renderBundle();
+  // Scroll up to the bundle builder
+  document.getElementById('bundle-selected').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 
 function filterTickers(group) {
   if (!allTickers.length) { alert('Ticker list still loading. Try again.'); return; }

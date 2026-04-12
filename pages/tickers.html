@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ticker List — HF Data Library</title>
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/tickers.html">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <meta name="description" content="Complete list of all 1,391 U.S. equities and ETFs in the HF Data Library, organized by sector, type, and index membership.">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .filter-bar { display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1.5rem; align-items:center; }
+    .filter-bar select, .filter-bar input {
+      padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px;
+      font-family:var(--font-sans); font-size:0.9rem;
+    }
+    .filter-bar input { flex:1; min-width:200px; }
+    .filter-count { font-size:0.9rem; color:var(--gray-500); margin-left:auto; }
+    .ticker-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+    .ticker-table thead { background:var(--navy); color:#fff; position:sticky; top:0; }
+    .ticker-table th { padding:0.6rem 0.75rem; text-align:left; cursor:pointer; user-select:none; white-space:nowrap; }
+    .ticker-table th:hover { background:rgba(255,255,255,0.1); }
+    .ticker-table th .sort-arrow { font-size:0.7rem; margin-left:0.25rem; opacity:0.5; }
+    .ticker-table th.sorted .sort-arrow { opacity:1; }
+    .ticker-table td { padding:0.5rem 0.75rem; border-bottom:1px solid var(--gray-100); }
+    .ticker-table tr:hover { background:var(--blue-pale); }
+    .ticker-table .mono { font-family:var(--font-mono); font-weight:600; }
+    .badge { display:inline-block; padding:0.15rem 0.5rem; border-radius:12px; font-size:0.75rem; font-weight:500; }
+    .badge-stock { background:#dbeafe; color:#1e40af; }
+    .badge-etf { background:#fef3c7; color:#92400e; }
+    .badge-idx { background:#d1fae5; color:#065f46; font-size:0.7rem; margin-left:0.25rem; }
+    .summary-cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:0.75rem; margin-bottom:2rem; }
+    .summary-card { text-align:center; padding:1rem; background:var(--gray-50); border:1px solid var(--gray-200); border-radius:var(--radius); }
+    .summary-card .num { font-family:var(--font-mono); font-size:1.5rem; font-weight:700; color:var(--navy); }
+    .summary-card .lbl { font-size:0.8rem; color:var(--gray-500); margin-top:0.15rem; }
+    .table-wrap { max-height:70vh; overflow-y:auto; border:1px solid var(--gray-200); border-radius:var(--radius); }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="tickers.html" class="active">Tickers</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="stats.html">Stats</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Ticker Universe</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">All 1,391 U.S. equities and ETFs available in the library.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+
+    <!-- Summary cards -->
+    <div class="summary-cards" id="summary-cards"></div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <input type="text" id="search" placeholder="Search by ticker or name..." autocomplete="off">
+      <select id="filter-type">
+        <option value="">All Types</option>
+        <option value="Stock">Stocks</option>
+        <option value="ETF">ETFs</option>
+      </select>
+      <select id="filter-sector">
+        <option value="">All Sectors</option>
+      </select>
+      <select id="filter-index">
+        <option value="">All Indices</option>
+        <option value="S&P 500">S&P 500</option>
+        <option value="Nasdaq 100">Nasdaq 100</option>
+        <option value="Dow 30">Dow 30</option>
+      </select>
+      <span class="filter-count" id="filter-count">1,391 tickers</span>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table class="ticker-table" id="ticker-table">
+        <thead>
+          <tr>
+            <th data-col="ticker">Ticker <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="name">Name <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="type">Type <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="sector">Sector <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="indices">Indices <span class="sort-arrow">&#9650;</span></th>
+          </tr>
+        </thead>
+        <tbody id="ticker-body">
+          <tr><td colspan="5" style="text-align:center; padding:2rem; color:var(--gray-400);">Loading ticker data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+var allData = [];
+var sortCol = 'ticker';
+var sortAsc = true;
+
+async function loadData() {
+  try {
+    var r = await fetch('../data/ticker_meta.json');
+    var meta = await r.json();
+    allData = Object.entries(meta).map(function(e) {
+      return { ticker: e[0], name: e[1].name || '', type: e[1].type || '', sector: e[1].sector || '', indices: e[1].indices || [] };
+    });
+    allData.sort(function(a, b) { return a.ticker.localeCompare(b.ticker); });
+    buildSectorFilter();
+    buildSummary();
+    renderTable();
+  } catch (e) {
+    document.getElementById('ticker-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--red);">Failed to load ticker data.</td></tr>';
+  }
+}
+
+function buildSectorFilter() {
+  var sectors = {};
+  allData.forEach(function(d) { if (d.sector) sectors[d.sector] = (sectors[d.sector] || 0) + 1; });
+  var sel = document.getElementById('filter-sector');
+  Object.keys(sectors).sort().forEach(function(s) {
+    var opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s + ' (' + sectors[s] + ')';
+    sel.appendChild(opt);
+  });
+}
+
+function buildSummary() {
+  var stocks = allData.filter(function(d) { return d.type === 'Stock'; }).length;
+  var etfs = allData.filter(function(d) { return d.type === 'ETF'; }).length;
+  var sp = allData.filter(function(d) { return d.indices.indexOf('S&P 500') >= 0; }).length;
+  var nq = allData.filter(function(d) { return d.indices.indexOf('Nasdaq 100') >= 0; }).length;
+  var dw = allData.filter(function(d) { return d.indices.indexOf('Dow 30') >= 0; }).length;
+  var sectors = {};
+  allData.forEach(function(d) { if (d.type === 'Stock' && d.sector) sectors[d.sector] = 1; });
+
+  document.getElementById('summary-cards').innerHTML =
+    '<div class="summary-card"><div class="num">' + allData.length.toLocaleString() + '</div><div class="lbl">Total Tickers</div></div>' +
+    '<div class="summary-card"><div class="num">' + stocks + '</div><div class="lbl">Stocks</div></div>' +
+    '<div class="summary-card"><div class="num">' + etfs + '</div><div class="lbl">ETFs</div></div>' +
+    '<div class="summary-card"><div class="num">' + Object.keys(sectors).length + '</div><div class="lbl">Sectors</div></div>' +
+    '<div class="summary-card"><div class="num">' + sp + '</div><div class="lbl">S&P 500</div></div>' +
+    '<div class="summary-card"><div class="num">' + nq + '</div><div class="lbl">Nasdaq 100</div></div>' +
+    '<div class="summary-card"><div class="num">' + dw + '</div><div class="lbl">Dow 30</div></div>';
+}
+
+function getFiltered() {
+  var q = document.getElementById('search').value.toUpperCase();
+  var type = document.getElementById('filter-type').value;
+  var sector = document.getElementById('filter-sector').value;
+  var index = document.getElementById('filter-index').value;
+
+  return allData.filter(function(d) {
+    if (q && d.ticker.toUpperCase().indexOf(q) < 0 && d.name.toUpperCase().indexOf(q) < 0) return false;
+    if (type && d.type !== type) return false;
+    if (sector && d.sector !== sector) return false;
+    if (index && d.indices.indexOf(index) < 0) return false;
+    return true;
+  });
+}
+
+function renderTable() {
+  var data = getFiltered();
+  data.sort(function(a, b) {
+    var va = a[sortCol] || '';
+    var vb = b[sortCol] || '';
+    if (sortCol === 'indices') { va = va.join(','); vb = vb.join(','); }
+    var cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return sortAsc ? cmp : -cmp;
+  });
+
+  document.getElementById('filter-count').textContent = data.length.toLocaleString() + ' ticker' + (data.length !== 1 ? 's' : '');
+
+  var html = '';
+  data.forEach(function(d) {
+    var badgeClass = d.type === 'ETF' ? 'badge-etf' : 'badge-stock';
+    var idxBadges = d.indices.map(function(i) {
+      var short = i === 'S&P 500' ? 'S&P' : i === 'Nasdaq 100' ? 'NDX' : i === 'Dow 30' ? 'DOW' : i;
+      return '<span class="badge badge-idx">' + short + '</span>';
+    }).join(' ');
+    html += '<tr>' +
+      '<td class="mono">' + d.ticker + '</td>' +
+      '<td>' + d.name + '</td>' +
+      '<td><span class="badge ' + badgeClass + '">' + d.type + '</span></td>' +
+      '<td>' + d.sector + '</td>' +
+      '<td>' + idxBadges + '</td>' +
+      '</tr>';
+  });
+
+  document.getElementById('ticker-body').innerHTML = html || '<tr><td colspan="5" style="text-align:center; padding:2rem; color:var(--gray-400);">No tickers match your filters.</td></tr>';
+}
+
+// Sort on header click
+document.querySelectorAll('.ticker-table th').forEach(function(th) {
+  th.addEventListener('click', function() {
+    var col = th.getAttribute('data-col');
+    if (sortCol === col) { sortAsc = !sortAsc; } else { sortCol = col; sortAsc = true; }
+    document.querySelectorAll('.ticker-table th').forEach(function(h) { h.classList.remove('sorted'); });
+    th.classList.add('sorted');
+    renderTable();
+  });
+});
+
+// Filter events
+document.getElementById('search').addEventListener('input', renderTable);
+document.getElementById('filter-type').addEventListener('change', renderTable);
+document.getElementById('filter-sector').addEventListener('change', renderTable);
+document.getElementById('filter-index').addEventListener('change', renderTable);
+
+loadData();
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>
