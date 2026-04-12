@@ -37,9 +37,9 @@
       if (progress < 1) {
         requestAnimationFrame(step);
       } else {
-        // Final value with written-out label
+        // Final value with written-out label below
         var billions = (target / 1e9).toFixed(2) + '+ Billion';
-        el.innerHTML = target.toLocaleString() + '<span style="font-size:0.55em; opacity:0.7; margin-left:0.3em;">(' + billions + ')</span>';
+        el.innerHTML = target.toLocaleString() + '<br><span style="font-size:0.45em; opacity:0.7;">(' + billions + ')</span>';
       }
     }
     requestAnimationFrame(step);
