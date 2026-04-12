@@ -91,7 +91,11 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
     url = entry["link"]
-    size_mb = (entry.get("size") or 0) / 1e6
+    raw_size = entry.get("size") or 0
+    try:
+        size_mb = float(raw_size) / 1e6
+    except (TypeError, ValueError):
+        size_mb = 0
     print(f"[parse_day] {d}: streaming {url} (~{size_mb:.0f} MB)")
 
     pcap_stream = stream_pcap(url)
