@@ -92,7 +92,7 @@
 
       <!-- Most downloaded tickers -->
       <div>
-        <h3 style="margin-bottom:1.5rem;">Most Downloaded Tickers</h3>
+        <h3 style="margin-bottom:1.5rem;">Top 3 Most Downloaded Tickers</h3>
         <div id="ticker-chart">
           <p style="color:var(--gray-400);">Loading...</p>
         </div>
@@ -211,7 +211,7 @@ async function loadStats() {
     // Ticker chart
     if (d.top_tickers && d.top_tickers.length > 0) {
       const maxDl = d.top_tickers[0].downloads;
-      document.getElementById('ticker-chart').innerHTML = d.top_tickers.slice(0, 15).map(t =>
+      document.getElementById('ticker-chart').innerHTML = d.top_tickers.slice(0, 3).map(t =>
         '<div class="ticker-bar">' +
           '<span class="name">' + t.ticker + '</span>' +
           '<div class="bar" style="width:' + Math.max(2, (t.downloads / maxDl) * 100) + '%;"></div>' +
@@ -227,7 +227,7 @@ async function loadStats() {
       document.getElementById('institution-list').innerHTML =
         '<div class="inst-list">' +
         d.institutions.slice(0, 20).map(i =>
-          '<div><span class="inst-name">' + i.institution + '</span><span class="inst-count">' + i.users + ' user' + (i.users > 1 ? 's' : '') + '</span></div>'
+          '<div><span class="inst-name">' + i.institution + '</span></div>'
         ).join('') +
         '</div>';
     } else {
