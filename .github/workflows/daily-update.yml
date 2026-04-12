@@ -43,8 +43,20 @@ jobs:
           cache: 'pip'
           cache-dependency-path: pipeline/requirements.txt
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install -r pipeline/requirements.txt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Build Go pcap extractor
+        run: |
+          cd pipeline/pcap_extract
+          go build -o pcap_extract .
+          echo "Built: $(ls -lh pcap_extract)"
 
       - name: Show disk space
         run: df -h /

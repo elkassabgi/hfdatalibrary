@@ -3,5 +3,4 @@ pyarrow>=14.0
 numpy>=1.24
 requests>=2.31
 boto3>=1.34
-iex_parser>=1.7
 pandas_market_calendars>=4.4
