@@ -18,7 +18,7 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 720
     steps:
       - name: Free disk space (remove pre-installed tools we don't need)
         uses: jlumbroso/free-disk-space@main
