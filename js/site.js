@@ -22,6 +22,28 @@
     return Number(n).toLocaleString();
   }
 
+  // Animated counter: counts up from 0 to target over ~2 seconds
+  function animateCounter(el, target) {
+    var duration = 2000;
+    var start = 0;
+    var startTime = null;
+    // Ease-out for a satisfying slowdown at the end
+    function step(timestamp) {
+      if (!startTime) startTime = timestamp;
+      var progress = Math.min((timestamp - startTime) / duration, 1);
+      var eased = 1 - Math.pow(1 - progress, 3);
+      var current = Math.floor(eased * target);
+      el.textContent = current.toLocaleString();
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        // Final value with short label
+        el.textContent = target.toLocaleString() + ' (' + formatBars(target) + ')';
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
   // Format date: "2026-04-09T06:00:00Z" → "April 9, 2026"
   function formatDate(iso) {
     const d = new Date(iso);
@@ -168,6 +190,7 @@
       'bars-raw-short': formatBars(meta.bars_raw),
       'bars-clean-short': formatBars(meta.bars_clean),
       'bars-filled-short': meta.bars_filled ? formatBars(meta.bars_filled) : '',
+      'bars-counter': null,  // handled separately with animation
       'bars-removed': formatComma(meta.bars_removed),
       'bars-filled-count': meta.bars_filled_count ? formatComma(meta.bars_filled_count) : '',
       'trading-days': formatComma(meta.trading_days),
@@ -199,6 +222,12 @@
         el.textContent = values[key];
       }
     });
+
+    // Animated bar counter on home page
+    var counterEl = document.getElementById('bars-counter');
+    if (counterEl && meta.bars_clean) {
+      animateCounter(counterEl, meta.bars_clean);
+    }
 
     // Update quality bar widths
     document.querySelectorAll('[data-bar]').forEach(function (el) {

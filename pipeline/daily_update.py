@@ -301,6 +301,10 @@ def update_metadata(d: date, total_new_bars: int, tickers_updated: int) -> None:
         f"({total_new_bars:,} new bars across {tickers_updated:,} tickers)."
     )
 
+    # Update bar counts
+    meta["bars_raw"] = meta.get("bars_raw", 0) + total_new_bars
+    meta["bars_clean"] = meta.get("bars_clean", 0) + total_new_bars
+
     with open(METADATA_PATH, "w") as f:
         json.dump(meta, f, indent=2)
     print(f"[update_metadata] {METADATA_PATH} updated")
