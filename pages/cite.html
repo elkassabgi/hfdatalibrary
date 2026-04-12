@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cite This Data — HF Data Library</title>
   <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -38,71 +39,19 @@
 <section class="section">
   <div class="container" style="max-width:800px;">
 
-    <h2>Paper citation</h2>
-
-    <!-- Tabs -->
-    <div class="tab-nav">
-      <button class="active" onclick="showTab(event, 'chicago')">Chicago</button>
-      <button onclick="showTab(event, 'bibtex')">BibTeX</button>
-      <button onclick="showTab(event, 'apa')">APA</button>
-      <button onclick="showTab(event, 'mla')">MLA</button>
-      <button onclick="showTab(event, 'harvard')">Harvard</button>
-    </div>
-
-    <div id="chicago" class="tab-content active">
-      <div class="citation-block">
-        <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-        <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, Ahmed. 2026. "The Sensitivity of High-Frequency Empirical Results to Data Cleaning Methodology." <em>Journal of Financial Econometrics</em>.</p>
-      </div>
-    </div>
-
-    <div id="bibtex" class="tab-content">
-      <div class="citation-block">
-        <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-        <pre style="margin:0; background:none; color:inherit; padding:0; font-size:0.85rem;"><code>@article{elkassabgi2026sensitivity,
-  author  = {Elkassabgi, Ahmed},
-  title   = {The Sensitivity of High-Frequency Empirical
-             Results to Data Cleaning Methodology},
-  journal = {Journal of Financial Econometrics},
-  year    = {2026}
-}</code></pre>
-      </div>
-    </div>
-
-    <div id="apa" class="tab-content">
-      <div class="citation-block">
-        <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-        <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, A. (2026). The sensitivity of high-frequency empirical results to data cleaning methodology. <em>Journal of Financial Econometrics</em>.</p>
-      </div>
-    </div>
-
-    <div id="mla" class="tab-content">
-      <div class="citation-block">
-        <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-        <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, Ahmed. "The Sensitivity of High-Frequency Empirical Results to Data Cleaning Methodology." <em>Journal of Financial Econometrics</em>, 2026.</p>
-      </div>
-    </div>
-
-    <div id="harvard" class="tab-content">
-      <div class="citation-block">
-        <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-        <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, A., 2026. The sensitivity of high-frequency empirical results to data cleaning methodology. <em>Journal of Financial Econometrics</em>.</p>
-      </div>
-    </div>
-
-    <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
+    <!-- Paper citation will be added once published -->
 
     <h2>Dataset citation</h2>
     <p>To cite the dataset itself (separate from the paper):</p>
     <div class="citation-block">
       <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
-      <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, Ahmed. 2026. <em>HF Data Library: High-Frequency U.S. Equity Data</em> (version 1.0). https://hfdatalibrary.com. DOI: [pending Zenodo registration].</p>
+      <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, Ahmed. 2026. <em>HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)</em> (version 1.0) [Data set]. Zenodo. <a href="https://doi.org/10.5281/zenodo.19501605">https://doi.org/10.5281/zenodo.19501605</a></p>
     </div>
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <h2>CITATION.cff</h2>
-    <p>A machine-readable <code>CITATION.cff</code> file is available in the <a href="https://github.com/aelkassabgi/hfdatalibrary">GitHub repository</a>. GitHub will display a "Cite this repository" button automatically.</p>
+    <p>A machine-readable <code>CITATION.cff</code> file is available in the <a href="https://github.com/elkassabgi/hfdatalibrary">GitHub repository</a>. GitHub will display a "Cite this repository" button automatically.</p>
     <pre><code>cff-version: 1.2.0
 title: "HF Data Library"
 message: "If you use this data, please cite it as below."
@@ -120,8 +69,13 @@ date-released: "2026-04-09"</code></pre>
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <h2>DOI</h2>
-    <p>A persistent DOI will be issued through <strong>Zenodo</strong> upon the first public data release. Each major version will receive its own DOI, ensuring that citations reference a specific, immutable snapshot of the data.</p>
-    <p>The DOI will be registered with <strong>DataCite</strong> and indexed by <strong>Google Dataset Search</strong>, <strong>re3data.org</strong>, <strong>OpenAIRE</strong>, and <strong>ICPSR</strong>.</p>
+    <p>This dataset has a persistent DOI via Zenodo:</p>
+    <div class="citation-block">
+      <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
+      <p style="margin:0;"><a href="https://doi.org/10.5281/zenodo.19501605" style="font-family:var(--font-mono);">10.5281/zenodo.19501605</a></p>
+    </div>
+    <p>Each major version receives its own DOI, ensuring citations reference a specific, immutable snapshot of the data. The record is indexed by <strong>OpenAIRE</strong>, with submissions pending to <strong>re3data.org</strong>, <strong>Google Dataset Search</strong>, and <strong>ICPSR</strong>.</p>
+    <p><strong>Zenodo record:</strong> <a href="https://zenodo.org/records/19501605">https://zenodo.org/records/19501605</a></p>
 
   </div>
 </section>

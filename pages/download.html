@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Download — HF Data Library</title>
   <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/style.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     .search-box {
       display: flex; gap: 0.5rem; max-width: 500px;
@@ -75,20 +77,14 @@
   </div>
 </section>
 
-<!-- Free access banner -->
-<div style="background: #ecfdf5; border-bottom: 1px solid #a7f3d0; padding: 0.75rem 0; text-align:center;">
+<!-- Free access banner (hidden when logged in) -->
+<div id="free-access-banner" style="background: #ecfdf5; border-bottom: 1px solid #a7f3d0; padding: 0.75rem 0; text-align:center;">
   <div class="container" style="font-size:0.95rem; color:#065f46;">
     <strong>100% Free Access</strong> — Registration required to download data. We track usage for citation metrics only.
   </div>
 </div>
 
-<!-- Auth bar -->
-<div id="auth-bar" style="background:var(--gray-50); border-bottom:1px solid var(--gray-200); padding:0.75rem 0;">
-  <div class="container" style="display:flex; justify-content:space-between; align-items:center;">
-    <div id="auth-status"></div>
-    <div id="auth-actions"></div>
-  </div>
-</div>
+<!-- Auth handled by navbar widget in site.js -->
 
 <!-- Search -->
 <section class="section">
@@ -98,13 +94,35 @@
       <input type="text" id="ticker-search" placeholder="Enter ticker symbol (e.g., AAPL, SPY, MSFT)..." autocomplete="off">
       <button onclick="searchTicker()">Search</button>
     </div>
+    <div style="text-align:center; margin-bottom:1.5rem; display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; align-items:center;">
+      <label style="font-size:0.9rem; color:var(--gray-600);">
+        Timeframe:
+        <select id="timeframe-select" style="margin-left:0.5rem; padding:0.4rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+          <option value="1min">1-minute</option>
+          <option value="5min">5-minute</option>
+          <option value="15min">15-minute</option>
+          <option value="30min">30-minute</option>
+          <option value="hourly">Hourly</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+        </select>
+      </label>
+      <label style="font-size:0.9rem; color:var(--gray-600);">
+        Version:
+        <select id="version-select" style="margin-left:0.5rem; padding:0.4rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+          <option value="clean">Clean</option>
+          <option value="raw">Raw</option>
+        </select>
+      </label>
+    </div>
     <div id="search-results"></div>
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <!-- Bundles -->
     <h2 id="bulk" style="margin-bottom:1.5rem;">Pre-packaged bundles</h2>
-    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Download groups of tickers in a single file. All versions included (Raw, Clean, Filled).</p>
+    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Download groups of tickers in a single file. Both versions included (Raw and Clean).</p>
 
     <div class="download-card">
       <div class="download-info">
@@ -153,7 +171,7 @@
     <div class="download-card" style="border-color: var(--gold); background: #fef9ee;">
       <div class="download-info">
         <h4>Full Dataset</h4>
-        <p>All 1,391 tickers, all versions (Raw, Clean, Filled), all timeframes</p>
+        <p>All 1,391 tickers, both versions (Raw and Clean), all timeframes</p>
       </div>
       <div style="display:flex; align-items:center;">
         <span class="download-size">~120 GB</span>
@@ -178,7 +196,20 @@
         <p style="font-size:0.85rem; color:var(--gray-500);">We collect your name and institution for usage analytics and citation tracking only. We will never share your information.</p>
 
         <div style="margin-top:2rem; padding-top:2rem; border-top:1px solid var(--gray-200);">
-          <h3>Already have an account?</h3>
+          <h3>Sign in with your academic identity</h3>
+          <p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">Fastest way for researchers. No password to remember.</p>
+          <div style="display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1.5rem;">
+            <a href="https://api.hfdatalibrary.com/v1/auth/orcid/start" class="btn" style="background:#a6ce39; color:#fff; text-align:center; display:flex; align-items:center; justify-content:center; gap:0.5rem;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><circle cx="128" cy="128" r="128"/><path fill="#fff" d="M86.3 186.2H70.9V79.1h15.4v107.1zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.5 178 93 148 93h-23.7v79.4zM88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z"/></svg>
+              Sign in with ORCID
+            </a>
+            <a href="https://api.hfdatalibrary.com/v1/auth/google/start" class="btn" style="background:#fff; color:#1f2937; border:1px solid var(--gray-300); text-align:center; display:flex; align-items:center; justify-content:center; gap:0.5rem;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48"><path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/><path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/><path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/></svg>
+              Sign in with Google
+            </a>
+          </div>
+          <hr style="margin:1.5rem 0; border:none; border-top:1px solid var(--gray-200);">
+          <h3>Or sign in with email and password</h3>
           <div class="register-form" style="max-width:100%; margin-top:1rem;">
             <div class="form-group">
               <label for="login-email">Email</label>
@@ -219,7 +250,7 @@
         </div>
         <div class="form-group">
           <label for="reg-role">Role</label>
-          <select id="reg-role">
+          <select id="reg-role" onchange="handleRoleChange()">
             <option value="">Select...</option>
             <option value="faculty">Faculty / Professor</option>
             <option value="postdoc">Postdoctoral researcher</option>
@@ -227,9 +258,17 @@
             <option value="masters">Master's student</option>
             <option value="undergrad">Undergraduate student</option>
             <option value="industry">Industry researcher</option>
-            <option value="other">Other</option>
+            <option value="__other__">Other (specify)</option>
           </select>
+          <input type="text" id="reg-role-custom" placeholder="Enter your role" style="display:none; margin-top:0.5rem; width:100%; padding:0.625rem 0.875rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.95rem; font-family:var(--font-sans);">
         </div>
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label style="display:flex; align-items:flex-start; gap:0.5rem; font-weight:400; font-size:0.9rem;">
+            <input type="checkbox" id="reg-newsletter" checked style="margin-top:0.25rem;">
+            <span>Subscribe to the newsletter for data updates and announcements. You can unsubscribe anytime.</span>
+          </label>
+        </div>
+        <div class="cf-turnstile" data-sitekey="0x4AAAAAAC5ydfuRj9dEK0kY" data-theme="light" style="margin-bottom:1rem;"></div>
         <button class="btn btn-primary" style="width:100%;" onclick="registerUser()" id="reg-btn">Create Account</button>
         <div id="reg-result" style="margin-top:1rem; display:none;"></div>
       </div>
@@ -251,45 +290,85 @@ const API = 'https://api.hfdatalibrary.com';
 let currentUser = null;
 let sessionToken = localStorage.getItem('hfd_session');
 
-// ── Auth State ──
-async function checkAuth() {
-  const bar = document.getElementById('auth-status');
-  const actions = document.getElementById('auth-actions');
+// Handle OAuth callback redirects
+let oauthPendingProvider = null;
+let oauthPendingId = null;
+(function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const session = params.get('session');
+  const oauthSuccess = params.get('oauth_success');
+  const oauthError = params.get('oauth_error');
+  const oauthProvider = params.get('oauth_provider');
+  const oauthId = params.get('oauth_id');
+  const oauthName = params.get('oauth_name');
 
-  if (!sessionToken) {
-    bar.innerHTML = '<span style="color:var(--gray-500);">Not logged in — <a href="#register">register or log in</a> to download data.</span>';
-    actions.innerHTML = '';
-    currentUser = null;
-    return;
+  if (oauthSuccess && session) {
+    localStorage.setItem('hfd_session', session);
+    sessionToken = session;
+    // Clean URL (remove hash and query params) and scroll to top
+    window.history.replaceState({}, document.title, window.location.pathname);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    // Show success toast
+    setTimeout(() => {
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:fixed; top:80px; right:1.5rem; background:#059669; color:#fff; padding:1rem 1.5rem; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:9999; font-weight:500; display:flex; align-items:center; gap:0.5rem; animation:slideIn 0.3s ease-out;';
+      toast.innerHTML = '<span style="font-size:1.2rem;">&#10003;</span> <span>Successfully signed in!</span>';
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        toast.style.transition = 'opacity 0.4s';
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+      }, 3000);
+    }, 100);
   }
+  if (oauthError) {
+    alert('Sign-in failed: ' + oauthError + '. Please try again or use email/password.');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+  if (oauthProvider === 'orcid' && oauthId) {
+    // User authorized via ORCID but has no account yet — pre-fill registration
+    oauthPendingProvider = 'orcid';
+    oauthPendingId = oauthId;
+    // Wait for DOM to be ready, then show banner and pre-fill
+    setTimeout(() => {
+      const nameField = document.getElementById('reg-name');
+      if (nameField && oauthName) nameField.value = decodeURIComponent(oauthName);
 
+      // Show ORCID banner above the registration form
+      const regForm = document.querySelector('.register-form');
+      if (regForm) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#ecfdf5; border:1px solid #a6ce39; border-radius:8px; padding:1rem; margin-bottom:1.5rem;';
+        banner.innerHTML =
+          '<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256" fill="#a6ce39"><circle cx="128" cy="128" r="128"/><path fill="#fff" d="M86.3 186.2H70.9V79.1h15.4v107.1zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.5 178 93 148 93h-23.7v79.4zM88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z"/></svg>' +
+            '<strong style="color:#065f46;">ORCID verified</strong>' +
+          '</div>' +
+          '<p style="color:#047857; font-size:0.9rem; margin:0;">Your ORCID iD <code style="user-select:all;">' + oauthId + '</code> will be linked to this account. You will be able to sign in with ORCID next time.</p>';
+        regForm.insertBefore(banner, regForm.firstChild);
+      }
+      // Scroll to registration form
+      document.getElementById('register')?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+    window.history.replaceState({}, document.title, window.location.pathname + '#register');
+  }
+})();
+
+// Fetch current user on page load (for search/download to work)
+async function checkAuth() {
+  if (!sessionToken) { currentUser = null; return; }
   try {
     const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + sessionToken } });
     if (r.ok) {
       currentUser = await r.json();
-      bar.innerHTML = '<span>Logged in as <strong>' + currentUser.name + '</strong> (' + currentUser.institution + ')</span>';
-      actions.innerHTML = '<span style="font-size:0.8rem; color:var(--gray-400); margin-right:1rem;">API Key: <code>' + currentUser.api_key + '</code></span>' +
-        '<button class="btn btn-sm btn-outline" style="color:var(--gray-600); border-color:var(--gray-300); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="logout()">Logout</button>';
+      // Hide the "Registration required" banner for logged-in users
+      const banner = document.getElementById('free-access-banner');
+      if (banner) banner.style.display = 'none';
     } else {
-      localStorage.removeItem('hfd_session');
-      sessionToken = null;
-      currentUser = null;
-      checkAuth();
+      localStorage.removeItem('hfd_session'); sessionToken = null; currentUser = null;
     }
-  } catch (e) {
-    bar.innerHTML = '<span style="color:var(--gray-500);">Not logged in</span>';
-    currentUser = null;
-  }
+  } catch (e) { currentUser = null; }
 }
-
-async function logout() {
-  await fetch(API + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + sessionToken } });
-  localStorage.removeItem('hfd_session');
-  sessionToken = null;
-  currentUser = null;
-  checkAuth();
-}
-
 checkAuth();
 
 // ── Login ──
@@ -335,6 +414,29 @@ async function requestReset() {
 
 document.getElementById('login-password').addEventListener('keyup', function(e) { if (e.key === 'Enter') loginUser(); });
 
+function handleRoleChange() {
+  const sel = document.getElementById('reg-role').value;
+  document.getElementById('reg-role-custom').style.display = sel === '__other__' ? 'block' : 'none';
+}
+
+// ── Signed download — request a short-lived token and open it ──
+async function downloadViaToken(ticker, format) {
+  if (!sessionToken) { alert('Please log in first.'); return; }
+  const version = document.getElementById('version-select').value;
+  const timeframe = document.getElementById('timeframe-select').value;
+  try {
+    const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
+      headers: { 'Authorization': 'Bearer ' + sessionToken }
+    });
+    const data = await r.json();
+    if (r.ok && data.url) {
+      window.location.href = data.url;
+    } else {
+      alert(data.error || 'Failed to get download link');
+    }
+  } catch (e) { alert('Connection error'); }
+}
+
 // ── Ticker Search ──
 async function searchTicker() {
   const q = document.getElementById('ticker-search').value.trim().toUpperCase();
@@ -342,31 +444,32 @@ async function searchTicker() {
   const results = document.getElementById('search-results');
   results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Searching...</p>';
 
+  if (!currentUser) {
+    results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Please <a href="#register">register or log in</a> to download data.</p>';
+    return;
+  }
+
+  function tickerCard(ticker) {
+    return '<div class="download-card" style="margin-bottom:0.5rem;">' +
+      '<div class="download-info"><h4>' + ticker + '</h4>' +
+      '<p>Click below to download with the version + timeframe selected above.</p></div>' +
+      '<button onclick="downloadViaToken(\'' + ticker + '\',\'parquet\')" class="btn btn-primary" style="margin-right:0.25rem;">Parquet</button>' +
+      '<button onclick="downloadViaToken(\'' + ticker + '\',\'csv\')" class="btn btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.5rem 0.75rem; font-size:0.85rem;">CSV</button>' +
+      '</div>';
+  }
+
   try {
     const r = await fetch(API + '/v1/symbols/' + q);
     if (r.ok) {
-      const data = await r.json();
-      const versions = Object.entries(data.versions).map(([v, info]) =>
-        '<div class="download-card" style="margin-bottom:0.5rem;">' +
-          '<div class="download-info"><h4>' + q + ' — ' + v + '</h4>' +
-          '<p>Size: ' + (info.size_bytes / 1e6).toFixed(1) + ' MB</p></div>' +
-          '<a href="' + API + '/v1/download/' + q + '?version=' + v + '" class="btn btn-primary">Download</a>' +
-        '</div>'
-      ).join('');
-      results.innerHTML = versions;
+      // Exact ticker match
+      results.innerHTML = tickerCard(q);
     } else {
       // Try partial match from full list
       const r2 = await fetch(API + '/v1/symbols');
       const all = await r2.json();
       const matches = all.symbols.filter(s => s.ticker.includes(q)).slice(0, 10);
       if (matches.length > 0) {
-        results.innerHTML = matches.map(s =>
-          '<div class="download-card" style="margin-bottom:0.5rem;">' +
-            '<div class="download-info"><h4>' + s.ticker + '</h4>' +
-            '<p>Size: ' + (s.size_bytes / 1e6).toFixed(1) + ' MB</p></div>' +
-            '<a href="' + API + '/v1/download/' + s.ticker + '?version=clean" class="btn btn-primary">Download</a>' +
-          '</div>'
-        ).join('');
+        results.innerHTML = matches.map(s => tickerCard(s.ticker)).join('');
       } else {
         results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">No results found for <strong>' + q + '</strong></p>';
       }
@@ -386,7 +489,18 @@ async function registerUser() {
   const password = document.getElementById('reg-password').value;
   const institution = document.getElementById('reg-institution').value.trim();
   const country = document.getElementById('reg-country').value.trim();
-  const role = document.getElementById('reg-role').value;
+  let role = document.getElementById('reg-role').value;
+  if (role === '__other__') {
+    role = document.getElementById('reg-role-custom').value.trim();
+    if (!role) { document.getElementById('reg-result').style.display = 'block'; document.getElementById('reg-result').innerHTML = '<p style="color:var(--red); margin:0;">Please specify your role.</p>'; return; }
+  }
+  const newsletter = document.getElementById('reg-newsletter').checked;
+  const turnstileToken = (typeof turnstile !== 'undefined') ? turnstile.getResponse() : '';
+  if (!turnstileToken) {
+    document.getElementById('reg-result').style.display = 'block';
+    document.getElementById('reg-result').innerHTML = '<p style="color:var(--red); margin:0;">Please complete the CAPTCHA.</p>';
+    return;
+  }
   const result = document.getElementById('reg-result');
   const btn = document.getElementById('reg-btn');
 
@@ -408,7 +522,11 @@ async function registerUser() {
     const r = await fetch(API + '/v1/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password, institution, country, role })
+      body: JSON.stringify({
+        name, email, password, institution, country, role, newsletter,
+        turnstile_token: turnstileToken,
+        orcid_id: oauthPendingProvider === 'orcid' ? oauthPendingId : undefined
+      })
     });
     const data = await r.json();
 

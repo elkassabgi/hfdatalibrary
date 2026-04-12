@@ -290,7 +290,7 @@ Every page, every file, every download includes:
 - **Author:** Ahmed Elkassabgi
 - **Affiliation:** University of Central Arkansas
 - **ORCID:** 0000-0002-5926-7493
-- **Contact:** aelkassabgi@uca.edu
+- **Contact:** admin@hfdatalibrary.com
 - **Paper:** Elkassabgi (2026), "The Sensitivity of High-Frequency Empirical Results to Data Cleaning Methodology," Journal of Financial Econometrics
 - **License:** CC BY 4.0
 

@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /pages/admin.html
+Disallow: /pages/account.html
+Disallow: /pages/verify.html
+Disallow: /pages/reset.html
+Disallow: /pages/unsubscribe.html
+
+Sitemap: https://hfdatalibrary.com/sitemap.xml

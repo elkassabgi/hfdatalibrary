@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Privacy Policy</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Effective date: April 10, 2026</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:800px;">
+
+    <p>This Privacy Policy explains what information I collect, how I use it, and your rights regarding your data.</p>
+
+    <h2>1. What I Collect</h2>
+    <h3>Account information (provided by you)</h3>
+    <ul style="margin-left:1.5rem;">
+      <li>Name</li>
+      <li>Email address</li>
+      <li>Institution / affiliation</li>
+      <li>Country</li>
+      <li>Role (faculty, PhD student, etc.)</li>
+      <li>Password (stored as a PBKDF2-SHA256 hash — I cannot see your password)</li>
+      <li>Newsletter subscription preference</li>
+    </ul>
+
+    <h3>Usage information (collected automatically)</h3>
+    <ul style="margin-left:1.5rem;">
+      <li>IP address (on login, registration, and download)</li>
+      <li>User-agent string (browser/device identifier)</li>
+      <li>Country (derived from IP by Cloudflare)</li>
+      <li>Timestamps of logins, downloads, and API requests</li>
+      <li>Tickers and data versions you download</li>
+      <li>Total download volume (bytes)</li>
+    </ul>
+
+    <h2>2. Why I Collect It</h2>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>Account management:</strong> to let you log in and download data</li>
+      <li><strong>Citation tracking:</strong> to know which institutions and countries use the data, for grant reports and academic credibility</li>
+      <li><strong>Security:</strong> to detect and prevent abuse, fake accounts, and unauthorized access</li>
+      <li><strong>Service improvement:</strong> to understand which tickers are most used and prioritize additions</li>
+      <li><strong>Communication:</strong> to send account-related emails (verification, password reset) and, if you opt in, the newsletter</li>
+    </ul>
+
+    <h2>3. Who Has Access</h2>
+    <p>Your data is stored in Cloudflare D1 (a managed database) and accessed only by:</p>
+    <ul style="margin-left:1.5rem;">
+      <li>Ahmed Elkassabgi (me) — the sole administrator</li>
+      <li>Cloudflare (as the infrastructure provider) — governed by Cloudflare's privacy policy</li>
+    </ul>
+    <p><strong>I will never sell, rent, or share your personal information with third parties</strong> except as required by law or as listed below.</p>
+
+    <h2>4. Third-Party Services</h2>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>Cloudflare</strong> — hosting, DNS, CDN, DDoS protection, analytics</li>
+      <li><strong>Resend</strong> — transactional and newsletter emails (receives recipient email addresses)</li>
+      <li><strong>Cloudflare Turnstile</strong> — CAPTCHA on registration (receives IP and browser fingerprint)</li>
+    </ul>
+
+    <h2>5. Cookies and Local Storage</h2>
+    <p>The site uses:</p>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>Session cookie</strong> (<code>hfd_session</code>) — keeps you logged in for 30 days; marked HttpOnly and Secure</li>
+      <li><strong>Local storage</strong> — stores your session token for API access</li>
+      <li>No third-party tracking cookies, no Google Analytics, no advertising pixels</li>
+    </ul>
+
+    <h2>6. Data Retention</h2>
+    <ul style="margin-left:1.5rem;">
+      <li>Account information: retained while your account is active</li>
+      <li>Login history and download logs: retained indefinitely for security and citation tracking</li>
+      <li>Deleted accounts: personal information is permanently removed; anonymized usage counts may be retained for statistics</li>
+    </ul>
+
+    <h2>7. Your Rights (GDPR and CCPA)</h2>
+    <p>You have the right to:</p>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>Access</strong> — request a copy of all data I hold about you</li>
+      <li><strong>Correction</strong> — update inaccurate information in your profile</li>
+      <li><strong>Deletion</strong> — request complete removal of your account and personal data</li>
+      <li><strong>Portability</strong> — request your data in a machine-readable format</li>
+      <li><strong>Object</strong> — opt out of the newsletter or any non-essential communications</li>
+      <li><strong>Withdraw consent</strong> — stop using the Service at any time</li>
+    </ul>
+    <p>To exercise any of these rights, email <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a>. Requests will be honored within 30 days.</p>
+
+    <h2>8. Security</h2>
+    <p>I take security seriously:</p>
+    <ul style="margin-left:1.5rem;">
+      <li>Passwords are hashed with PBKDF2-SHA256 (100,000 iterations)</li>
+      <li>All traffic is encrypted via HTTPS (TLS 1.3)</li>
+      <li>Admin accounts require two-factor authentication</li>
+      <li>Rate limiting and CAPTCHA protect against abuse</li>
+      <li>Audit logs track administrative actions</li>
+    </ul>
+
+    <h2>9. International Data Transfers</h2>
+    <p>The Service uses Cloudflare's global network. Your data may be stored or processed in Cloudflare data centers worldwide. Cloudflare complies with GDPR, CCPA, and other major privacy frameworks.</p>
+
+    <h2>10. Children's Privacy</h2>
+    <p>The Service is intended for academic and research use and is not directed at children under 13. I do not knowingly collect information from children.</p>
+
+    <h2>11. Changes to This Policy</h2>
+    <p>This Privacy Policy may be updated. Material changes will be announced via the newsletter and on the site. The "Effective date" at the top will reflect the most recent version.</p>
+
+    <h2>12. Contact</h2>
+    <p>Questions about this Privacy Policy or to exercise your data rights:</p>
+    <p>Ahmed Elkassabgi<br>
+    University of Central Arkansas<br>
+    <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a></p>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

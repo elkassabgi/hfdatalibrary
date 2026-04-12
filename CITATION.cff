@@ -1,4 +1,5 @@
 cff-version: 1.2.0
+doi: 10.5281/zenodo.19501605
 title: "HF Data Library"
 message: "If you use this data, please cite it as below."
 type: dataset
@@ -7,7 +8,7 @@ authors:
     given-names: Ahmed
     affiliation: "University of Central Arkansas"
     orcid: "https://orcid.org/0000-0002-5926-7493"
-    email: aelkassabgi@uca.edu
+    email: admin@hfdatalibrary.com
 url: "https://hfdatalibrary.com"
 repository-code: "https://github.com/aelkassabgi/hfdatalibrary"
 license: CC-BY-4.0

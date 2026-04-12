@@ -6,6 +6,7 @@
   <title>Documentation — HF Data Library</title>
   <meta name="description" content="Full methodology documentation for the HF Data Library. Nine-step cleaning pipeline, data sources, adjustment methods, and quality metrics.">
   <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -44,12 +45,12 @@
       <a href="versions.html" class="card" style="text-decoration:none; color:inherit;">
         <div class="card-icon">&#128202;</div>
         <h3>Data Versions</h3>
-        <p>Raw, Clean, and Filled — what each version contains and who should use it.</p>
+        <p>Raw and Clean — what each version contains and who should use it.</p>
       </a>
       <a href="dictionary.html" class="card" style="text-decoration:none; color:inherit;">
         <div class="card-icon">&#128214;</div>
         <h3>Data Dictionary</h3>
-        <p>Every column, data type, and description. All 27 computed academic variables.</p>
+        <p>Every column, data type, and description. All 25 computed academic variables.</p>
       </a>
       <a href="api.html" class="card" style="text-decoration:none; color:inherit;">
         <div class="card-icon">{&thinsp;}</div>
@@ -86,7 +87,7 @@
     <p>The splice boundary (March 2022) is documented, and both sources are flagged in the <code>source</code> column of every file.</p>
 
     <h3 style="margin-top:2.5rem;">Nine-step cleaning pipeline</h3>
-    <p>Version 2 (Clean) applies the following pipeline. Each step is applied in order. A bar that fails any step is removed.</p>
+    <p>The Clean version applies the following pipeline. Each step is applied in order. A bar that fails any step is removed.</p>
 
     <div class="table-wrap">
       <table>
@@ -147,10 +148,6 @@
       </table>
     </div>
     <p><strong>Bars removed:</strong> 388,559 (0.025% of total). The cleaning is conservative by design.</p>
-
-    <h3 style="margin-top:2.5rem;">Gap-filling (Version 3: Filled)</h3>
-    <p>The regular trading day has 390 one-minute bars (09:30–15:59 ET). When a bar is missing in the Clean version, Version 3 fills it using Last Observation Carried Forward (LOCF): the previous bar's Close price is propagated to Open, High, Low, and Close, and Volume is set to zero. Every filled bar is flagged with <code>is_filled = True</code>.</p>
-    <p>LOCF introduces known biases (stale prices suppress volatility, compress spreads, and dampen autocorrelation). These biases are documented and quantified in the accompanying paper. Researchers who need a regular grid should use Version 3 with awareness of these effects.</p>
 
     <h3 style="margin-top:2.5rem;">Coverage</h3>
     <ul style="margin-left:1.5rem;">

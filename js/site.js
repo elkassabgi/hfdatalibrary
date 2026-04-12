@@ -72,6 +72,90 @@
     }
   }
 
+  // ── User Widget in Navbar ──
+  const API_BASE = 'https://api.hfdatalibrary.com';
+  const isSubpage2 = window.location.pathname.includes('/pages/');
+  const downloadUrl = isSubpage2 ? 'download.html' : 'pages/download.html';
+
+  async function buildUserWidget() {
+    const navLinks = document.querySelector('.nav-links');
+    if (!navLinks) return;
+
+    const sessionToken = localStorage.getItem('hfd_session');
+    let user = null;
+
+    if (sessionToken) {
+      try {
+        const r = await fetch(API_BASE + '/v1/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + sessionToken }
+        });
+        if (r.ok) user = await r.json();
+      } catch (e) {}
+    }
+
+    // Remove existing widget if any
+    const existing = document.getElementById('nav-user-widget');
+    if (existing) existing.remove();
+
+    const li = document.createElement('li');
+    li.id = 'nav-user-widget';
+    li.style.marginLeft = '0.5rem';
+
+    if (user) {
+      const vipBadge = user.is_vip
+        ? '<span style="display:inline-block; background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332; font-size:0.6rem; font-weight:700; padding:0.1em 0.4em; border-radius:3px; margin-left:0.25rem; letter-spacing:0.05em; text-transform:uppercase;">&#9733;</span>'
+        : '';
+      const firstName = (user.name || '').split(' ')[0];
+      li.style.position = 'relative';
+      li.innerHTML =
+        '<div style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.6rem; color:#fff; font-size:0.85rem; cursor:pointer; white-space:nowrap;" onclick="document.getElementById(\'user-dropdown\').style.display = document.getElementById(\'user-dropdown\').style.display === \'block\' ? \'none\' : \'block\'">' +
+          '<span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background:var(--gold); color:var(--navy); border-radius:50%; font-weight:700; font-size:0.7rem;">' + (user.name || 'U')[0].toUpperCase() + '</span>' +
+          '<span>' + firstName + '</span>' + vipBadge +
+          '<span style="font-size:0.65rem; opacity:0.7;">&#9660;</span>' +
+        '</div>' +
+        '<div id="user-dropdown" style="display:none; position:absolute; top:calc(100% + 0.5rem); right:0; background:#fff; border:1px solid var(--gray-200); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0.5rem 0; min-width:220px; z-index:101;">' +
+          '<div style="padding:0.75rem 1rem; border-bottom:1px solid var(--gray-100);">' +
+            '<div style="font-weight:600; color:var(--navy);">' + user.name + '</div>' +
+            '<div style="font-size:0.8rem; color:var(--gray-500);">' + user.email + '</div>' +
+          '</div>' +
+          '<a href="' + (isSubpage2 ? 'account.html' : 'pages/account.html') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
+          '<a href="' + downloadUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Downloads</a>' +
+          (user.is_admin ? '<a href="' + (isSubpage2 ? 'admin.html' : 'pages/admin.html') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
+          '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">Log out</div>' +
+        '</div>';
+    } else {
+      li.innerHTML =
+        '<a href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600; white-space:nowrap;">Sign in</a>';
+    }
+
+    navLinks.appendChild(li);
+
+    // Expose logout
+    window.__hfdLogout = async function() {
+      const t = localStorage.getItem('hfd_session');
+      if (t) {
+        try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {}
+      }
+      localStorage.removeItem('hfd_session');
+      window.location.reload();
+    };
+
+    // VIP site-wide banner
+    if (user && user.is_vip) {
+      const existingBanner = document.getElementById('vip-banner');
+      if (!existingBanner) {
+        const banner = document.createElement('div');
+        banner.id = 'vip-banner';
+        banner.style.cssText = 'background:linear-gradient(90deg,#1a2332 0%,#2a3a5a 50%,#1a2332 100%); color:#d4a843; padding:0.4rem 0; text-align:center; font-size:0.8rem; font-weight:500; letter-spacing:0.05em; border-bottom:1px solid #d4a843;';
+        banner.innerHTML = '&#9733; VIP MEMBER &#9733; &nbsp;&nbsp; You have access to premium features and priority support.';
+        const navbar = document.querySelector('.navbar');
+        if (navbar) navbar.parentNode.insertBefore(banner, navbar.nextSibling);
+      }
+    }
+  }
+
+  buildUserWidget();
+
   // Populate all elements with data-meta attribute
   function populateData(meta) {
     // Map of data-meta values to their display values

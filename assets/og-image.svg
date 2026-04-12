@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a2332"/>
+      <stop offset="100%" stop-color="#243044"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Grid decoration -->
+  <g stroke="#d4a843" stroke-width="1" opacity="0.1">
+    <line x1="0" y1="100" x2="1200" y2="100"/>
+    <line x1="0" y1="200" x2="1200" y2="200"/>
+    <line x1="0" y1="300" x2="1200" y2="300"/>
+    <line x1="0" y1="400" x2="1200" y2="400"/>
+    <line x1="0" y1="500" x2="1200" y2="500"/>
+  </g>
+
+  <!-- Candle chart decoration -->
+  <g opacity="0.15">
+    <rect x="80" y="250" width="10" height="120" fill="#059669"/>
+    <line x1="85" y1="230" x2="85" y2="390" stroke="#059669" stroke-width="2"/>
+    <rect x="120" y="200" width="10" height="90" fill="#059669"/>
+    <line x1="125" y1="180" x2="125" y2="310" stroke="#059669" stroke-width="2"/>
+    <rect x="160" y="240" width="10" height="70" fill="#dc2626"/>
+    <line x1="165" y1="220" x2="165" y2="330" stroke="#dc2626" stroke-width="2"/>
+    <rect x="200" y="180" width="10" height="110" fill="#059669"/>
+    <line x1="205" y1="150" x2="205" y2="310" stroke="#059669" stroke-width="2"/>
+    <rect x="1000" y="220" width="10" height="80" fill="#dc2626"/>
+    <line x1="1005" y1="200" x2="1005" y2="320" stroke="#dc2626" stroke-width="2"/>
+    <rect x="1040" y="190" width="10" height="130" fill="#059669"/>
+    <line x1="1045" y1="170" x2="1045" y2="340" stroke="#059669" stroke-width="2"/>
+    <rect x="1080" y="240" width="10" height="100" fill="#059669"/>
+    <line x1="1085" y1="220" x2="1085" y2="360" stroke="#059669" stroke-width="2"/>
+  </g>
+
+  <!-- Title -->
+  <text x="600" y="230" font-family="Georgia, serif" font-size="72" font-weight="700" text-anchor="middle" fill="#ffffff">HF Data <tspan fill="#d4a843">Library</tspan></text>
+
+  <!-- Subtitle -->
+  <text x="600" y="290" font-family="Inter, sans-serif" font-size="28" text-anchor="middle" fill="rgba(255,255,255,0.7)">Free, research-grade, high-frequency U.S. equity data</text>
+
+  <!-- Stats -->
+  <g font-family="JetBrains Mono, monospace" fill="#d4a843">
+    <text x="380" y="420" font-size="52" font-weight="700" text-anchor="middle">1,391</text>
+    <text x="600" y="420" font-size="52" font-weight="700" text-anchor="middle">1.53B</text>
+    <text x="820" y="420" font-size="52" font-weight="700" text-anchor="middle">27</text>
+  </g>
+  <g font-family="Inter, sans-serif" fill="rgba(255,255,255,0.6)" font-size="18" text-anchor="middle">
+    <text x="380" y="455">TICKERS</text>
+    <text x="600" y="455">1-MINUTE BARS</text>
+    <text x="820" y="455">ACADEMIC VARIABLES</text>
+  </g>
+
+  <!-- Footer -->
+  <text x="600" y="560" font-family="Inter, sans-serif" font-size="22" text-anchor="middle" fill="rgba(255,255,255,0.5)">hfdatalibrary.com &#183; Ahmed Elkassabgi &#183; University of Central Arkansas</text>
+</svg>

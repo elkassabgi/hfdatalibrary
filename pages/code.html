@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sample Code — HF Data Library</title>
   <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -96,18 +97,12 @@ print("Daily realized variance (5-min):")
 print(daily_rv.head(10))</code></pre>
 
       <h3>Compare cleaning versions</h3>
-      <pre><code># Load all three versions
+      <pre><code># Load both versions
 raw = pd.read_parquet("AAPL_raw.parquet")
 clean = pd.read_parquet("AAPL_clean.parquet")
-filled = pd.read_parquet("AAPL_filled.parquet")
 
 print(f"Raw:    {len(raw):>12,} bars")
-print(f"Clean:  {len(clean):>12,} bars")
-print(f"Filled: {len(filled):>12,} bars")
-
-# Check how many bars were filled
-filled_count = filled["is_filled"].sum()
-print(f"Filled bars: {filled_count:,} ({filled_count/len(filled)*100:.1f}%)")</code></pre>
+print(f"Clean:  {len(clean):>12,} bars")</code></pre>
 
       <h3>BNS jump detection</h3>
       <pre><code>import numpy as np

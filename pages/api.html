@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>API Reference — HF Data Library</title>
   <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -64,7 +65,87 @@
     <p>All requests require an API key passed as a header:</p>
     <pre><code>curl -H "X-API-Key: your-key-here" \
   https://api.hfdatalibrary.com/v1/symbols</code></pre>
-    <p>API keys are free. <a href="download.html#register">Register here</a> with your name, institution, and email.</p>
+    <div id="api-key-info">
+      <p>API keys are free and expire every 30 days. <a href="download.html#register">Register here</a> with your name, institution, and email.</p>
+    </div>
+
+    <script>
+    let currentApiKey = '';
+    let keyVisible = false;
+
+    function maskKey(k) {
+      if (!k) return '';
+      return k.slice(0, 4) + '•'.repeat(Math.max(0, k.length - 8)) + k.slice(-4);
+    }
+
+    function renderApiKey(u) {
+      const expires = u.api_key_expires_at ? new Date(u.api_key_expires_at) : null;
+      const now = new Date();
+      const daysLeft = expires ? Math.floor((expires - now) / 86400000) : null;
+      const expired = daysLeft !== null && daysLeft < 0;
+      const warn = daysLeft !== null && daysLeft <= 7 && daysLeft >= 0;
+
+      const expiryText = expired
+        ? '<span style="color:#dc2626; font-weight:600;">EXPIRED ' + Math.abs(daysLeft) + ' days ago</span>'
+        : warn
+        ? '<span style="color:#d97706; font-weight:600;">Expires in ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + '</span>'
+        : '<span style="color:#6b7280;">Expires in ' + daysLeft + ' days (' + expires.toLocaleDateString() + ')</span>';
+
+      currentApiKey = u.api_key;
+      document.getElementById('api-key-info').innerHTML =
+        '<p style="margin-bottom:0.5rem;"><strong>Your API key</strong> — ' + expiryText + '</p>' +
+        '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; background:#fef9ee; border:1px solid #fde68a; padding:0.75rem; border-radius:6px;">' +
+          '<code id="api-key-display" style="flex:1; min-width:250px; font-size:0.95rem; user-select:all; word-break:break-all;">' + maskKey(u.api_key) + '</code>' +
+          '<button onclick="toggleKey()" class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" id="toggle-btn">Show</button>' +
+          '<button onclick="copyKey()" class="btn btn-sm btn-primary" style="padding:0.3rem 0.75rem; font-size:0.8rem;">Copy</button>' +
+          '<button onclick="regenerateKey()" class="btn btn-sm btn-outline" style="color:#d97706; border-color:#d97706; padding:0.3rem 0.75rem; font-size:0.8rem;">Regenerate</button>' +
+        '</div>' +
+        '<p style="font-size:0.8rem; color:#6b7280; margin-top:0.5rem;">API keys expire every 30 days for security. Regenerate at any time — the old key will stop working immediately.</p>';
+    }
+
+    function toggleKey() {
+      keyVisible = !keyVisible;
+      document.getElementById('api-key-display').textContent = keyVisible ? currentApiKey : maskKey(currentApiKey);
+      document.getElementById('toggle-btn').textContent = keyVisible ? 'Hide' : 'Show';
+    }
+
+    function copyKey() {
+      navigator.clipboard.writeText(currentApiKey).then(() => {
+        const btn = event.target;
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 2000);
+      });
+    }
+
+    async function regenerateKey() {
+      if (!confirm('Regenerate your API key? The current key will stop working immediately.')) return;
+      const token = localStorage.getItem('hfd_session');
+      try {
+        const r = await fetch('https://api.hfdatalibrary.com/v1/auth/regenerate-key', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await r.json();
+        if (r.ok) {
+          // Refresh the display
+          const me = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+          if (me.ok) renderApiKey(await me.json());
+        } else {
+          alert(data.error || 'Failed to regenerate key');
+        }
+      } catch (e) { alert('Connection error'); }
+    }
+
+    (async function() {
+      const token = localStorage.getItem('hfd_session');
+      if (!token) return;
+      try {
+        const r = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+        if (r.ok) renderApiKey(await r.json());
+      } catch (e) {}
+    })();
+    </script>
 
     <div style="background: var(--blue-pale); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0;">
       <strong>Rate limit:</strong> 300 requests per minute per API key. Responses include <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> headers.
@@ -93,7 +174,7 @@
       "bars_raw": 2847391,
       "bars_clean": 2846982,
       "quintile": 5,
-      "source": "pitrading+alpaca"
+      "source": "pitrading+iex"
     },
     ...
   ]
@@ -124,7 +205,7 @@
           <tbody>
             <tr><td>start</td><td>date</td><td>earliest</td><td>Start date (YYYY-MM-DD)</td></tr>
             <tr><td>end</td><td>date</td><td>latest</td><td>End date (YYYY-MM-DD)</td></tr>
-            <tr><td>version</td><td>string</td><td>clean</td><td>Data version: <code>raw</code>, <code>clean</code>, or <code>filled</code></td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td>Data version: <code>raw</code> or <code>clean</code></td></tr>
             <tr><td>format</td><td>string</td><td>json</td><td>Response format: <code>json</code>, <code>csv</code>, or <code>parquet</code></td></tr>
             <tr><td>limit</td><td>int</td><td>10000</td><td>Max rows per response (pagination)</td></tr>
             <tr><td>offset</td><td>int</td><td>0</td><td>Row offset for pagination</td></tr>
@@ -168,7 +249,7 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/variables/{ticker}</span>
       </div>
-      <p>All 27 computed academic variables, daily frequency.</p>
+      <p>All 25 computed academic variables, daily frequency.</p>
       <h4>Parameters</h4>
       <div class="table-wrap">
         <table class="param-table">
@@ -221,7 +302,7 @@
         <table class="param-table">
           <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code>, <code>clean</code>, or <code>filled</code></td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code> or <code>clean</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -262,7 +343,7 @@
           <tr><td class="mono">401</td><td>Unauthorized — missing or invalid API key</td></tr>
           <tr><td class="mono">404</td><td>Not found — ticker doesn't exist in the dataset</td></tr>
           <tr><td class="mono">429</td><td>Rate limit exceeded — wait and retry (see Retry-After header)</td></tr>
-          <tr><td class="mono">500</td><td>Server error — please report to aelkassabgi@uca.edu</td></tr>
+          <tr><td class="mono">500</td><td>Server error — please report to admin@hfdatalibrary.com</td></tr>
         </tbody>
       </table>
     </div>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin Panel — HF Data Library</title>
   <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -108,6 +109,44 @@
     </div>
   </section>
 
+  <!-- 2FA Setup -->
+  <section style="padding:1rem 0;">
+    <div class="container">
+      <h3 style="margin-bottom:1rem;">Two-Factor Authentication</h3>
+      <div class="card" style="padding:1.5rem;">
+        <div id="twofa-status">
+          <p style="color:var(--gray-500);">Loading status...</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Newsletter -->
+  <section style="padding:2rem 0;">
+    <div class="container">
+      <h3 style="margin-bottom:1rem;">Newsletter</h3>
+      <div class="card" style="padding:1.5rem;">
+        <p style="margin-bottom:1rem; color:var(--gray-600);">Subscribers: <strong id="newsletter-count">-</strong></p>
+        <div class="form-group">
+          <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Subject</label>
+          <input type="text" id="news-subject" placeholder="e.g., Weekly data update — April 10, 2026" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.95rem; font-family:var(--font-sans); margin-bottom:1rem;">
+        </div>
+        <div class="form-group">
+          <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Body (HTML allowed)</label>
+          <textarea id="news-body" rows="8" placeholder="<p>Hello researchers,</p><p>This week we added new data for...</p>" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.9rem; font-family:var(--font-mono); resize:vertical; margin-bottom:1rem;"></textarea>
+        </div>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="sendNewsletter(true)">Send Test (to me only)</button>
+          <button class="btn btn-primary" onclick="sendNewsletter(false)">Send to All Subscribers</button>
+        </div>
+        <div id="news-result" style="margin-top:1rem; display:none;"></div>
+
+        <h4 style="margin-top:2rem;">Campaign history</h4>
+        <div id="campaign-history" style="font-size:0.85rem;"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Download log -->
   <section style="padding:1rem 0 3rem;">
     <div class="container">
@@ -132,6 +171,8 @@ const API = 'https://api.hfdatalibrary.com';
 let sessionToken = localStorage.getItem('hfd_admin_session');
 
 // ── Login ──
+let pendingTotpToken = null;
+
 async function adminLogin() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
@@ -144,6 +185,19 @@ async function adminLogin() {
       body: JSON.stringify({ email, password })
     });
     const data = await r.json();
+
+    if (data.totp_required) {
+      pendingTotpToken = data.pending_token;
+      document.querySelector('.login-box .register-form').innerHTML =
+        '<h3 style="margin-bottom:1rem;">Two-Factor Authentication</h3>' +
+        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">Enter the 6-digit code from your authenticator app.</p>' +
+        '<input type="text" id="totp-code" placeholder="123456" maxlength="6" style="width:100%; padding:0.75rem; border:2px solid var(--gray-200); border-radius:6px; font-family:var(--font-mono); font-size:1.25rem; letter-spacing:0.3em; text-align:center;">' +
+        '<button class="btn btn-primary" style="width:100%; margin-top:1rem;" onclick="submitTotp()">Verify</button>' +
+        '<p id="totp-error" style="color:var(--red); margin-top:0.75rem; display:none;"></p>';
+      setTimeout(() => document.getElementById('totp-code').focus(), 100);
+      return;
+    }
+
     if (data.session) {
       sessionToken = data.session;
       localStorage.setItem('hfd_admin_session', sessionToken);
@@ -151,6 +205,32 @@ async function adminLogin() {
     } else {
       err.style.display = 'block';
       err.textContent = data.error || 'Login failed';
+    }
+  } catch (e) {
+    err.style.display = 'block';
+    err.textContent = 'Connection error';
+  }
+}
+
+async function submitTotp() {
+  const code = document.getElementById('totp-code').value.trim();
+  const err = document.getElementById('totp-error');
+  if (!/^\d{6}$/.test(code)) { err.style.display = 'block'; err.textContent = 'Enter a 6-digit code'; return; }
+
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/verify-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_token: pendingTotpToken, code })
+    });
+    const data = await r.json();
+    if (data.session) {
+      sessionToken = data.session;
+      localStorage.setItem('hfd_admin_session', sessionToken);
+      showAdmin(data.user.name);
+    } else {
+      err.style.display = 'block';
+      err.textContent = data.error || 'Invalid code';
     }
   } catch (e) {
     err.style.display = 'block';
@@ -178,6 +258,153 @@ async function showAdmin(name) {
   loadStats();
   loadUsers();
   loadDownloads();
+  loadCampaigns();
+  load2faStatus();
+}
+
+async function load2faStatus() {
+  try {
+    const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
+    if (!r.ok) return;
+    const u = await r.json();
+    const el = document.getElementById('twofa-status');
+    if (u.totp_enabled) {
+      el.innerHTML =
+        '<p style="color:#059669; margin-bottom:0.75rem;"><strong>&#10003; 2FA is enabled</strong></p>' +
+        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">You will be asked for a code from your authenticator app when you log in.</p>' +
+        '<button class="btn btn-sm btn-outline" style="color:#dc2626; border-color:#dc2626;" onclick="disable2fa()">Disable 2FA</button>';
+    } else {
+      el.innerHTML =
+        '<p style="color:#d97706; margin-bottom:0.75rem;"><strong>&#9888; 2FA is not enabled</strong></p>' +
+        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">Enable two-factor authentication to protect your admin account. Uses Google Authenticator, Authy, or any TOTP-compatible app.</p>' +
+        '<button class="btn btn-sm btn-primary" onclick="setup2fa()">Enable 2FA</button>' +
+        '<div id="twofa-setup" style="display:none; margin-top:1rem;"></div>';
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function setup2fa() {
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/setup', { method: 'POST', headers: authHeaders() });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || 'Failed'); return; }
+
+    document.getElementById('twofa-setup').style.display = 'block';
+    document.getElementById('twofa-setup').innerHTML =
+      '<div style="padding:1.5rem; background:var(--gray-50); border-radius:8px;">' +
+        '<p style="margin-bottom:1rem;"><strong>Step 1:</strong> Scan this QR code with Google Authenticator, Authy, or any TOTP app.</p>' +
+        '<img src="' + data.qr_code_url + '" alt="QR Code" style="display:block; margin:0 auto 1rem; border:1px solid var(--gray-200);">' +
+        '<p style="font-size:0.85rem; color:var(--gray-600); margin-bottom:1rem;">Or enter this secret manually: <code style="user-select:all; background:#fff; padding:0.25em 0.5em; border:1px solid var(--gray-200); border-radius:4px;">' + data.secret + '</code></p>' +
+        '<p style="margin-bottom:0.5rem;"><strong>Step 2:</strong> Enter the 6-digit code from your app to confirm.</p>' +
+        '<input type="text" id="twofa-code" placeholder="123456" maxlength="6" style="width:150px; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em;">' +
+        '<button class="btn btn-sm btn-primary" style="margin-left:0.5rem;" onclick="confirm2fa()">Confirm & Enable</button>' +
+        '<div id="twofa-setup-result" style="margin-top:0.75rem;"></div>' +
+      '</div>';
+  } catch (e) { alert('Connection error'); }
+}
+
+async function confirm2fa() {
+  const code = document.getElementById('twofa-code').value.trim();
+  const result = document.getElementById('twofa-setup-result');
+  if (!/^\d{6}$/.test(code)) { result.innerHTML = '<p style="color:var(--red); margin:0;">Enter a 6-digit code</p>'; return; }
+
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/enable', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ code })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      load2faStatus();
+    } else {
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
+    }
+  } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
+}
+
+async function disable2fa() {
+  const password = prompt('Enter your password to disable 2FA:');
+  if (!password) return;
+  const code = prompt('Enter your current 6-digit 2FA code:');
+  if (!code) return;
+
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/disable', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ password, code })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      alert('2FA disabled');
+      load2faStatus();
+    } else {
+      alert(data.error || 'Failed');
+    }
+  } catch (e) { alert('Connection error'); }
+}
+
+// ── Newsletter ──
+async function sendNewsletter(testOnly) {
+  const subject = document.getElementById('news-subject').value.trim();
+  const body = document.getElementById('news-body').value.trim();
+  const result = document.getElementById('news-result');
+
+  if (!subject || !body) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red);">Subject and body are required.</p>';
+    return;
+  }
+
+  if (!testOnly && !confirm('Send this newsletter to ALL subscribers? This cannot be undone.')) return;
+
+  result.style.display = 'block';
+  result.innerHTML = '<p style="color:var(--gray-500);">Sending...</p>';
+
+  try {
+    const r = await fetch(API + '/v1/admin/newsletter', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ subject, body_html: body, test_only: testOnly })
+    });
+    const data = await r.json();
+
+    if (r.ok) {
+      if (testOnly) {
+        result.innerHTML = '<p style="color:#059669;">Test email sent to your inbox.</p>';
+      } else {
+        result.innerHTML = '<p style="color:#059669;">Newsletter sent! ' + data.success + ' delivered, ' + data.failed + ' failed (' + data.total + ' total).</p>';
+        document.getElementById('news-subject').value = '';
+        document.getElementById('news-body').value = '';
+        loadCampaigns();
+      }
+    } else {
+      result.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Failed') + '</p>';
+    }
+  } catch (e) {
+    result.innerHTML = '<p style="color:var(--red);">Connection error.</p>';
+  }
+}
+
+async function loadCampaigns() {
+  try {
+    const r = await fetch(API + '/v1/admin/newsletter/campaigns', { headers: authHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('newsletter-count').textContent = d.subscribers;
+    if (d.campaigns.length === 0) {
+      document.getElementById('campaign-history').innerHTML = '<p style="color:var(--gray-400);">No campaigns sent yet.</p>';
+      return;
+    }
+    document.getElementById('campaign-history').innerHTML = d.campaigns.map(c =>
+      '<div style="padding:0.5rem 0; border-bottom:1px solid var(--gray-100);">' +
+        '<strong>' + esc(c.subject) + '</strong>' +
+        '<span style="margin-left:1rem; color:var(--gray-500);">' + c.sent_at + '</span>' +
+        '<span style="margin-left:1rem; color:var(--gray-500);">' + c.success_count + '/' + c.recipients_count + ' delivered</span>' +
+      '</div>'
+    ).join('');
+  } catch (e) { console.error(e); }
 }
 
 // ── Load stats ──
@@ -217,7 +444,7 @@ async function loadUsers() {
 
     const html = d.users.map(u =>
       '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;">' +
-        '<div><strong>' + esc(u.name) + '</strong></div>' +
+        '<div><strong>' + esc(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
         '<div style="font-size:0.8rem;">' + esc(u.email) + '</div>' +
         '<div>' + esc(u.institution) + '</div>' +
         '<div>' + esc(u.country) + '</div>' +
@@ -258,9 +485,9 @@ async function showUser(id) {
         '<button onclick="closeModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--gray-400);">&#10005;</button>' +
       '</div>' +
       '<div class="grid-3" style="margin:1.5rem 0; gap:1rem;">' +
-        '<div><strong>Institution:</strong><br>' + esc(u.institution) + '</div>' +
-        '<div><strong>Country:</strong><br>' + esc(u.country) + '</div>' +
-        '<div><strong>Role:</strong><br>' + esc(u.role) + '</div>' +
+        '<div><strong>Institution:</strong><br>' + (esc(u.institution) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
+        '<div><strong>Country:</strong><br>' + (esc(u.country) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
+        '<div><strong>Role:</strong><br>' + (esc(u.role) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
         '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
         '<div><strong>Registered:</strong><br>' + u.created_at + '</div>' +
         '<div><strong>Last Login:</strong><br>' + (u.last_login_at || 'Never') + '</div>' +
@@ -268,10 +495,34 @@ async function showUser(id) {
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
       '</div>' +
-      '<div style="margin-bottom:1.5rem; display:flex; gap:0.5rem;">' +
+      (u.orcid_id || u.google_id ? '<div style="margin-bottom:1rem; padding:0.75rem 1rem; background:#f9fafb; border-radius:8px; font-size:0.9rem;">' +
+        '<strong>Linked accounts:</strong><br>' +
+        (u.orcid_id ? '<a href="https://orcid.org/' + u.orcid_id + '" target="_blank" style="color:#a6ce39; text-decoration:underline;">&#9733; ORCID: ' + u.orcid_id + '</a> ' : '') +
+        (u.google_id ? '<span style="color:#4285F4;">&#9733; Google ID: ' + u.google_id + '</span>' : '') +
+      '</div>' : '') +
+      (u.orcid_profile ? '<details style="margin-bottom:1rem; padding:0.75rem 1rem; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; font-size:0.9rem;">' +
+        '<summary style="cursor:pointer; font-weight:600; color:#065f46;">ORCID profile details</summary>' +
+        '<div style="margin-top:0.75rem;">' +
+          (u.orcid_profile.biography ? '<p><strong>Biography:</strong> ' + esc(u.orcid_profile.biography) + '</p>' : '') +
+          (u.orcid_profile.currentEmployment?.length > 0 ? '<p><strong>Current employment:</strong></p><ul style="margin-left:1.5rem;">' +
+            u.orcid_profile.currentEmployment.map(e =>
+              '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + (e.department ? ' (' + esc(e.department) + ')' : '') + '</li>'
+            ).join('') + '</ul>' : '') +
+          (u.orcid_profile.educationList?.length > 0 ? '<p><strong>Education:</strong></p><ul style="margin-left:1.5rem;">' +
+            u.orcid_profile.educationList.slice(0,5).map(e =>
+              '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + '</li>'
+            ).join('') + '</ul>' : '') +
+          (u.orcid_profile.worksCount ? '<p><strong>Publications:</strong> ' + u.orcid_profile.worksCount + ' on ORCID record</p>' : '') +
+          (u.orcid_profile.emails?.length > 0 ? '<p><strong>Public emails on ORCID:</strong> ' + u.orcid_profile.emails.join(', ') + '</p>' : '') +
+        '</div>' +
+      '</details>' : '') +
+      '<div style="margin-bottom:1.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">' +
         (u.is_active
           ? '<button class="btn btn-sm btn-danger" onclick="toggleUser(' + u.id + ', false)">Revoke Access</button>'
           : '<button class="btn btn-sm btn-success" onclick="toggleUser(' + u.id + ', true)">Reactivate</button>') +
+        (u.is_vip
+          ? '<button class="btn btn-sm" style="background:#6b7280; color:#fff;" onclick="toggleVip(' + u.id + ', false)">Remove VIP</button>'
+          : '<button class="btn btn-sm" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;" onclick="toggleVip(' + u.id + ', true)">&#9733; Make VIP</button>') +
       '</div>' +
       '<div style="margin-bottom:1rem;"><strong>Notes:</strong><br>' +
         '<textarea id="user-notes" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px; font-family:var(--font-sans); font-size:0.85rem; min-height:60px;">' + esc(u.notes || '') + '</textarea>' +
@@ -297,6 +548,16 @@ async function toggleUser(id, active) {
   closeModal();
   loadUsers();
   loadStats();
+}
+
+async function toggleVip(id, vip) {
+  await fetch(API + '/v1/admin/users/' + id, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ is_vip: vip })
+  });
+  closeModal();
+  loadUsers();
 }
 
 async function saveNotes(id) {

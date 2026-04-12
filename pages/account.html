@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Account — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <meta name="robots" content="noindex">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="cite.html">Cite</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">My Account</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Manage your profile, preferences, and data.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:800px;">
+    <div id="not-logged-in" style="display:none; text-align:center; padding:3rem;">
+      <h2>Not logged in</h2>
+      <p style="color:var(--gray-500);">Please <a href="download.html#register">log in</a> to view your account.</p>
+    </div>
+
+    <div id="account-content" style="display:none;">
+      <!-- Profile completion warning -->
+      <div id="profile-warning" style="display:none; background:#fef9ee; border:1px solid #fde68a; border-radius:12px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="color:#92600a; margin-bottom:0.5rem;">Complete your profile</h3>
+        <p style="color:#78350f; margin:0;">Please fill in your institution, country, and role below to activate your account. You'll be able to download data once your profile is complete.</p>
+      </div>
+
+      <!-- Profile -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Profile</h3>
+        <div class="form-group">
+          <label>Full name</label>
+          <input type="text" id="profile-name" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <div class="form-group">
+          <label>Email (cannot be changed)</label>
+          <input type="email" id="profile-email" disabled style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; background:var(--gray-50); color:var(--gray-500); font-family:var(--font-sans);">
+        </div>
+        <div class="form-group">
+          <label>Institution</label>
+          <input type="text" id="profile-institution" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <div class="form-group">
+          <label>Country</label>
+          <input type="text" id="profile-country" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <input type="text" id="profile-role" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <button class="btn btn-primary" onclick="saveProfile()">Save changes</button>
+        <div id="profile-result" style="margin-top:0.75rem; display:none;"></div>
+      </div>
+
+      <!-- Usage -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Usage</h3>
+        <div class="grid-3">
+          <div style="text-align:center;">
+            <div style="font-family:var(--font-mono); font-size:1.75rem; font-weight:700; color:var(--navy);" id="stat-downloads">-</div>
+            <div style="font-size:0.85rem; color:var(--gray-500);">Total downloads</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-family:var(--font-mono); font-size:1.75rem; font-weight:700; color:var(--navy);" id="stat-data">-</div>
+            <div style="font-size:0.85rem; color:var(--gray-500);">Data downloaded</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-family:var(--font-mono); font-size:1.75rem; font-weight:700; color:var(--navy);" id="stat-member-since">-</div>
+            <div style="font-size:0.85rem; color:var(--gray-500);">Member since</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Newsletter preference -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Newsletter</h3>
+        <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+          <input type="checkbox" id="profile-newsletter" onchange="toggleNewsletter()">
+          <span>Subscribe to newsletter updates</span>
+        </label>
+      </div>
+
+      <!-- Linked accounts -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Linked accounts</h3>
+        <div id="linked-accounts-status" style="color:var(--gray-600); font-size:0.9rem;"></div>
+      </div>
+
+      <!-- Change password -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Change password</h3>
+        <div class="form-group">
+          <label>Current password</label>
+          <input type="password" id="curr-password" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <div class="form-group">
+          <label>New password (10+ chars, upper + lower + numbers)</label>
+          <input type="password" id="new-password" style="width:100%; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+        </div>
+        <button class="btn btn-primary" onclick="changePassword()">Change password</button>
+        <div id="password-result" style="margin-top:0.75rem; display:none;"></div>
+      </div>
+
+      <!-- Download history -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Download history</h3>
+        <div id="download-history">
+          <p style="color:var(--gray-500);">Loading...</p>
+        </div>
+      </div>
+
+      <!-- GDPR: Export -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Export my data</h3>
+        <p style="color:var(--gray-600); margin-bottom:1rem;">Download a JSON file containing all information this service has about you — profile, login history, and download history.</p>
+        <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="exportData()">Download my data</button>
+      </div>
+
+      <!-- GDPR: Delete -->
+      <div class="card" style="padding:1.5rem; margin-bottom:1.5rem; border:2px solid #fecaca; background:#fff5f5;">
+        <h3 style="margin-bottom:1rem; color:#991b1b;">Delete account</h3>
+        <p style="color:var(--gray-700); margin-bottom:1rem;">Permanently delete your account and all personal data. This cannot be undone. Your API key will stop working immediately. Anonymized usage statistics may be retained.</p>
+        <button class="btn" style="background:#dc2626; color:#fff;" onclick="showDeleteDialog()">Delete my account</button>
+        <div id="delete-dialog" style="display:none; margin-top:1rem; padding:1rem; background:#fff; border:1px solid #dc2626; border-radius:6px;">
+          <p style="margin-bottom:0.5rem; color:#991b1b;"><strong>Are you sure?</strong> This cannot be undone.</p>
+          <div class="form-group">
+            <label>Type <strong>DELETE</strong> to confirm:</label>
+            <input type="text" id="delete-confirm" placeholder="DELETE" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px;">
+          </div>
+          <div class="form-group">
+            <label>Enter your password:</label>
+            <input type="password" id="delete-password" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px;">
+          </div>
+          <button class="btn" style="background:#dc2626; color:#fff;" onclick="deleteAccount()">Permanently delete</button>
+          <button class="btn btn-outline" style="color:var(--gray-600); border-color:var(--gray-300); margin-left:0.5rem;" onclick="document.getElementById('delete-dialog').style.display='none'">Cancel</button>
+          <div id="delete-result" style="margin-top:0.75rem; display:none;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+const API = 'https://api.hfdatalibrary.com';
+const sessionToken = localStorage.getItem('hfd_session');
+let currentUser = null;
+
+function authHeaders() { return { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' }; }
+
+async function loadAccount() {
+  if (!sessionToken) {
+    document.getElementById('not-logged-in').style.display = 'block';
+    return;
+  }
+  try {
+    const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
+    if (!r.ok) {
+      document.getElementById('not-logged-in').style.display = 'block';
+      return;
+    }
+    currentUser = await r.json();
+    document.getElementById('account-content').style.display = 'block';
+
+    document.getElementById('profile-name').value = currentUser.name || '';
+    document.getElementById('profile-email').value = currentUser.email || '';
+    document.getElementById('profile-institution').value = currentUser.institution || '';
+    document.getElementById('profile-country').value = currentUser.country || '';
+    document.getElementById('profile-role').value = currentUser.role || '';
+    document.getElementById('profile-newsletter').checked = currentUser.newsletter_subscribed;
+
+    document.getElementById('stat-downloads').textContent = currentUser.download_count.toLocaleString();
+    document.getElementById('stat-data').textContent = (currentUser.total_bytes_downloaded / 1e9).toFixed(2) + ' GB';
+    document.getElementById('stat-member-since').textContent = currentUser.created_at.split(' ')[0];
+
+    // Profile completion warning
+    if (!currentUser.profile_complete) {
+      document.getElementById('profile-warning').style.display = 'block';
+    }
+
+    // Load download history
+    loadDownloadHistory();
+
+    // Linked accounts status
+    const la = document.getElementById('linked-accounts-status');
+    const orcidLinked = currentUser.orcid_id;
+    la.innerHTML =
+      '<p style="margin-bottom:0.75rem;">' +
+        (orcidLinked
+          ? '<span style="color:#059669;">&#10003; ORCID linked: <code>' + currentUser.orcid_id + '</code></span>'
+          : '<span style="color:var(--gray-500);">ORCID not linked</span>') +
+      '</p>' +
+      (orcidLinked
+        ? '<p style="font-size:0.85rem; color:var(--gray-500);">You can now sign in using your ORCID iD instead of email/password.</p>'
+        : '<button class="btn btn-sm" style="background:#a6ce39; color:#fff;" onclick="linkOrcid()">Link ORCID account</button>');
+
+    // Handle linked confirmation
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('orcid_linked') === '1') {
+      la.insertAdjacentHTML('afterbegin', '<p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; color:#065f46;">ORCID successfully linked to your account.</p>');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    if (params.get('oauth_error')) {
+      la.insertAdjacentHTML('afterbegin', '<p style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; color:#991b1b;">' + params.get('oauth_error').replace(/_/g,' ') + '</p>');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  } catch (e) {
+    document.getElementById('not-logged-in').style.display = 'block';
+  }
+}
+
+async function saveProfile() {
+  const result = document.getElementById('profile-result');
+  try {
+    const r = await fetch(API + '/v1/auth/update-profile', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        name: document.getElementById('profile-name').value.trim(),
+        institution: document.getElementById('profile-institution').value.trim(),
+        country: document.getElementById('profile-country').value.trim(),
+        role: document.getElementById('profile-role').value.trim()
+      })
+    });
+    const data = await r.json();
+    result.style.display = 'block';
+    result.innerHTML = r.ok
+      ? '<p style="color:#059669; margin:0;">Saved.</p>'
+      : '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
+  } catch (e) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>';
+  }
+}
+
+async function loadDownloadHistory() {
+  try {
+    const r = await fetch(API + '/v1/auth/download-history', { headers: authHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('download-history');
+    if (!d.downloads || d.downloads.length === 0) {
+      el.innerHTML = '<p style="color:var(--gray-400); font-size:0.9rem;">No downloads yet. <a href="download.html">Browse data</a></p>';
+      return;
+    }
+    el.innerHTML =
+      '<div class="table-wrap"><table style="font-size:0.85rem;">' +
+        '<thead><tr><th>Date</th><th>Ticker</th><th>Version</th><th>Size</th></tr></thead>' +
+        '<tbody>' +
+        d.downloads.map(dl =>
+          '<tr>' +
+            '<td class="mono">' + dl.timestamp + '</td>' +
+            '<td><strong>' + dl.ticker + '</strong></td>' +
+            '<td>' + dl.version + '</td>' +
+            '<td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td>' +
+          '</tr>'
+        ).join('') +
+        '</tbody></table></div>';
+  } catch (e) { console.error(e); }
+}
+
+async function linkOrcid() {
+  try {
+    const r = await fetch(API + '/v1/auth/orcid/link-init', {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    const data = await r.json();
+    if (r.ok && data.url) {
+      window.location.href = data.url;
+    } else {
+      alert(data.error || 'Failed to start ORCID link');
+    }
+  } catch (e) { alert('Connection error'); }
+}
+
+async function toggleNewsletter() {
+  const subscribed = document.getElementById('profile-newsletter').checked;
+  await fetch(API + '/v1/auth/update-profile', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ newsletter_subscribed: subscribed })
+  });
+}
+
+async function changePassword() {
+  const curr = document.getElementById('curr-password').value;
+  const nu = document.getElementById('new-password').value;
+  const result = document.getElementById('password-result');
+  result.style.display = 'block';
+  if (!curr || !nu) { result.innerHTML = '<p style="color:var(--red); margin:0;">Fill in both fields</p>'; return; }
+  try {
+    const r = await fetch(API + '/v1/auth/change-password', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ current_password: curr, new_password: nu })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      result.innerHTML = '<p style="color:#059669; margin:0;">Password changed.</p>';
+      document.getElementById('curr-password').value = '';
+      document.getElementById('new-password').value = '';
+    } else {
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
+    }
+  } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
+}
+
+async function exportData() {
+  window.open(API + '/v1/auth/export?auth=' + sessionToken, '_blank');
+  // Actually, the endpoint uses the Authorization header. Let's fetch and blob it.
+}
+
+async function exportData() {
+  try {
+    const r = await fetch(API + '/v1/auth/export', { headers: authHeaders() });
+    if (!r.ok) { alert('Failed to export'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hfdatalibrary_my_data.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Connection error'); }
+}
+
+function showDeleteDialog() {
+  document.getElementById('delete-dialog').style.display = 'block';
+}
+
+async function deleteAccount() {
+  const confirm = document.getElementById('delete-confirm').value.trim();
+  const password = document.getElementById('delete-password').value;
+  const result = document.getElementById('delete-result');
+
+  if (confirm !== 'DELETE') { result.style.display='block'; result.innerHTML='<p style="color:var(--red); margin:0;">Type DELETE exactly</p>'; return; }
+  if (!password) { result.style.display='block'; result.innerHTML='<p style="color:var(--red); margin:0;">Password required</p>'; return; }
+
+  try {
+    const r = await fetch(API + '/v1/auth/delete', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ confirm, password })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      localStorage.removeItem('hfd_session');
+      alert('Your account has been deleted. Goodbye.');
+      window.location.href = '../index.html';
+    } else {
+      result.style.display = 'block';
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
+    }
+  } catch (e) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>';
+  }
+}
+
+loadAccount();
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

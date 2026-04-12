@@ -4,23 +4,36 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HF Data Library — Free High-Frequency U.S. Equity Data for Research</title>
-  <meta name="description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Three cleaning versions, 27 pre-computed academic variables, full documentation. Updated weekly.">
+  <meta name="description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Raw and Clean versions, 25 pre-computed academic variables, full documentation. Updated weekly.">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="canonical" href="https://hfdatalibrary.com">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="HF Data Library">
-  <meta property="og:description" content="Free high-frequency U.S. equity data for academic research. 1,391 tickers, 1-minute bars, 2002–present.">
+  <meta property="og:title" content="HF Data Library — Free High-Frequency U.S. Equity Data">
+  <meta property="og:description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Raw and Clean versions, 25 pre-computed academic variables, full documentation. Updated weekly.">
   <meta property="og:url" content="https://hfdatalibrary.com">
   <meta property="og:type" content="website">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HF Data Library — Free High-Frequency U.S. Equity Data">
+  <meta name="twitter:description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Updated weekly.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
 
   <!-- Google Dataset Search -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "Dataset",
-    "name": "HF Data Library",
-    "description": "Free high-frequency (1-minute) OHLCV data for 1,391 U.S. equities and ETFs, 2002-present. Three cleaning versions (Raw, Clean, Filled), 27 pre-computed academic variables, full methodology documentation.",
+    "name": "HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)",
+    "description": "Free high-frequency (1-minute) OHLCV data for 1,391 U.S. equities and ETFs, 2002-present. Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, full methodology documentation.",
+    "identifier": "https://doi.org/10.5281/zenodo.19501605",
+    "sameAs": "https://zenodo.org/records/19501605",
     "url": "https://hfdatalibrary.com",
     "license": "https://creativecommons.org/licenses/by/4.0/",
     "creator": {
@@ -66,6 +79,8 @@
     "version": "1.0"
   }
   </script>
+
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -132,8 +147,8 @@
     <div class="feature-row">
       <div class="feature-text">
         <h2>What is this?</h2>
-        <p>One-minute OHLCV bars for 1,391 U.S. equities and ETFs, from December 2002 through the present. Sourced from the consolidated tape (CTA/UTP) via PiTrading and IEX Exchange HIST.</p>
-        <p>Three cleaning versions so you can choose the level of processing appropriate for your research. Twenty-seven pre-computed academic variables per ticker per day. Full methodology documentation.</p>
+        <p>One-minute OHLCV bars for 1,391 U.S. equities and ETFs, from December 2002 through the present.</p>
+        <p>Two cleaning versions (Raw and Clean) so you can choose the level of processing appropriate for your research. Twenty-five pre-computed academic variables per ticker per day. Full methodology documentation.</p>
         <p>Updated every week. No subscription. No paywall. Licensed under <a href="pages/license.html">CC BY 4.0</a>.</p>
       </div>
       <div class="feature-visual">
@@ -155,8 +170,8 @@ print(df.head())
 <!-- ── Data Versions ── -->
 <section class="section section-alt">
   <div class="container">
-    <h2 style="text-align:center; margin-bottom:2.5rem;">Three cleaning versions. You choose.</h2>
-    <div class="grid-3">
+    <h2 style="text-align:center; margin-bottom:2.5rem;">Two cleaning versions. You choose.</h2>
+    <div class="grid-2" style="max-width:900px; margin:0 auto;">
       <div class="card version-card raw">
         <span class="version-tag raw">Raw</span>
         <h3>Version 1: Raw</h3>
@@ -169,20 +184,15 @@ print(df.head())
         <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. <span data-meta="bars-clean">1,533,014,567</span> bars.</p>
         <p><strong>Best for:</strong> Volatility estimation, spread measurement, jump detection — most empirical finance.</p>
       </div>
-      <div class="card version-card filled">
-        <span class="version-tag filled">Filled</span>
-        <h3>Version 3: Filled</h3>
-        <p>Clean data with LOCF gap-filling to produce a regular 390-bar daily grid (09:30–15:59 ET). Every bar flagged as original or filled. <span data-meta="bars-filled">2,342,519,726</span> bars.</p>
-        <p><strong>Best for:</strong> Machine learning, backtesting systems, time-series models requiring regular grids.</p>
-      </div>
     </div>
+    <p style="text-align:center; margin-top:2rem; color:var(--gray-500); font-size:0.9rem; max-width:700px; margin-left:auto; margin-right:auto;">Note: A gap-filled version is not distributed. Gap-filling (LOCF) introduces biases documented in the accompanying paper — researchers who need a regular grid can apply LOCF to the Clean version themselves.</p>
   </div>
 </section>
 
 <!-- ── Academic Variables ── -->
 <section class="section">
   <div class="container">
-    <h2 style="text-align:center; margin-bottom:0.5rem;">27 pre-computed academic variables</h2>
+    <h2 style="text-align:center; margin-bottom:0.5rem;">25 pre-computed academic variables</h2>
     <p style="text-align:center; color: var(--gray-500); margin-bottom:2.5rem;">Computed daily for each ticker in each cleaning version. Ready to use in your research.</p>
 
     <div class="grid-3">
@@ -293,7 +303,7 @@ print(df.head())
           </tr>
           <tr>
             <td><strong>Academic variables</strong></td>
-            <td class="comparison-highlight"><span class="comparison-check">27 measures</span></td>
+            <td class="comparison-highlight"><span class="comparison-check">25 measures</span></td>
             <td><span class="comparison-x">None</span></td>
             <td><span class="comparison-x">None</span></td>
             <td><span class="comparison-x">None</span></td>
@@ -375,6 +385,13 @@ print(df.head())
           <li><a href="pages/license.html">License</a></li>
           <li><a href="pages/issues.html">Known Issues</a></li>
           <li><a href="pages/contact.html">Contact</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="pages/terms.html">Terms of Service</a></li>
+          <li><a href="pages/privacy.html">Privacy Policy</a></li>
         </ul>
       </div>
     </div>

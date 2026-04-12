@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unsubscribe — HF Data Library</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+  </div>
+</nav>
+
+<section class="section">
+  <div class="container" style="max-width:500px; text-align:center;">
+    <div id="status">
+      <h2>Unsubscribing...</h2>
+      <p style="color: var(--gray-500);">Please wait.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+(async function() {
+  const token = new URLSearchParams(window.location.search).get('token');
+  const el = document.getElementById('status');
+
+  if (!token) {
+    el.innerHTML = '<h2>Invalid link</h2><p style="color:var(--gray-500);">No unsubscribe token found.</p>';
+    return;
+  }
+
+  try {
+    const r = await fetch('https://api.hfdatalibrary.com/v1/newsletter/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      el.innerHTML =
+        '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:2.5rem;">' +
+          '<h2 style="color:#065f46; margin-bottom:0.5rem;">Unsubscribed</h2>' +
+          '<p style="color:#047857;">' + data.message + '</p>' +
+          '<p style="margin-top:1rem; font-size:0.9rem; color:#6b7280;">You can resubscribe anytime from your account page.</p>' +
+          '<a href="../index.html" class="btn btn-primary" style="margin-top:1rem;">Return Home</a>' +
+        '</div>';
+    } else {
+      el.innerHTML = '<h2 style="color:var(--red);">Error</h2><p>' + (data.error || 'Failed to unsubscribe.') + '</p>';
+    }
+  } catch (e) {
+    el.innerHTML = '<h2 style="color:var(--red);">Connection error</h2><p>Please try again.</p>';
+  }
+})();
+</script>
+
+</body>
+</html>
