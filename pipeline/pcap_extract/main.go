@@ -1,29 +1,17 @@
-// pcap_extract — Extract trade reports from IEX HIST TOPS pcap.gz files.
+// pcap_extract — Extract trade reports from IEX HIST TOPS pcap/pcapng files.
 //
-// This program reads an IEX HIST pcap.gz file (which uses a non-standard
-// pcap variant specific to IEX), parses IEX-TP transport segments and
-// TOPS trade report messages, filters to a specified ticker universe,
-// and outputs a simple CSV of trades.
+// IEX HIST files use pcapng (Next Generation) format, identified by magic
+// number 0x0a0d0d0a. The packet data inside Enhanced Packet Blocks contains
+// raw IEX-TP segments (no Ethernet/IP/UDP encapsulation).
 //
-// The output CSV has columns:
-//   symbol,timestamp_ns,price,size,trade_id
+// This program parses the pcapng framing, extracts IEX-TP segments,
+// finds TOPS Trade Report messages (type 'T' = 0x54), filters to a
+// specified ticker universe, and outputs a CSV of trades.
+//
+// Output CSV columns: symbol,timestamp_ns,price,size,trade_id
 //
 // Usage:
 //   pcap_extract -input FILE.pcap.gz -tickers tickers.json -output trades.csv
-//
-// Binary format references:
-//   IEX-TP transport: version(1) + reserved(1) + protocol(2) + channel(4) +
-//     session(4) + payload_len(2) + msg_count(2) + stream_offset(8) +
-//     first_seq(8) + send_time(8) = 40 bytes
-//   TOPS Trade Report (type 'T' = 0x54):
-//     msg_type(1) + flags(1) + timestamp(8) + symbol(8) + size(4) +
-//     price(8) + trade_id(8) = 38 bytes
-//
-// The IEX HIST "pcap" format is NOT standard libpcap. It uses:
-//   Global header: identical to libpcap (24 bytes) but may have a different
-//     magic number (0xa1b2c3d4 or 0xa1b23c4d for nanosecond pcap).
-//   Per-packet: 16-byte record header (ts_sec, ts_usec, incl_len, orig_len)
-//     followed by raw IEX-TP segment data (NO Ethernet/IP/UDP headers).
 //
 // Author: Ahmed Elkassabgi / HF Data Library
 // License: CC BY 4.0
@@ -41,56 +29,23 @@ import (
 	"time"
 )
 
-// IEX-TP segment header (40 bytes, little-endian)
-type iexTPHeader struct {
-	Version        uint8
-	Reserved       uint8
-	ProtocolID     uint16
-	ChannelID      uint32
-	SessionID      uint32
-	PayloadLength  uint16
-	MessageCount   uint16
-	StreamOffset   int64
-	FirstSeqNum    int64
-	SendTime       int64
-}
-
 const (
+	// pcapng block types
+	sectionHeaderBlock   = 0x0A0D0D0A
+	interfaceDescBlock   = 0x00000001
+	enhancedPacketBlock  = 0x00000006
+	simplePacketBlock    = 0x00000003
+
+	// IEX-TP
 	iexTPHeaderSize = 40
 	topsProtocolID  = 0x8003
 	tradeReportType = 0x54 // 'T'
 	tradeReportSize = 38
+
+	// Classic pcap
+	pcapMagicMicro = 0xA1B2C3D4
+	pcapMagicNano  = 0xA1B23C4D
 )
-
-// TOPS Trade Report Message (38 bytes)
-type tradeReport struct {
-	MsgType     uint8
-	Flags       uint8
-	TimestampNs int64
-	Symbol      [8]byte
-	Size        uint32
-	Price       int64 // fixed-point, divide by 10000
-	TradeID     int64
-}
-
-// pcap global header (24 bytes)
-type pcapGlobalHeader struct {
-	MagicNumber  uint32
-	VersionMajor uint16
-	VersionMinor uint16
-	ThisZone     int32
-	SigFigs      uint32
-	SnapLen      uint32
-	Network      uint32
-}
-
-// pcap record header (16 bytes)
-type pcapRecordHeader struct {
-	TsSec   uint32
-	TsUsec  uint32
-	InclLen uint32
-	OrigLen uint32
-}
 
 func trimSymbol(sym [8]byte) string {
 	n := 8
@@ -100,8 +55,203 @@ func trimSymbol(sym [8]byte) string {
 	return string(sym[:n])
 }
 
+// parseIEXTPSegment parses one IEX-TP segment and extracts trade reports.
+func parseIEXTPSegment(data []byte, universe map[string]bool, out *os.File,
+	totalMessages, totalTrades, filteredTrades *uint64) {
+
+	if len(data) < iexTPHeaderSize {
+		return
+	}
+
+	version := data[0]
+	protocolID := binary.LittleEndian.Uint16(data[2:4])
+	msgCount := binary.LittleEndian.Uint16(data[14:16])
+
+	if version != 1 || protocolID != topsProtocolID || msgCount == 0 {
+		return
+	}
+
+	payloadLen := binary.LittleEndian.Uint16(data[12:14])
+	offset := iexTPHeaderSize
+	end := iexTPHeaderSize + int(payloadLen)
+	if end > len(data) {
+		end = len(data)
+	}
+
+	for i := 0; i < int(msgCount) && offset < end; i++ {
+		if offset+2 > end {
+			break
+		}
+		msgLen := int(binary.LittleEndian.Uint16(data[offset : offset+2]))
+		offset += 2
+		if msgLen == 0 || offset+msgLen > end {
+			break
+		}
+
+		*totalMessages++
+
+		if msgLen >= tradeReportSize && data[offset] == tradeReportType {
+			*totalTrades++
+
+			timestampNs := int64(binary.LittleEndian.Uint64(data[offset+2 : offset+10]))
+			var sym [8]byte
+			copy(sym[:], data[offset+10:offset+18])
+			size := binary.LittleEndian.Uint32(data[offset+18 : offset+22])
+			priceFixed := int64(binary.LittleEndian.Uint64(data[offset+22 : offset+30]))
+			tradeID := int64(binary.LittleEndian.Uint64(data[offset+30 : offset+38]))
+
+			symbol := trimSymbol(sym)
+			if len(universe) == 0 || universe[symbol] {
+				*filteredTrades++
+				price := float64(priceFixed) / 10000.0
+				fmt.Fprintf(out, "%s,%d,%.4f,%d,%d\n",
+					symbol, timestampNs, price, size, tradeID)
+			}
+		}
+
+		offset += msgLen
+	}
+}
+
+// processPcapng reads a pcapng stream and processes IEX-TP segments from Enhanced Packet Blocks.
+func processPcapng(reader io.Reader, universe map[string]bool, out *os.File) (
+	totalPackets, totalMessages, totalTrades, filteredTrades uint64, err error) {
+
+	startTime := time.Now()
+	lastReport := startTime
+
+	for {
+		// Read block type (4 bytes) and block total length (4 bytes)
+		var blockType uint32
+		var blockLen uint32
+		if err := binary.Read(reader, binary.LittleEndian, &blockType); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, nil
+			}
+			return totalPackets, totalMessages, totalTrades, filteredTrades, err
+		}
+		if err := binary.Read(reader, binary.LittleEndian, &blockLen); err != nil {
+			return totalPackets, totalMessages, totalTrades, filteredTrades, err
+		}
+
+		// Block body = blockLen - 12 (4 type + 4 len + 4 trailing len)
+		if blockLen < 12 {
+			// Invalid block, try to skip
+			continue
+		}
+		bodyLen := int(blockLen) - 12
+
+		switch blockType {
+		case sectionHeaderBlock:
+			// SHB: skip the body (contains byte order magic, version, etc.)
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(reader, body); err != nil {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, err
+			}
+
+		case interfaceDescBlock:
+			// IDB: skip
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(reader, body); err != nil {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, err
+			}
+
+		case enhancedPacketBlock:
+			// EPB: interface_id(4) + ts_high(4) + ts_low(4) + captured_len(4) + orig_len(4) = 20 bytes header
+			// Then captured_len bytes of packet data (padded to 4 bytes), then options
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(reader, body); err != nil {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, err
+			}
+
+			if len(body) < 20 {
+				break
+			}
+			capturedLen := binary.LittleEndian.Uint32(body[12:16])
+			packetData := body[20:]
+			if int(capturedLen) < len(packetData) {
+				packetData = packetData[:capturedLen]
+			}
+
+			totalPackets++
+			parseIEXTPSegment(packetData, universe, out, &totalMessages, &totalTrades, &filteredTrades)
+
+			// Progress
+			now := time.Now()
+			if now.Sub(lastReport) > 10*time.Second {
+				elapsed := now.Sub(startTime).Seconds()
+				fmt.Fprintf(os.Stderr, "[%5.0fs] packets=%d messages=%d trades=%d filtered=%d\n",
+					elapsed, totalPackets, totalMessages, totalTrades, filteredTrades)
+				lastReport = now
+			}
+
+		default:
+			// Unknown block type, skip
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(reader, body); err != nil {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, err
+			}
+		}
+
+		// Read trailing block length (4 bytes)
+		var trailingLen uint32
+		if err := binary.Read(reader, binary.LittleEndian, &trailingLen); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return totalPackets, totalMessages, totalTrades, filteredTrades, nil
+			}
+			return totalPackets, totalMessages, totalTrades, filteredTrades, err
+		}
+	}
+}
+
+// processClassicPcap reads a classic libpcap stream.
+func processClassicPcap(reader io.Reader, universe map[string]bool, out *os.File) (
+	totalPackets, totalMessages, totalTrades, filteredTrades uint64, err error) {
+
+	// Skip remaining 20 bytes of global header (we already read the 4-byte magic)
+	skip := make([]byte, 20)
+	if _, err := io.ReadFull(reader, skip); err != nil {
+		return 0, 0, 0, 0, err
+	}
+
+	startTime := time.Now()
+	lastReport := startTime
+
+	for {
+		// Record header: ts_sec(4) + ts_usec(4) + incl_len(4) + orig_len(4) = 16 bytes
+		var tsSec, tsUsec, inclLen, origLen uint32
+		if err := binary.Read(reader, binary.LittleEndian, &tsSec); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return totalPackets, totalMessages, totalTrades, filteredTrades, err
+		}
+		binary.Read(reader, binary.LittleEndian, &tsUsec)
+		binary.Read(reader, binary.LittleEndian, &inclLen)
+		binary.Read(reader, binary.LittleEndian, &origLen)
+		_ = origLen
+
+		packetData := make([]byte, inclLen)
+		if _, err := io.ReadFull(reader, packetData); err != nil {
+			break
+		}
+
+		totalPackets++
+		parseIEXTPSegment(packetData, universe, out, &totalMessages, &totalTrades, &filteredTrades)
+
+		now := time.Now()
+		if now.Sub(lastReport) > 10*time.Second {
+			elapsed := now.Sub(startTime).Seconds()
+			fmt.Fprintf(os.Stderr, "[%5.0fs] packets=%d messages=%d trades=%d filtered=%d\n",
+				elapsed, totalPackets, totalMessages, totalTrades, filteredTrades)
+			lastReport = now
+		}
+	}
+	return totalPackets, totalMessages, totalTrades, filteredTrades, nil
+}
+
 func main() {
-	inputFile := flag.String("input", "", "Path to IEX HIST pcap.gz file")
+	inputFile := flag.String("input", "", "Path to IEX HIST pcap.gz or pcapng.gz file")
 	tickersFile := flag.String("tickers", "", "Path to tickers.json (universe filter)")
 	outputFile := flag.String("output", "trades.csv", "Output CSV path")
 	flag.Parse()
@@ -130,7 +280,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Loaded %d tickers in universe\n", len(universe))
 	}
 
-	// Open input file
+	// Open input
 	f, err := os.Open(*inputFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening input: %v\n", err)
@@ -138,11 +288,10 @@ func main() {
 	}
 	defer f.Close()
 
-	// Wrap in gzip reader if needed
+	// Try gzip decompression
 	var reader io.Reader
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		// Not gzipped, try raw
 		f.Seek(0, io.SeekStart)
 		reader = f
 	} else {
@@ -150,138 +299,53 @@ func main() {
 		reader = gz
 	}
 
-	// Read pcap global header (24 bytes)
-	var globalHdr pcapGlobalHeader
-	if err := binary.Read(reader, binary.LittleEndian, &globalHdr); err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading pcap global header: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Validate magic number
-	isNano := false
-	switch globalHdr.MagicNumber {
-	case 0xa1b2c3d4:
-		// Standard microsecond pcap
-	case 0xa1b23c4d:
-		// Nanosecond pcap
-		isNano = true
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown pcap magic: 0x%08x (trying anyway)\n", globalHdr.MagicNumber)
-	}
-	_ = isNano // We don't use the pcap timestamp, we use IEX's own nanosecond timestamps
-
-	// Open output file
+	// Open output
 	out, err := os.Create(*outputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating output: %v\n", err)
 		os.Exit(1)
 	}
 	defer out.Close()
 	fmt.Fprintln(out, "symbol,timestamp_ns,price,size,trade_id")
 
-	// Stats
-	var totalPackets, totalMessages, totalTrades, filteredTrades uint64
+	// Read first 4 bytes to determine format
+	var magic uint32
+	if err := binary.Read(reader, binary.LittleEndian, &magic); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file magic: %v\n", err)
+		os.Exit(1)
+	}
+
 	startTime := time.Now()
-	lastReport := startTime
+	var totalPackets, totalMessages, totalTrades, filteredTrades uint64
 
-	// Read packets
-	for {
-		// Read pcap record header (16 bytes)
-		var recHdr pcapRecordHeader
-		if err := binary.Read(reader, binary.LittleEndian, &recHdr); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break
-			}
-			fmt.Fprintf(os.Stderr, "Error reading record header: %v\n", err)
-			break
+	switch magic {
+	case sectionHeaderBlock:
+		// pcapng format (0x0A0D0D0A)
+		fmt.Fprintln(os.Stderr, "Detected pcapng format")
+		// We already consumed the block type (4 bytes). Read the rest of the SHB.
+		var blockLen uint32
+		binary.Read(reader, binary.LittleEndian, &blockLen)
+		if blockLen >= 12 {
+			body := make([]byte, blockLen-12)
+			io.ReadFull(reader, body)
+			// Read trailing length
+			var trailing uint32
+			binary.Read(reader, binary.LittleEndian, &trailing)
 		}
+		totalPackets, totalMessages, totalTrades, filteredTrades, err = processPcapng(reader, universe, out)
 
-		totalPackets++
+	case pcapMagicMicro, pcapMagicNano:
+		// Classic pcap format
+		fmt.Fprintln(os.Stderr, "Detected classic pcap format")
+		totalPackets, totalMessages, totalTrades, filteredTrades, err = processClassicPcap(reader, universe, out)
 
-		// Read the packet data
-		packetData := make([]byte, recHdr.InclLen)
-		if _, err := io.ReadFull(reader, packetData); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break
-			}
-			fmt.Fprintf(os.Stderr, "Error reading packet data: %v\n", err)
-			break
-		}
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown file magic: 0x%08X\n", magic)
+		os.Exit(1)
+	}
 
-		// The packet data IS the IEX-TP segment directly (no Ethernet/IP/UDP headers)
-		if len(packetData) < iexTPHeaderSize {
-			continue
-		}
-
-		// Parse IEX-TP header
-		var hdr iexTPHeader
-		hdr.Version = packetData[0]
-		hdr.Reserved = packetData[1]
-		hdr.ProtocolID = binary.LittleEndian.Uint16(packetData[2:4])
-		hdr.ChannelID = binary.LittleEndian.Uint32(packetData[4:8])
-		hdr.SessionID = binary.LittleEndian.Uint32(packetData[8:12])
-		hdr.PayloadLength = binary.LittleEndian.Uint16(packetData[12:14])
-		hdr.MessageCount = binary.LittleEndian.Uint16(packetData[14:16])
-
-		if hdr.Version != 1 || hdr.ProtocolID != topsProtocolID || hdr.MessageCount == 0 {
-			continue
-		}
-
-		// Parse messages in the payload
-		offset := iexTPHeaderSize
-		payloadEnd := iexTPHeaderSize + int(hdr.PayloadLength)
-		if payloadEnd > len(packetData) {
-			payloadEnd = len(packetData)
-		}
-
-		for i := 0; i < int(hdr.MessageCount) && offset < payloadEnd; i++ {
-			// Each message: 2-byte length prefix + message body
-			if offset+2 > payloadEnd {
-				break
-			}
-			msgLen := int(binary.LittleEndian.Uint16(packetData[offset : offset+2]))
-			offset += 2
-
-			if msgLen == 0 || offset+msgLen > payloadEnd {
-				break
-			}
-
-			totalMessages++
-
-			// Check message type (first byte)
-			if msgLen >= tradeReportSize && packetData[offset] == tradeReportType {
-				totalTrades++
-
-				// Parse trade report
-				var tr tradeReport
-				tr.MsgType = packetData[offset]
-				tr.Flags = packetData[offset+1]
-				tr.TimestampNs = int64(binary.LittleEndian.Uint64(packetData[offset+2 : offset+10]))
-				copy(tr.Symbol[:], packetData[offset+10:offset+18])
-				tr.Size = binary.LittleEndian.Uint32(packetData[offset+18 : offset+22])
-				tr.Price = int64(binary.LittleEndian.Uint64(packetData[offset+22 : offset+30]))
-				tr.TradeID = int64(binary.LittleEndian.Uint64(packetData[offset+30 : offset+38]))
-
-				symbol := trimSymbol(tr.Symbol)
-				if len(universe) == 0 || universe[symbol] {
-					filteredTrades++
-					price := float64(tr.Price) / 10000.0
-					fmt.Fprintf(out, "%s,%d,%.4f,%d,%d\n",
-						symbol, tr.TimestampNs, price, tr.Size, tr.TradeID)
-				}
-			}
-
-			offset += msgLen
-		}
-
-		// Progress reporting every 10 seconds
-		now := time.Now()
-		if now.Sub(lastReport) > 10*time.Second {
-			elapsed := now.Sub(startTime).Seconds()
-			fmt.Fprintf(os.Stderr, "[%5.0fs] packets=%d messages=%d trades=%d filtered=%d\n",
-				elapsed, totalPackets, totalMessages, totalTrades, filteredTrades)
-			lastReport = now
-		}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
 	}
 
 	elapsed := time.Since(startTime)
