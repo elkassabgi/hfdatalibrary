@@ -28,6 +28,7 @@
       <li><a href="download.html">Download</a></li>
       <li><a href="code.html">Code</a></li>
       <li><a href="cite.html">Cite</a></li>
+      <li><a href="stats.html">Stats</a></li>
       <li><a href="contact.html">Contact</a></li>
     </ul>
   </div>
@@ -134,16 +135,22 @@
 
     <!-- Sources -->
     <h2 style="margin-top:3rem;">Data sources</h2>
+
+    <div style="background: #fef9ee; border: 1px solid #fde68a; border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+      <strong style="color:#92600a;">Important:</strong> The data source changes at March 2022. Pre-2022 data is from the full consolidated tape (all exchanges). Post-2022 data is from IEX Exchange only (~2–3% of volume). See <a href="issues.html">Known Issues</a> for detailed implications for research.
+    </div>
+
     <div class="grid-2" style="gap:1.5rem;">
-      <div class="card">
+      <div class="card" style="border-left: 4px solid var(--green);">
         <h3>PiTrading (pre-March 2022)</h3>
-        <p>Consolidated tape data derived from CTA (NYSE-listed) and UTP (Nasdaq-listed) feeds. Same underlying data as CRSP and TAQ. One-minute OHLCV bars, split and dividend adjusted.</p>
+        <p><strong>Full consolidated tape</strong> — CTA (NYSE-listed) and UTP (Nasdaq-listed) feeds. Captures all trades across all U.S. equity exchanges. Same underlying data as CRSP and TAQ. One-minute OHLCV bars, split and dividend adjusted.</p>
         <p style="margin:0;"><strong>Coverage:</strong> December 2002 – March 2022 (45 tickers back to January 1991)</p>
       </div>
-      <div class="card">
+      <div class="card" style="border-left: 4px solid #d97706;">
         <h3>IEX Exchange HIST (post-March 2022)</h3>
-        <p>Full-depth pcap files from the IEX exchange, parsed into one-minute OHLCV bars. IEX represents ~2–3% of consolidated volume. Single-exchange view, not full tape.</p>
-        <p style="margin:0;"><strong>Coverage:</strong> March 2022 – present (updated weekly)</p>
+        <p><strong>Single exchange only</strong> — IEX Exchange pcap files, parsed into one-minute OHLCV bars. IEX represents approximately 2–3% of consolidated volume. Volume and trade counts are substantially lower than the full tape. Some tickers may have no IEX trades on a given day.</p>
+        <p style="margin:0;"><strong>Coverage:</strong> March 2022 – present (updated daily)</p>
+        <p style="margin:0.5rem 0 0; font-size:0.85rem; color:var(--gray-500);">IEX Exchange HIST is the only free, redistributable source of U.S. equity intraday data.</p>
       </div>
     </div>
 

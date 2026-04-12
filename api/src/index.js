@@ -62,6 +62,9 @@ export default {
       if (path === '/v1/status')
         return await handleStatus(env, cors);
 
+      if (path === '/v1/public-stats')
+        return await handlePublicStats(env, cors);
+
       // ── Auth endpoints ──
       if (path === '/v1/auth/register' && request.method === 'POST')
         return await handleRegister(request, env, cors, ip, ua, country);
@@ -1823,6 +1826,58 @@ async function handleAdmin(path, request, env, cors, ip) {
 }
 
 // ── Status ──
+
+async function handlePublicStats(env, cors) {
+  // Public stats — no auth required. All data is aggregated, no PII exposed.
+  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_active = 1').first();
+  const totalDownloads = await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
+  const totalBytes = await env.DB.prepare('SELECT COALESCE(SUM(bytes_served),0) as s FROM download_log').first();
+  const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
+  const weekDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-7 days')").first();
+
+  // Countries (from users table)
+  const countries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(*) as users FROM users WHERE is_active = 1 AND country != "" GROUP BY UPPER(country) ORDER BY users DESC').all();
+
+  // Distinct institutions
+  const institutions = await env.DB.prepare('SELECT institution, COUNT(*) as users FROM users WHERE is_active = 1 AND institution != "" GROUP BY institution ORDER BY users DESC LIMIT 50').all();
+
+  // Top downloaded tickers
+  const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
+
+  // Downloads by version
+  const byVersion = await env.DB.prepare('SELECT version, COUNT(*) as downloads FROM download_log GROUP BY version ORDER BY downloads DESC').all();
+
+  // Registrations per week (last 12 weeks)
+  const regTrend = await env.DB.prepare("SELECT strftime('%Y-W%W', created_at) as week, COUNT(*) as registrations FROM users WHERE created_at > datetime('now', '-84 days') GROUP BY week ORDER BY week").all();
+
+  // Country codes from login_history (Cloudflare cf-ipcountry)
+  const accessCountries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(DISTINCT user_id) as users FROM login_history WHERE country IS NOT NULL AND country != "" AND country != "unknown" GROUP BY UPPER(country)').all();
+
+  // Merge country data (from registration + from access)
+  const countryMap = {};
+  for (const row of countries.results) {
+    if (row.country && row.country.length <= 3) countryMap[row.country] = (countryMap[row.country] || 0) + row.users;
+  }
+  for (const row of accessCountries.results) {
+    if (row.country && row.country.length <= 3) countryMap[row.country] = (countryMap[row.country] || 0) + row.users;
+  }
+
+  return jsonRes({
+    total_users: totalUsers?.c || 0,
+    total_downloads: totalDownloads?.c || 0,
+    total_bytes_served: totalBytes?.s || 0,
+    downloads_today: todayDownloads?.c || 0,
+    downloads_this_week: weekDownloads?.c || 0,
+    countries: countryMap,
+    country_count: Object.keys(countryMap).length,
+    institutions: institutions.results,
+    institution_count: institutions.results.length,
+    top_tickers: topTickers.results,
+    by_version: byVersion.results,
+    registration_trend: regTrend.results,
+    generated_at: new Date().toISOString(),
+  }, 200, cors);
+}
 
 async function handleStatus(env, cors) {
   const list = await env.DATA_BUCKET.list({ prefix: 'clean/', limit: 1 });

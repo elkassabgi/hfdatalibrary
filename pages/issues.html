@@ -24,6 +24,7 @@
       <li><a href="download.html">Download</a></li>
       <li><a href="code.html">Code</a></li>
       <li><a href="cite.html">Cite</a></li>
+      <li><a href="stats.html">Stats</a></li>
       <li><a href="contact.html">Contact</a></li>
     </ul>
   </div>
@@ -45,18 +46,60 @@
 
     <h2>Source limitations</h2>
 
-    <h4>IEX exchange coverage (post-March 2022)</h4>
-    <p><strong>Status:</strong> Known, documented</p>
-    <p>Post-March 2022 data is sourced from IEX Exchange HIST, which captures IEX-only activity (approximately 2–3% of consolidated volume). This means post-2022 bars reflect a single-exchange view rather than the full consolidated tape. Volume figures are lower and some bars may be missing for thinly traded names. The <code>source</code> column identifies affected bars.</p>
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1.5rem;">
+      <strong style="color:#991b1b;">Important: Data source change at March 2022</strong>
+      <p style="margin:0.5rem 0 0; color:#7f1d1d;">The data source changes at March 2022. Pre-2022 data comes from the full consolidated tape (all U.S. exchanges). Post-2022 data comes from IEX Exchange only (~2–3% of consolidated volume). This creates a structural break. Please read the details below before using this data in research.</p>
+    </div>
+
+    <h4>Pre-March 2022: Consolidated tape (PiTrading)</h4>
+    <p><strong>Coverage:</strong> Full consolidated tape (CTA/UTP) — captures all trades across all U.S. equity exchanges (NYSE, Nasdaq, ARCA, BATS, IEX, etc.).</p>
+    <p>This data represents the complete picture of U.S. equity trading. Volume figures, OHLCV bars, and all derived academic measures reflect the full market. This is the same underlying data used by CRSP and TAQ.</p>
+
+    <h4>Post-March 2022: IEX Exchange HIST (single exchange)</h4>
+    <p><strong>Status:</strong> Known limitation, documented</p>
+    <p><strong>Coverage:</strong> IEX Exchange only — approximately 2–3% of total consolidated volume.</p>
+    <p>Post-March 2022 data is sourced from IEX Exchange HIST, which provides publicly available pcap captures of IEX's own trading activity. IEX is the only U.S. exchange that makes its historical data freely available and allows redistribution.</p>
+
+    <p><strong>What this means for researchers:</strong></p>
+    <ul style="margin-left:1.5rem; line-height:2;">
+      <li><strong>Volume is substantially lower.</strong> IEX represents ~2–3% of consolidated volume. Daily volume for a stock like AAPL on IEX may be 2–5 million shares vs. 50–80 million on the full tape.</li>
+      <li><strong>Some tickers have zero trades on IEX on any given day.</strong> On a typical day, ~1,100 of our 1,391 tickers have IEX trading activity. The remaining ~290 (mostly thinly traded names) will have no bars for that date.</li>
+      <li><strong>OHLCV bars may differ from the full tape.</strong> Since IEX sees a subset of trades, the Open, High, Low, and Close prices may not match the consolidated tape values.</li>
+      <li><strong>Academic measures will be affected.</strong> Realized volatility, bid-ask spreads, Amihud illiquidity, jump detection, and autocorrelation statistics computed from IEX-only data may differ from those computed from the full tape.</li>
+      <li><strong>There is a structural break at March 2022.</strong> Any time-series analysis spanning this date must account for the source change. Volume will appear to drop ~97% at this boundary — this is a source artifact, not a market event.</li>
+    </ul>
+
+    <p><strong>When IEX data is appropriate:</strong></p>
+    <ul style="margin-left:1.5rem; line-height:2;">
+      <li>Cross-sectional studies that use only post-2022 data (all tickers observed under the same conditions)</li>
+      <li>Studies of IEX specifically (market share, execution quality, routing behavior)</li>
+      <li>Studies of highly liquid names (Q5 quintile) where IEX has better representation</li>
+      <li>As a free complement to WRDS/TAQ, which researchers may have through their institutions</li>
+      <li>Prototyping and teaching, where exact magnitudes are less important than demonstrating methods</li>
+    </ul>
+
+    <p><strong>When IEX data is NOT appropriate:</strong></p>
+    <ul style="margin-left:1.5rem; line-height:2;">
+      <li>Studies requiring complete volume or turnover figures</li>
+      <li>Studies comparing pre-2022 and post-2022 periods without controlling for the source change</li>
+      <li>Studies of illiquid stocks that rarely trade on IEX</li>
+      <li>Studies where NBBO (National Best Bid/Offer) prices are needed — IEX quotes reflect IEX's book, not the NBBO</li>
+    </ul>
+
+    <p><strong>How to identify the data source:</strong> Each bar has a <code>source</code> column. Bars with <code>source="pitrading"</code> are from the consolidated tape. Bars with <code>source="iex"</code> are from IEX Exchange HIST only.</p>
+
+    <h4>Why not use a full-tape source?</h4>
+    <p>Consolidated tape data (CTA/UTP) is owned by NYSE and Nasdaq. All providers who redistribute it (Alpaca, Polygon, Yahoo Finance, etc.) charge licensing fees and prohibit re-redistribution in their terms of service. IEX Exchange HIST is the only U.S. equity exchange that makes its historical data freely available and permits redistribution with attribution. This is a trade-off between coverage and accessibility.</p>
+    <p>Researchers who require full consolidated tape data for post-2022 analysis should supplement this library with institutional access to WRDS/TAQ or similar licensed sources.</p>
 
     <h4>Splice boundary (March 2022)</h4>
-    <p><strong>Status:</strong> Known, adjusted</p>
-    <p>The transition from PiTrading (consolidated tape) to IEX Exchange HIST (single exchange) at March 2022 creates a structural break in volume and potentially in price coverage. Step 9 of the cleaning pipeline checks for artificial price jumps at this boundary. Researchers studying time trends in volume should account for this transition.</p>
+    <p><strong>Status:</strong> Known structural break</p>
+    <p>The transition from PiTrading (consolidated tape) to IEX Exchange HIST (single exchange) at March 2022 creates a structural break in volume, trade count, and potentially in price coverage. Step 9 of the cleaning pipeline checks for artificial price jumps at this boundary, but the volume discontinuity is inherent to the source change and cannot be cleaned away.</p>
 
     <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <h2>No other issues reported</h2>
-    <p style="color: var(--gray-500);">This page will be updated as issues are discovered. Check back after each weekly data update.</p>
+    <p style="color: var(--gray-500);">This page will be updated as issues are discovered. Check back after each data update.</p>
 
     <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
 

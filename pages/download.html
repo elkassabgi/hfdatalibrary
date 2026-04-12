@@ -65,6 +65,7 @@
       <li><a href="download.html" class="active">Download</a></li>
       <li><a href="code.html">Code</a></li>
       <li><a href="cite.html">Cite</a></li>
+      <li><a href="stats.html">Stats</a></li>
       <li><a href="contact.html">Contact</a></li>
     </ul>
   </div>
@@ -117,6 +118,80 @@
       </label>
     </div>
     <div id="search-results"></div>
+
+    <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <!-- Custom Bundle Builder -->
+    <h2 style="margin-bottom:0.5rem;">Build a custom bundle</h2>
+    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Select multiple tickers and download them all at once. Use the filters or type ticker symbols directly.</p>
+
+    <div class="card" style="padding:1.5rem; margin-bottom:2rem;">
+      <!-- Quick filters -->
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('all')">All (1,391)</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('q5')">Q5 Most Liquid</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('q4')">Q4</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('q3')">Q3</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('q2')">Q2</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="filterTickers('q1')">Q1 Least Liquid</button>
+        <button class="btn btn-sm btn-outline" style="color:var(--gray-500); border-color:var(--gray-300); padding:0.3rem 0.75rem; font-size:0.8rem;" onclick="clearBundle()">Clear</button>
+      </div>
+
+      <!-- Timeframe + Version -->
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <label style="font-size:0.9rem; color:var(--gray-600); display:flex; align-items:center; gap:0.5rem;">
+          Timeframe:
+          <select id="bundle-timeframe" style="padding:0.4rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+            <option value="1min">1-minute</option>
+            <option value="5min">5-minute</option>
+            <option value="15min">15-minute</option>
+            <option value="30min">30-minute</option>
+            <option value="hourly">Hourly</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </label>
+        <label style="font-size:0.9rem; color:var(--gray-600); display:flex; align-items:center; gap:0.5rem;">
+          Version:
+          <select id="bundle-version" style="padding:0.4rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-sans);">
+            <option value="clean">Clean</option>
+            <option value="raw">Raw</option>
+          </select>
+        </label>
+      </div>
+
+      <!-- Type tickers manually -->
+      <div style="margin-bottom:1rem;">
+        <label style="font-size:0.85rem; color:var(--gray-600); display:block; margin-bottom:0.35rem;">Type or paste ticker symbols (comma or space separated):</label>
+        <div style="display:flex; gap:0.5rem;">
+          <input type="text" id="bundle-input" placeholder="AAPL, MSFT, GOOG, SPY, QQQ..." style="flex:1; padding:0.5rem 0.75rem; border:1px solid var(--gray-300); border-radius:6px; font-family:var(--font-mono); font-size:0.9rem;">
+          <button class="btn btn-sm btn-primary" style="padding:0.5rem 1rem;" onclick="addToBundleFromInput()">Add</button>
+        </div>
+      </div>
+
+      <!-- Selected tickers display -->
+      <div id="bundle-selected" style="min-height:40px; padding:0.75rem; background:var(--gray-50); border:1px solid var(--gray-200); border-radius:6px; margin-bottom:1rem;">
+        <p style="color:var(--gray-400); margin:0; font-size:0.85rem;">No tickers selected. Use the filters above or type symbols.</p>
+      </div>
+
+      <!-- Count + Download -->
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span id="bundle-count" style="font-size:0.9rem; color:var(--gray-600);">0 tickers selected</span>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="btn btn-primary" onclick="downloadBundle('parquet')">Download All (Parquet)</button>
+          <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="downloadBundle('csv')">Download All (CSV)</button>
+        </div>
+      </div>
+
+      <!-- Download progress -->
+      <div id="bundle-progress" style="display:none; margin-top:1rem;">
+        <div style="background:var(--gray-200); border-radius:4px; height:8px; overflow:hidden;">
+          <div id="bundle-bar" style="background:var(--blue); height:100%; width:0%; transition:width 0.3s;"></div>
+        </div>
+        <p id="bundle-status" style="font-size:0.85rem; color:var(--gray-500); margin-top:0.5rem;">Preparing downloads...</p>
+      </div>
+    </div>
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
@@ -305,9 +380,8 @@ let oauthPendingId = null;
   if (oauthSuccess && session) {
     localStorage.setItem('hfd_session', session);
     sessionToken = session;
-    // Clean URL (remove hash and query params) and scroll to top
+    // Clean URL (remove hash and query params)
     window.history.replaceState({}, document.title, window.location.pathname);
-    window.scrollTo({ top: 0, behavior: 'auto' });
     // Show success toast
     setTimeout(() => {
       const toast = document.createElement('div');
@@ -371,6 +445,103 @@ async function checkAuth() {
 }
 checkAuth();
 
+// ── Custom Bundle Builder ──
+let allTickers = [];
+let selectedTickers = new Set();
+
+(async function loadAllTickers() {
+  try {
+    const r = await fetch(API + '/v1/symbols');
+    if (r.ok) {
+      const d = await r.json();
+      allTickers = d.symbols.map(s => s.ticker);
+    }
+  } catch (e) {}
+})();
+
+function filterTickers(group) {
+  if (!allTickers.length) { alert('Ticker list still loading. Try again.'); return; }
+  const total = allTickers.length;
+  const q = Math.ceil(total / 5);
+  switch (group) {
+    case 'all': selectedTickers = new Set(allTickers); break;
+    case 'q5': selectedTickers = new Set(allTickers.slice(total - q)); break;
+    case 'q4': selectedTickers = new Set(allTickers.slice(total - q*2, total - q)); break;
+    case 'q3': selectedTickers = new Set(allTickers.slice(total - q*3, total - q*2)); break;
+    case 'q2': selectedTickers = new Set(allTickers.slice(total - q*4, total - q*3)); break;
+    case 'q1': selectedTickers = new Set(allTickers.slice(0, q)); break;
+  }
+  renderBundle();
+}
+
+function clearBundle() { selectedTickers.clear(); renderBundle(); }
+
+function addToBundleFromInput() {
+  const input = document.getElementById('bundle-input').value.trim();
+  if (!input) return;
+  const tickers = input.split(/[\s,;]+/).map(t => t.toUpperCase().trim()).filter(Boolean);
+  for (const t of tickers) { if (allTickers.includes(t)) selectedTickers.add(t); }
+  document.getElementById('bundle-input').value = '';
+  renderBundle();
+}
+
+function removeTicker(t) { selectedTickers.delete(t); renderBundle(); }
+
+function renderBundle() {
+  const el = document.getElementById('bundle-selected');
+  const count = document.getElementById('bundle-count');
+  if (selectedTickers.size === 0) {
+    el.innerHTML = '<p style="color:var(--gray-400); margin:0; font-size:0.85rem;">No tickers selected.</p>';
+    count.textContent = '0 tickers selected';
+    return;
+  }
+  const sorted = [...selectedTickers].sort();
+  const shown = sorted.slice(0, 100);
+  const remaining = sorted.length - shown.length;
+  el.innerHTML = shown.map(t =>
+    '<span onclick="removeTicker(\'' + t + '\')" style="display:inline-block; background:var(--blue-pale); color:var(--blue); padding:0.15rem 0.5rem; border-radius:4px; font-family:var(--font-mono); font-size:0.8rem; margin:0.15rem; cursor:pointer;" title="Click to remove">' + t + ' &times;</span>'
+  ).join('') + (remaining > 0 ? '<span style="color:var(--gray-500); font-size:0.8rem; margin-left:0.5rem;">+' + remaining + ' more</span>' : '');
+  count.textContent = selectedTickers.size + ' tickers selected';
+}
+
+async function downloadBundle(format) {
+  if (!sessionToken) { alert('Please log in first.'); return; }
+  if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
+  const version = document.getElementById('bundle-version').value;
+  const timeframe = document.getElementById('bundle-timeframe').value;
+  const tickers = [...selectedTickers].sort();
+  const progress = document.getElementById('bundle-progress');
+  const bar = document.getElementById('bundle-bar');
+  const status = document.getElementById('bundle-status');
+  progress.style.display = 'block';
+  let completed = 0, failed = 0;
+  for (const ticker of tickers) {
+    try {
+      const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
+        headers: { 'Authorization': 'Bearer ' + sessionToken }
+      });
+      const data = await r.json();
+      if (r.ok && data.url) {
+        const a = document.createElement('a');
+        a.href = data.url;
+        a.download = ticker + '_' + version + '_' + timeframe + '.' + format;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } else { failed++; }
+    } catch (e) { failed++; }
+    completed++;
+    bar.style.width = ((completed / tickers.length) * 100) + '%';
+    status.textContent = completed + ' / ' + tickers.length + ' downloaded' + (failed > 0 ? ' (' + failed + ' failed)' : '');
+  }
+  status.textContent = 'Done! ' + (completed - failed) + ' files downloaded.' + (failed > 0 ? ' ' + failed + ' failed.' : '');
+}
+
+document.getElementById('bundle-input').addEventListener('keyup', function(e) {
+  if (e.key === 'Enter') addToBundleFromInput();
+});
+
 // ── Login ──
 let pendingTotpToken = null;
 
@@ -411,6 +582,8 @@ async function loginUser() {
       localStorage.setItem('hfd_session', sessionToken);
       result.innerHTML = '<p style="color:#059669; margin:0;">Login successful!</p>';
       checkAuth();
+      // Scroll up to the search/download area
+      document.getElementById('ticker-search')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Login failed.') + '</p>';
     }
@@ -437,6 +610,7 @@ async function submitTotp() {
       localStorage.setItem('hfd_session', sessionToken);
       document.getElementById('login-result').innerHTML = '<p style="color:#059669; margin:0;">Login successful!</p>';
       checkAuth();
+      document.getElementById('ticker-search')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       err.style.display = 'block';
       err.textContent = data.error || 'Invalid code';

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Statistics — HF Data Library</title>
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+  <style>
+    .big-stat { text-align:center; padding:1.5rem; }
+    .big-stat .num { font-family: var(--font-mono); font-size:2.5rem; font-weight:700; color:var(--navy); }
+    .big-stat .label { font-size:0.85rem; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.25rem; }
+    .world-map-container { max-width:100%; margin:0 auto; min-height:500px; }
+    .world-map-container svg { width:100%; height:auto; }
+    .world-map-container svg path { fill:var(--gray-200); stroke:#fff; stroke-width:0.5; transition: fill 0.3s; }
+    .world-map-container svg path.active { fill:var(--blue); }
+    .world-map-container svg path.active:hover { fill:var(--blue-light); cursor:pointer; }
+    .ticker-bar { display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem; }
+    .ticker-bar .name { font-family:var(--font-mono); font-weight:600; width:60px; }
+    .ticker-bar .bar { height:24px; background:var(--blue); border-radius:4px; min-width:2px; transition:width 0.5s; }
+    .ticker-bar .count { font-family:var(--font-mono); font-size:0.85rem; color:var(--gray-500); }
+    .inst-list { font-size:0.9rem; line-height:2; }
+    .inst-list .inst-name { color:var(--navy); font-weight:500; }
+    .inst-list .inst-count { color:var(--gray-400); font-family:var(--font-mono); font-size:0.8rem; margin-left:0.5rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../index.html" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data.html">Data</a></li>
+      <li><a href="docs.html">Documentation</a></li>
+      <li><a href="api.html">API</a></li>
+      <li><a href="download.html">Download</a></li>
+      <li><a href="code.html">Code</a></li>
+      <li><a href="stats.html" class="active">Stats</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Live Statistics</h1>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Real-time usage metrics for the HF Data Library. Updated live from the database.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+
+    <!-- Big stats -->
+    <div class="grid-4" style="margin-bottom:3rem;">
+      <div class="card big-stat">
+        <div class="num" id="stat-users">-</div>
+        <div class="label">Registered Users</div>
+      </div>
+      <div class="card big-stat">
+        <div class="num" id="stat-downloads">-</div>
+        <div class="label">Total Downloads</div>
+      </div>
+      <div class="card big-stat">
+        <div class="num" id="stat-data">-</div>
+        <div class="label">Data Served</div>
+      </div>
+      <div class="card big-stat">
+        <div class="num" id="stat-countries">-</div>
+        <div class="label">Countries</div>
+      </div>
+    </div>
+
+    <!-- World map -->
+    <h2 style="text-align:center; margin-bottom:1rem;">Global Reach</h2>
+    <p style="text-align:center; color:var(--gray-500); margin-bottom:1.5rem;">Countries with registered users or data downloads are highlighted in blue.</p>
+    <div id="world-map" style="width:100%; height:500px;">
+      <p style="text-align:center; color:var(--gray-400); padding-top:200px;">Loading map...</p>
+    </div>
+
+    <hr style="margin:3rem 0; border:none; border-top:1px solid var(--gray-200);">
+
+    <!-- Two column: tickers + institutions -->
+    <div class="grid-2" style="gap:2rem;">
+
+      <!-- Most downloaded tickers -->
+      <div>
+        <h3 style="margin-bottom:1.5rem;">Most Downloaded Tickers</h3>
+        <div id="ticker-chart">
+          <p style="color:var(--gray-400);">Loading...</p>
+        </div>
+      </div>
+
+      <!-- Institutions -->
+      <div>
+        <h3 style="margin-bottom:1.5rem;">Institutions Represented</h3>
+        <div id="institution-list">
+          <p style="color:var(--gray-400);">Loading...</p>
+        </div>
+      </div>
+
+    </div>
+
+    <hr style="margin:3rem 0; border:none; border-top:1px solid var(--gray-200);">
+
+    <!-- Activity summary -->
+    <div class="grid-3" style="gap:1.5rem;">
+      <div class="card" style="text-align:center; padding:1.25rem;">
+        <div style="font-family:var(--font-mono); font-size:1.5rem; font-weight:700; color:var(--navy);" id="stat-today">-</div>
+        <div style="font-size:0.8rem; color:var(--gray-500);">Downloads today</div>
+      </div>
+      <div class="card" style="text-align:center; padding:1.25rem;">
+        <div style="font-family:var(--font-mono); font-size:1.5rem; font-weight:700; color:var(--navy);" id="stat-week">-</div>
+        <div style="font-size:0.8rem; color:var(--gray-500);">Downloads this week</div>
+      </div>
+      <div class="card" style="text-align:center; padding:1.25rem;">
+        <div style="font-family:var(--font-mono); font-size:1.5rem; font-weight:700; color:var(--navy);" id="stat-institutions">-</div>
+        <div style="font-size:0.8rem; color:var(--gray-500);">Institutions</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+const API = 'https://api.hfdatalibrary.com';
+
+// Google Charts — load first, then fetch data, then draw
+google.charts.load('current', { packages: ['geochart'] });
+
+var mapCountries = null;
+var chartsReady = false;
+
+google.charts.setOnLoadCallback(function() {
+  chartsReady = true;
+  if (mapCountries) drawRegionsMap();
+});
+
+function drawRegionsMap() {
+  var countries = mapCountries;
+  if (!countries || Object.keys(countries).length === 0) return;
+
+  var rows = [['Country', 'Users']];
+  for (var code in countries) {
+    rows.push([code, countries[code]]);
+  }
+
+  var data = google.visualization.arrayToDataTable(rows);
+
+  var options = {
+    colorAxis: { minValue: 1, colors: ['#3b82f6', '#1e3a5f'] },
+    backgroundColor: '#ffffff',
+    datalessRegionColor: '#e5e7eb',
+    defaultColor: '#e5e7eb',
+    legend: 'none',
+  };
+
+  var chart = new google.visualization.GeoChart(document.getElementById('world-map'));
+  chart.draw(data, options);
+
+  // Country badges below the map
+  var sorted = Object.entries(countries).sort(function(a,b) { return b[1]-a[1]; });
+  var badges = document.getElementById('country-badges');
+  if (!badges) {
+    badges = document.createElement('div');
+    badges.id = 'country-badges';
+    document.getElementById('world-map').parentNode.insertBefore(badges, document.getElementById('world-map').nextSibling);
+  }
+  badges.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.5rem; justify-content:center; margin-top:1.5rem;';
+  badges.innerHTML = sorted.map(function(e) {
+    return '<span style="background:var(--blue-pale); color:var(--blue); padding:0.3rem 0.75rem; border-radius:20px; font-size:0.85rem; font-weight:500;">' +
+      e[0] + ' <span style="color:var(--gray-500); font-size:0.75rem;">(' + e[1] + ')</span></span>';
+  }).join('');
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch(API + '/v1/public-stats');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Big stats
+    document.getElementById('stat-users').textContent = d.total_users.toLocaleString();
+    document.getElementById('stat-downloads').textContent = d.total_downloads.toLocaleString();
+    document.getElementById('stat-data').textContent = (d.total_bytes_served / 1e9).toFixed(1) + ' GB';
+    document.getElementById('stat-countries').textContent = d.country_count;
+    document.getElementById('stat-today').textContent = d.downloads_today.toLocaleString();
+    document.getElementById('stat-week').textContent = d.downloads_this_week.toLocaleString();
+    document.getElementById('stat-institutions').textContent = d.institution_count;
+
+    // Draw the world map
+    mapCountries = d.countries;
+    if (chartsReady) drawRegionsMap();
+
+    // Ticker chart
+    if (d.top_tickers && d.top_tickers.length > 0) {
+      const maxDl = d.top_tickers[0].downloads;
+      document.getElementById('ticker-chart').innerHTML = d.top_tickers.slice(0, 15).map(t =>
+        '<div class="ticker-bar">' +
+          '<span class="name">' + t.ticker + '</span>' +
+          '<div class="bar" style="width:' + Math.max(2, (t.downloads / maxDl) * 100) + '%;"></div>' +
+          '<span class="count">' + t.downloads + ' (' + (t.bytes / 1e6).toFixed(0) + ' MB)</span>' +
+        '</div>'
+      ).join('');
+    } else {
+      document.getElementById('ticker-chart').innerHTML = '<p style="color:var(--gray-400);">No downloads yet. Be the first!</p>';
+    }
+
+    // Institutions
+    if (d.institutions && d.institutions.length > 0) {
+      document.getElementById('institution-list').innerHTML =
+        '<div class="inst-list">' +
+        d.institutions.slice(0, 20).map(i =>
+          '<div><span class="inst-name">' + i.institution + '</span><span class="inst-count">' + i.users + ' user' + (i.users > 1 ? 's' : '') + '</span></div>'
+        ).join('') +
+        '</div>';
+    } else {
+      document.getElementById('institution-list').innerHTML = '<p style="color:var(--gray-400);">No institutions yet.</p>';
+    }
+
+  } catch (e) {
+    console.error('Stats load error:', e);
+  }
+}
+
+loadStats();
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>
