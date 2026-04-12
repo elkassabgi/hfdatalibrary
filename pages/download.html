@@ -372,6 +372,8 @@ async function checkAuth() {
 checkAuth();
 
 // ── Login ──
+let pendingTotpToken = null;
+
 async function loginUser() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
@@ -387,6 +389,23 @@ async function loginUser() {
     });
     const data = await r.json();
     result.style.display = 'block';
+
+    if (data.totp_required) {
+      // 2FA enabled — show code input
+      pendingTotpToken = data.pending_token;
+      result.innerHTML =
+        '<div style="background:var(--blue-pale); border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
+          '<p style="margin:0 0 0.75rem; color:var(--navy); font-weight:500;">Enter your 6-digit authenticator code:</p>' +
+          '<div style="display:flex; gap:0.5rem;">' +
+            '<input type="text" id="totp-code" placeholder="123456" maxlength="6" style="flex:1; padding:0.5rem; border:2px solid var(--gray-200); border-radius:6px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em; text-align:center;">' +
+            '<button class="btn btn-primary" style="padding:0.5rem 1rem;" onclick="submitTotp()">Verify</button>' +
+          '</div>' +
+          '<p id="totp-error" style="color:var(--red); margin:0.5rem 0 0; display:none;"></p>' +
+        '</div>';
+      setTimeout(function() { document.getElementById('totp-code').focus(); }, 100);
+      return;
+    }
+
     if (data.session) {
       sessionToken = data.session;
       localStorage.setItem('hfd_session', sessionToken);
@@ -398,6 +417,33 @@ async function loginUser() {
   } catch (e) {
     result.style.display = 'block';
     result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error.</p>';
+  }
+}
+
+async function submitTotp() {
+  const code = document.getElementById('totp-code').value.trim();
+  const err = document.getElementById('totp-error');
+  if (!/^\d{6}$/.test(code)) { err.style.display = 'block'; err.textContent = 'Enter a 6-digit code'; return; }
+
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/verify-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_token: pendingTotpToken, code: code })
+    });
+    const data = await r.json();
+    if (data.session) {
+      sessionToken = data.session;
+      localStorage.setItem('hfd_session', sessionToken);
+      document.getElementById('login-result').innerHTML = '<p style="color:#059669; margin:0;">Login successful!</p>';
+      checkAuth();
+    } else {
+      err.style.display = 'block';
+      err.textContent = data.error || 'Invalid code';
+    }
+  } catch (e) {
+    err.style.display = 'block';
+    err.textContent = 'Connection error';
   }
 }
 
