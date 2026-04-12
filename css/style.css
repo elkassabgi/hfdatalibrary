@@ -167,6 +167,7 @@ pre code { background: none; padding: 0; color: inherit; }
   gap: 1.5rem;
   max-width: 900px;
   margin: 0 auto 3rem;
+  align-items: start;
 }
 .stat-item {
   text-align: center;
