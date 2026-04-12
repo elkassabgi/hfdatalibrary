@@ -36,6 +36,11 @@ const (
 	enhancedPacketBlock  = 0x00000006
 	simplePacketBlock    = 0x00000003
 
+	// Network header sizes (to skip in pcapng Enhanced Packet Blocks)
+	ethernetHeaderSize = 14
+	ipHeaderMinSize    = 20
+	udpHeaderSize      = 8
+
 	// IEX-TP
 	iexTPHeaderSize = 40
 	topsProtocolID  = 0x8003
@@ -174,7 +179,34 @@ func processPcapng(reader io.Reader, universe map[string]bool, out *os.File) (
 			}
 
 			totalPackets++
-			parseIEXTPSegment(packetData, universe, out, &totalMessages, &totalTrades, &filteredTrades)
+
+			// The packet data contains the full captured network frame.
+			// Strip Ethernet + IP + UDP headers to get the IEX-TP payload.
+			//
+			// Ethernet (14 bytes): dst(6) + src(6) + ethertype(2)
+			// IP (20+ bytes): version/ihl(1) + ... ; actual size = (ihl & 0x0f) * 4
+			// UDP (8 bytes): src_port(2) + dst_port(2) + length(2) + checksum(2)
+			//
+			// After stripping these, the remaining bytes are the IEX-TP segment.
+			minHeaders := ethernetHeaderSize + ipHeaderMinSize + udpHeaderSize // 42 bytes
+			if len(packetData) < minHeaders+iexTPHeaderSize {
+				break
+			}
+
+			// Get actual IP header length (first nibble of the byte at offset 14)
+			ipVersionIHL := packetData[ethernetHeaderSize]
+			ipHeaderLen := int(ipVersionIHL&0x0f) * 4
+			if ipHeaderLen < ipHeaderMinSize {
+				ipHeaderLen = ipHeaderMinSize
+			}
+
+			iexTPOffset := ethernetHeaderSize + ipHeaderLen + udpHeaderSize
+			if iexTPOffset >= len(packetData) {
+				break
+			}
+
+			iexTPData := packetData[iexTPOffset:]
+			parseIEXTPSegment(iexTPData, universe, out, &totalMessages, &totalTrades, &filteredTrades)
 
 			// Progress
 			now := time.Now()
@@ -237,7 +269,22 @@ func processClassicPcap(reader io.Reader, universe map[string]bool, out *os.File
 		}
 
 		totalPackets++
-		parseIEXTPSegment(packetData, universe, out, &totalMessages, &totalTrades, &filteredTrades)
+
+		// Strip Ethernet + IP + UDP headers (same as pcapng)
+		minHeaders := ethernetHeaderSize + ipHeaderMinSize + udpHeaderSize
+		if len(packetData) < minHeaders+iexTPHeaderSize {
+			continue
+		}
+		ipVersionIHL := packetData[ethernetHeaderSize]
+		ipHeaderLen := int(ipVersionIHL&0x0f) * 4
+		if ipHeaderLen < ipHeaderMinSize {
+			ipHeaderLen = ipHeaderMinSize
+		}
+		iexTPOffset := ethernetHeaderSize + ipHeaderLen + udpHeaderSize
+		if iexTPOffset >= len(packetData) {
+			continue
+		}
+		parseIEXTPSegment(packetData[iexTPOffset:], universe, out, &totalMessages, &totalTrades, &filteredTrades)
 
 		now := time.Now()
 		if now.Sub(lastReport) > 10*time.Second {
