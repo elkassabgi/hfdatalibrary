@@ -30,12 +30,16 @@ import argparse
 import subprocess
 import tempfile
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Set, Dict, List, Optional
 import urllib.request
 
 import pandas as pd
+
+MAX_TICKER_WORKERS = 20   # Outer: concurrent tickers (I/O-bound)
+MAX_UPLOAD_WORKERS = 10   # Inner: concurrent uploads per ticker
 
 # Pipeline modules (same directory)
 sys.path.insert(0, str(Path(__file__).parent))
@@ -260,27 +264,49 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         print(f"[merge_ticker] DRY RUN {ticker}: would write {len(merged_raw)} raw bars")
         return stats
 
-    # 3. Upload raw 1-min
-    stats["uploaded_bytes"] += upload_parquet(client, merged_raw, "raw", ticker, "1min")
-    stats["uploaded_bytes"] += upload_csv(client, merged_raw, "raw", ticker, "1min")
-
-    # 4. Clean
+    # 3. Clean and aggregate (all CPU work — fast, do before uploads)
     cleaned = clean_bars(merged_raw)
     stats["clean_total_bars"] = len(cleaned)
-    stats["uploaded_bytes"] += upload_parquet(client, cleaned, "clean", ticker, "1min")
-    stats["uploaded_bytes"] += upload_csv(client, cleaned, "clean", ticker, "1min")
 
-    # 5. Aggregate raw + clean for all timeframes
     raw_aggs = aggregate_all(merged_raw)
     clean_aggs = aggregate_all(cleaned)
 
+    # 4. Upload ALL files in parallel (up to 18 uploads concurrently)
+    upload_tasks = []
+
+    # 1-min raw parquet + CSV
+    upload_tasks.append(("parquet", merged_raw, "raw", ticker, "1min"))
+    upload_tasks.append(("csv", merged_raw, "raw", ticker, "1min"))
+
+    # 1-min clean parquet + CSV
+    upload_tasks.append(("parquet", cleaned, "clean", ticker, "1min"))
+    upload_tasks.append(("csv", cleaned, "clean", ticker, "1min"))
+
+    # Aggregated timeframes (raw + clean, parquet only)
     for tf_name in TIMEFRAMES:
         if not raw_aggs[tf_name].empty:
-            stats["uploaded_bytes"] += upload_parquet(client, raw_aggs[tf_name], "raw", ticker, tf_name)
+            upload_tasks.append(("parquet", raw_aggs[tf_name], "raw", ticker, tf_name))
         if not clean_aggs[tf_name].empty:
-            stats["uploaded_bytes"] += upload_parquet(client, clean_aggs[tf_name], "clean", ticker, tf_name)
+            upload_tasks.append(("parquet", clean_aggs[tf_name], "clean", ticker, tf_name))
+
+    def _do_upload(task):
+        fmt, df, version, tkr, tf = task
+        if fmt == "parquet":
+            return upload_parquet(client, df, version, tkr, tf)
+        else:
+            return upload_csv(client, df, version, tkr, tf)
+
+    with ThreadPoolExecutor(max_workers=MAX_UPLOAD_WORKERS) as upload_pool:
+        upload_futures = upload_pool.map(_do_upload, upload_tasks)
+        stats["uploaded_bytes"] += sum(upload_futures)
 
     return stats
+
+
+def _process_one_ticker(args_tuple):
+    """Worker function for thread pool. Processes one ticker's merge+upload cycle."""
+    client, ticker, group_df, dry_run = args_tuple
+    return merge_ticker(client, ticker, group_df, dry_run=dry_run)
 
 
 def update_metadata(d: date, total_new_bars: int, tickers_updated: int) -> None:
@@ -378,15 +404,28 @@ def main():
         per_ticker = new_bars.groupby("ticker")
         total_tickers = len(per_ticker)
 
-        for i, (ticker, group) in enumerate(per_ticker, 1):
-            if i % 50 == 0:
-                print(f"  [{i}/{total_tickers}] processing {ticker} ...")
-            try:
-                stats = merge_ticker(client, ticker, group, dry_run=args.dry_run)
-                tickers_updated += 1
-                total_uploaded += stats.get("uploaded_bytes", 0)
-            except Exception as e:
-                print(f"  [{i}/{total_tickers}] {ticker} FAILED: {e}")
+        # Submit all tickers to the thread pool (parallel)
+        futures = {}
+        with ThreadPoolExecutor(max_workers=MAX_TICKER_WORKERS) as executor:
+            for ticker, group in per_ticker:
+                future = executor.submit(
+                    _process_one_ticker,
+                    (client, ticker, group, args.dry_run),
+                )
+                futures[future] = ticker
+
+            # Collect results as they complete
+            for i, future in enumerate(as_completed(futures), 1):
+                ticker = futures[future]
+                try:
+                    stats = future.result()
+                    tickers_updated += 1
+                    total_uploaded += stats.get("uploaded_bytes", 0)
+                except Exception as e:
+                    print(f"  [{i}/{total_tickers}] {ticker} FAILED: {e}")
+
+                if i % 50 == 0 or i == total_tickers:
+                    print(f"  [{i}/{total_tickers}] completed ({ticker})")
 
         # 4. Update metadata
         if not args.dry_run:

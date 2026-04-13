@@ -42,6 +42,7 @@ def get_client():
             region_name="auto",
             signature_version="s3v4",
             retries={"max_attempts": 5, "mode": "adaptive"},
+            max_pool_connections=50,
         ),
     )
 
