@@ -30,7 +30,7 @@ import argparse
 import subprocess
 import tempfile
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Set, Dict, List, Optional
@@ -38,8 +38,9 @@ import urllib.request
 
 import pandas as pd
 
-MAX_TICKER_WORKERS = 20   # Outer: concurrent tickers (I/O-bound)
-MAX_UPLOAD_WORKERS = 10   # Inner: concurrent uploads per ticker
+N_PROCESSES = 2            # GitHub Actions has 2 CPU cores
+N_IO_THREADS = 16          # I/O concurrency within each process
+CONTEXT_BARS = 100         # Context window for incremental cleaning
 
 # Pipeline modules (same directory)
 sys.path.insert(0, str(Path(__file__).parent))
@@ -264,25 +265,41 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         print(f"[merge_ticker] DRY RUN {ticker}: would write {len(merged_raw)} raw bars")
         return stats
 
-    # 3. Clean and aggregate (all CPU work — fast, do before uploads)
-    cleaned = clean_bars(merged_raw)
-    stats["clean_total_bars"] = len(cleaned)
+    # 3. Incremental cleaning — only clean new bars, not the full history
+    existing_clean = download_parquet(client, "clean", ticker)
 
+    if existing_clean is not None and not existing_clean.empty:
+        existing_clean["datetime"] = pd.to_datetime(existing_clean["datetime"])
+        if existing_clean["datetime"].dt.tz is not None:
+            existing_clean["datetime"] = existing_clean["datetime"].dt.tz_localize(None)
+        existing_clean = existing_clean[[c for c in STANDARD_COLS if c in existing_clean.columns]]
+
+        # Take last CONTEXT_BARS of existing clean as context for rolling window
+        context = existing_clean.tail(CONTEXT_BARS)
+        to_clean = pd.concat([context, new_bars], ignore_index=True)
+        cleaned_chunk = clean_bars(to_clean)
+
+        # Drop the context rows (we already have them)
+        new_clean_rows = cleaned_chunk[cleaned_chunk["datetime"] > context["datetime"].max()]
+        merged_clean = pd.concat([existing_clean, new_clean_rows], ignore_index=True)
+        merged_clean = merged_clean.drop_duplicates(
+            subset=["datetime"], keep="last"
+        ).sort_values("datetime").reset_index(drop=True)
+    else:
+        # First-ever run: clean the whole history
+        merged_clean = clean_bars(merged_raw)
+
+    stats["clean_total_bars"] = len(merged_clean)
+
+    # 4. Aggregate
     raw_aggs = aggregate_all(merged_raw)
-    clean_aggs = aggregate_all(cleaned)
+    clean_aggs = aggregate_all(merged_clean)
 
-    # 4. Upload ALL files in parallel (up to 18 uploads concurrently)
+    # 5. Upload ALL parquet files in parallel (no CSVs — saves hours of CPU)
     upload_tasks = []
-
-    # 1-min raw parquet + CSV
     upload_tasks.append(("parquet", merged_raw, "raw", ticker, "1min"))
-    upload_tasks.append(("csv", merged_raw, "raw", ticker, "1min"))
+    upload_tasks.append(("parquet", merged_clean, "clean", ticker, "1min"))
 
-    # 1-min clean parquet + CSV
-    upload_tasks.append(("parquet", cleaned, "clean", ticker, "1min"))
-    upload_tasks.append(("csv", cleaned, "clean", ticker, "1min"))
-
-    # Aggregated timeframes (raw + clean, parquet only)
     for tf_name in TIMEFRAMES:
         if not raw_aggs[tf_name].empty:
             upload_tasks.append(("parquet", raw_aggs[tf_name], "raw", ticker, tf_name))
@@ -290,23 +307,31 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             upload_tasks.append(("parquet", clean_aggs[tf_name], "clean", ticker, tf_name))
 
     def _do_upload(task):
-        fmt, df, version, tkr, tf = task
-        if fmt == "parquet":
-            return upload_parquet(client, df, version, tkr, tf)
-        else:
-            return upload_csv(client, df, version, tkr, tf)
+        _, df, version, tkr, tf = task
+        return upload_parquet(client, df, version, tkr, tf)
 
-    with ThreadPoolExecutor(max_workers=MAX_UPLOAD_WORKERS) as upload_pool:
+    with ThreadPoolExecutor(max_workers=N_IO_THREADS) as upload_pool:
         upload_futures = upload_pool.map(_do_upload, upload_tasks)
         stats["uploaded_bytes"] += sum(upload_futures)
 
     return stats
 
 
-def _process_one_ticker(args_tuple):
-    """Worker function for thread pool. Processes one ticker's merge+upload cycle."""
-    client, ticker, group_df, dry_run = args_tuple
-    return merge_ticker(client, ticker, group_df, dry_run=dry_run)
+def _process_ticker_batch(batch_args):
+    """Run inside a worker process. Processes a batch of (ticker, group_df) pairs.
+    Each process creates its own boto3 client (not fork-safe)."""
+    batch, dry_run = batch_args
+    from r2_client import get_client
+    client = get_client() if not dry_run else None
+
+    results = []
+    for ticker, group_df in batch:
+        try:
+            stats = merge_ticker(client, ticker, group_df, dry_run=dry_run)
+            results.append(("ok", ticker, stats))
+        except Exception as e:
+            results.append(("fail", ticker, str(e)))
+    return results
 
 
 def update_metadata(d: date, total_new_bars: int, tickers_updated: int) -> None:
@@ -392,11 +417,8 @@ def main():
 
         print(f"Total new bars: {len(new_bars):,}")
 
-        # 3. Merge per ticker
-        if not args.dry_run:
-            client = get_client()
-        else:
-            client = None
+        # 3. Merge per ticker (each process creates its own R2 client)
+        if args.dry_run:
             print("DRY RUN — no R2 writes")
 
         tickers_updated = 0
@@ -404,28 +426,28 @@ def main():
         per_ticker = new_bars.groupby("ticker")
         total_tickers = len(per_ticker)
 
-        # Submit all tickers to the thread pool (parallel)
-        futures = {}
-        with ThreadPoolExecutor(max_workers=MAX_TICKER_WORKERS) as executor:
-            for ticker, group in per_ticker:
-                future = executor.submit(
-                    _process_one_ticker,
-                    (client, ticker, group, args.dry_run),
-                )
-                futures[future] = ticker
+        # Split tickers into N_PROCESSES batches for multiprocessing
+        all_ticker_groups = [(ticker, group) for ticker, group in per_ticker]
+        batches = [all_ticker_groups[i::N_PROCESSES] for i in range(N_PROCESSES)]
 
-            # Collect results as they complete
-            for i, future in enumerate(as_completed(futures), 1):
-                ticker = futures[future]
-                try:
-                    stats = future.result()
-                    tickers_updated += 1
-                    total_uploaded += stats.get("uploaded_bytes", 0)
-                except Exception as e:
-                    print(f"  [{i}/{total_tickers}] {ticker} FAILED: {e}")
+        print(f"  Processing {total_tickers} tickers across {N_PROCESSES} processes...")
 
-                if i % 50 == 0 or i == total_tickers:
-                    print(f"  [{i}/{total_tickers}] completed ({ticker})")
+        with ProcessPoolExecutor(max_workers=N_PROCESSES) as executor:
+            batch_futures = {
+                executor.submit(_process_ticker_batch, (batch, args.dry_run)): i
+                for i, batch in enumerate(batches)
+            }
+
+            for future in as_completed(batch_futures):
+                batch_results = future.result()
+                for status, ticker, data in batch_results:
+                    if status == "ok":
+                        tickers_updated += 1
+                        total_uploaded += data.get("uploaded_bytes", 0)
+                    else:
+                        print(f"  {ticker} FAILED: {data}")
+
+        print(f"  [{tickers_updated}/{total_tickers}] tickers completed")
 
         # 4. Update metadata
         if not args.dry_run:

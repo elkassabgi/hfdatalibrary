@@ -43,6 +43,7 @@ def get_client():
             signature_version="s3v4",
             retries={"max_attempts": 5, "mode": "adaptive"},
             max_pool_connections=50,
+            tcp_keepalive=True,
         ),
     )
 
