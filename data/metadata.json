@@ -1,24 +1,44 @@
 {
-  "website_updated": "2026-04-10T14:00:00Z",
-  "data_updated": "2026-04-10T14:00:00Z",
-  "update_summary": "Data library live with 1,391 tickers in Raw and Clean versions.",
+  "website_updated": "2026-04-14T05:35:45Z",
+  "data_updated": "2026-04-14T05:35:45Z",
+  "update_summary": "Daily update: added trading data for 2026-04-09 (283,827 new bars across 1,103 tickers).",
   "version": "1.0",
   "tickers": 1391,
-  "bars_raw": 1533403126,
-  "bars_clean": 1533014567,
+  "bars_raw": 1533686953,
+  "bars_clean": 1533298394,
   "bars_removed": 388559,
   "trading_days": 5847,
   "years_of_data": 23,
   "academic_variables": 25,
   "start_date": "2002-12-30",
-  "end_date": "2026-04-04",
+  "end_date": "2026-04-09",
   "earliest_date": "1991-01-02",
   "quintiles": {
-    "q5": {"tickers": 278, "avg_gap_rate": 0.021, "label": "Most liquid"},
-    "q4": {"tickers": 278, "avg_gap_rate": 0.084, "label": ""},
-    "q3": {"tickers": 279, "avg_gap_rate": 0.187, "label": ""},
-    "q2": {"tickers": 278, "avg_gap_rate": 0.325, "label": ""},
-    "q1": {"tickers": 278, "avg_gap_rate": 0.518, "label": "Least liquid"}
+    "q5": {
+      "tickers": 278,
+      "avg_gap_rate": 0.021,
+      "label": "Most liquid"
+    },
+    "q4": {
+      "tickers": 278,
+      "avg_gap_rate": 0.084,
+      "label": ""
+    },
+    "q3": {
+      "tickers": 279,
+      "avg_gap_rate": 0.187,
+      "label": ""
+    },
+    "q2": {
+      "tickers": 278,
+      "avg_gap_rate": 0.325,
+      "label": ""
+    },
+    "q1": {
+      "tickers": 278,
+      "avg_gap_rate": 0.518,
+      "label": "Least liquid"
+    }
   },
   "status": "operational",
   "next_update": "2026-04-13T06:00:00Z"
