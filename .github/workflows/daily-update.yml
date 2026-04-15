@@ -91,5 +91,6 @@ jobs:
             echo "No metadata changes to commit"
           else
             git commit -m "Daily data update: $(date -u +%Y-%m-%d)"
+            git pull --rebase
             git push
           fi
