@@ -1,0 +1,131 @@
+name: Backfill Missing Dates
+
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: 'Comma-separated dates to process sequentially (YYYY-MM-DD)'
+        required: true
+        default: '2026-03-30,2026-03-31,2026-04-01,2026-04-02,2026-04-06,2026-04-07,2026-04-08'
+      dry_run:
+        description: 'Dry run (no R2 writes)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 900
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Build Go pcap extractor
+        run: |
+          cd pipeline/pcap_extract
+          go build -o pcap_extract .
+          echo "Built: $(ls -lh pcap_extract)"
+
+      - name: Show disk space
+        run: df -h /
+
+      - name: Process dates sequentially
+        env:
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT:          ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:            hfdatalibrary-data
+          RESEND_API_KEY:       ${{ secrets.RESEND_API_KEY }}
+        run: |
+          DATES="${{ github.event.inputs.dates }}"
+          DRY_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+
+          IFS=',' read -ra DATE_ARRAY <<< "$DATES"
+          TOTAL=${#DATE_ARRAY[@]}
+          SUCCEEDED=0
+          FAILED=0
+
+          echo "============================================"
+          echo "BACKFILL: Processing $TOTAL dates sequentially"
+          echo "Dates: $DATES"
+          echo "============================================"
+
+          for i in "${!DATE_ARRAY[@]}"; do
+            D="${DATE_ARRAY[$i]}"
+            N=$((i + 1))
+            echo ""
+            echo "============================================"
+            echo "[$N/$TOTAL] Processing $D"
+            echo "============================================"
+
+            if python pipeline/daily_update.py "$D" $DRY_FLAG; then
+              echo "[$N/$TOTAL] $D — SUCCESS"
+              SUCCEEDED=$((SUCCEEDED + 1))
+
+              # Commit metadata after each successful date
+              if [ -z "$DRY_FLAG" ]; then
+                git config user.name "HF Data Library Bot"
+                git config user.email "admin@hfdatalibrary.com"
+                git add data/metadata.json
+                if ! git diff --cached --quiet; then
+                  git commit -m "Backfill data: $D"
+                  git pull --rebase
+                  git push
+                  echo "[$N/$TOTAL] $D — metadata committed and pushed"
+                fi
+              fi
+            else
+              echo "[$N/$TOTAL] $D — FAILED (continuing to next date)"
+              FAILED=$((FAILED + 1))
+            fi
+
+            # Clean up temp files between dates to avoid disk exhaustion
+            rm -f /tmp/iex_*.pcap.gz /tmp/iex_*.csv 2>/dev/null
+            echo "Disk after $D: $(df -h / | tail -1 | awk '{print $4}') free"
+          done
+
+          echo ""
+          echo "============================================"
+          echo "BACKFILL COMPLETE"
+          echo "  Succeeded: $SUCCEEDED / $TOTAL"
+          echo "  Failed:    $FAILED / $TOTAL"
+          echo "============================================"
+
+          if [ $FAILED -gt 0 ]; then
+            echo "::warning::$FAILED date(s) failed during backfill"
+          fi
