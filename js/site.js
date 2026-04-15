@@ -260,8 +260,8 @@
       '</div>';
   }
 
-  // Fetch and apply
-  fetch(basePath)
+  // Fetch and apply (cache-bust so status bar always reflects latest data)
+  fetch(basePath + '?t=' + Date.now())
     .then(function (r) { return r.json(); })
     .then(function (meta) {
       buildStatusBar(meta);
