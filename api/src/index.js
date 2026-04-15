@@ -1835,7 +1835,7 @@ async function handlePublicStats(env, cors) {
   const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
   const weekDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-7 days')").first();
 
-  // Countries (from users table)
+  // Countries (from users table — registered users)
   const countries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(*) as users FROM users WHERE is_active = 1 AND country != "" GROUP BY UPPER(country) ORDER BY users DESC').all();
 
   // Distinct institutions
@@ -1853,13 +1853,56 @@ async function handlePublicStats(env, cors) {
   // Country codes from login_history (Cloudflare cf-ipcountry)
   const accessCountries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(DISTINCT user_id) as users FROM login_history WHERE country IS NOT NULL AND country != "" AND country != "unknown" GROUP BY UPPER(country)').all();
 
-  // Merge country data (from registration + from access)
-  const countryMap = {};
+  // Merge registered user country data
+  const userCountryMap = {};
   for (const row of countries.results) {
-    if (row.country && row.country.length <= 3) countryMap[row.country] = (countryMap[row.country] || 0) + row.users;
+    if (row.country && row.country.length <= 3) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
   }
   for (const row of accessCountries.results) {
-    if (row.country && row.country.length <= 3) countryMap[row.country] = (countryMap[row.country] || 0) + row.users;
+    if (row.country && row.country.length <= 3) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
+  }
+
+  // Cloudflare Analytics — cumulative visitor countries since site launch
+  let visitorCountryMap = {};
+  let totalVisitors = 0;
+  let totalPageViews = 0;
+  try {
+    if (env.CF_API_TOKEN && env.CF_ZONE_ID) {
+      const gqlQuery = `query {
+        viewer {
+          zones(filter: {zoneTag: "${env.CF_ZONE_ID}"}) {
+            httpRequests1dGroups(limit: 10000, filter: {date_geq: "2026-04-09"}) {
+              sum { requests pageViews countryMap { clientCountryName requests } }
+              uniq { uniques }
+            }
+          }
+        }
+      }`;
+      const cfRes = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + env.CF_API_TOKEN,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: gqlQuery }),
+      });
+      const cfData = await cfRes.json();
+      const zones = cfData?.data?.viewer?.zones;
+      if (zones && zones.length > 0) {
+        for (const g of zones[0].httpRequests1dGroups) {
+          totalVisitors += g.uniq?.uniques || 0;
+          totalPageViews += g.sum?.pageViews || 0;
+          for (const c of (g.sum?.countryMap || [])) {
+            const code = c.clientCountryName;
+            if (code && code.length <= 3 && code !== 'XX' && code !== 'T1') {
+              visitorCountryMap[code] = (visitorCountryMap[code] || 0) + c.requests;
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Analytics fetch failed — return stats without visitor data
   }
 
   return jsonRes({
@@ -1868,8 +1911,12 @@ async function handlePublicStats(env, cors) {
     total_bytes_served: totalBytes?.s || 0,
     downloads_today: todayDownloads?.c || 0,
     downloads_this_week: weekDownloads?.c || 0,
-    countries: countryMap,
-    country_count: Object.keys(countryMap).length,
+    countries: userCountryMap,
+    country_count: Object.keys(userCountryMap).length,
+    visitor_countries: visitorCountryMap,
+    visitor_country_count: Object.keys(visitorCountryMap).length,
+    total_visitors: totalVisitors,
+    total_page_views: totalPageViews,
     institutions: institutions.results,
     institution_count: institutions.results.length,
     top_tickers: topTickers.results,
