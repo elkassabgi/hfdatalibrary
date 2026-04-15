@@ -11,7 +11,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/style.css">
-  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/css/jsvectormap.min.css">
   <style>
     .big-stat { text-align:center; padding:1.5rem; }
     .big-stat .num { font-family: var(--font-mono); font-size:2.5rem; font-weight:700; color:var(--navy); }
@@ -143,92 +145,57 @@
 <script>
 const API = 'https://api.hfdatalibrary.com';
 
-// Google Charts — load first, then fetch data, then draw
-google.charts.load('current', { packages: ['geochart'] });
-
-var mapData = null;
-var chartsReady = false;
-
-google.charts.setOnLoadCallback(function() {
-  chartsReady = true;
-  if (mapData) drawRegionsMap();
-});
-
-// ISO 3166 code → full country name
-var COUNTRY_NAMES = {
-  AF:'Afghanistan',AL:'Albania',DZ:'Algeria',AD:'Andorra',AO:'Angola',AR:'Argentina',AM:'Armenia',AU:'Australia',AT:'Austria',AZ:'Azerbaijan',
-  BH:'Bahrain',BD:'Bangladesh',BY:'Belarus',BE:'Belgium',BZ:'Belize',BJ:'Benin',BT:'Bhutan',BO:'Bolivia',BA:'Bosnia and Herzegovina',BW:'Botswana',
-  BR:'Brazil',BN:'Brunei',BG:'Bulgaria',BF:'Burkina Faso',BI:'Burundi',KH:'Cambodia',CM:'Cameroon',CA:'Canada',CF:'Central African Republic',
-  TD:'Chad',CL:'Chile',CN:'China',CO:'Colombia',CD:'Congo',CR:'Costa Rica',HR:'Croatia',CU:'Cuba',CY:'Cyprus',CZ:'Czechia',DK:'Denmark',
-  DO:'Dominican Republic',EC:'Ecuador',EG:'Egypt',SV:'El Salvador',EE:'Estonia',ET:'Ethiopia',FI:'Finland',FR:'France',GA:'Gabon',GE:'Georgia',
-  DE:'Germany',GH:'Ghana',GR:'Greece',GT:'Guatemala',GN:'Guinea',HN:'Honduras',HK:'Hong Kong',HU:'Hungary',IS:'Iceland',IN:'India',ID:'Indonesia',
-  IR:'Iran',IQ:'Iraq',IE:'Ireland',IL:'Israel',IT:'Italy',JM:'Jamaica',JP:'Japan',JO:'Jordan',KZ:'Kazakhstan',KE:'Kenya',KW:'Kuwait',KG:'Kyrgyzstan',
-  LA:'Laos',LV:'Latvia',LB:'Lebanon',LY:'Libya',LT:'Lithuania',LU:'Luxembourg',MO:'Macau',MG:'Madagascar',MY:'Malaysia',ML:'Mali',MT:'Malta',
-  MX:'Mexico',MD:'Moldova',MN:'Mongolia',ME:'Montenegro',MA:'Morocco',MZ:'Mozambique',MM:'Myanmar',NA:'Namibia',NP:'Nepal',NL:'Netherlands',
-  NZ:'New Zealand',NI:'Nicaragua',NE:'Niger',NG:'Nigeria',MK:'North Macedonia',NO:'Norway',OM:'Oman',PK:'Pakistan',PA:'Panama',PY:'Paraguay',
-  PE:'Peru',PH:'Philippines',PL:'Poland',PT:'Portugal',QA:'Qatar',RO:'Romania',RU:'Russia',RW:'Rwanda',SA:'Saudi Arabia',SN:'Senegal',RS:'Serbia',
-  SG:'Singapore',SK:'Slovakia',SI:'Slovenia',ZA:'South Africa',KR:'South Korea',ES:'Spain',LK:'Sri Lanka',SD:'Sudan',SE:'Sweden',CH:'Switzerland',
-  TW:'Taiwan',TJ:'Tajikistan',TZ:'Tanzania',TH:'Thailand',TN:'Tunisia',TR:'Turkey',UA:'Ukraine',AE:'United Arab Emirates',GB:'United Kingdom',
-  US:'United States',UY:'Uruguay',UZ:'Uzbekistan',VE:'Venezuela',VN:'Vietnam',YE:'Yemen',ZM:'Zambia',ZW:'Zimbabwe'
-};
-
-// ISO code → small flag image (flagcdn.com serves SVG flags by ISO code)
+// ISO code → small flag image
 function flag(code) {
   if (!code || code.length !== 2) return '';
   return '<img src="https://flagcdn.com/16x12/' + code.toLowerCase() + '.png" width="16" height="12" alt="' + code + '" style="vertical-align:middle; margin-right:4px;">';
 }
 
-function countryName(code) {
-  return COUNTRY_NAMES[code] || code;
-}
+var worldMap = null;
 
-var geoChart = null;
-var geoData = null;
-var codeToRow = {};
-
-function drawRegionsMap() {
-  var userCountries = mapData.users;
-  var visitorCountries = mapData.visitors;
-  var allCodes = new Set([...Object.keys(userCountries), ...Object.keys(visitorCountries)]);
-  if (allCodes.size === 0) return;
-
-  // Build data table: country, type (2=registered, 1=visitor), tooltip
-  var rows = [['Country', 'Type', {role:'tooltip', type:'string'}]];
-  codeToRow = {};
-  var rowIdx = 0;
-  for (var code of allCodes) {
-    var isUser = userCountries[code] ? true : false;
-    var name = countryName(code);
-    var tip = flag(code) + ' ' + name + (isUser ? ' (registered user)' : '');
-    rows.push([code, isUser ? 2 : 1, tip]);
-    codeToRow[code] = rowIdx++;
+function drawRegionsMap(userCountries, visitorCountries) {
+  var regionColors = {};
+  // Visitor-only countries get light blue
+  for (var code in visitorCountries) {
+    regionColors[code] = '#93c5fd';
+  }
+  // Registered user countries get dark blue (overrides visitor)
+  for (var code in userCountries) {
+    regionColors[code] = '#1e3a8a';
   }
 
-  geoData = google.visualization.arrayToDataTable(rows);
+  if (worldMap) worldMap.destroy();
 
-  var options = {
-    colorAxis: { minValue: 1, maxValue: 2, colors: ['#93c5fd', '#1e3a8a'] },
+  worldMap = new jsVectorMap({
+    selector: '#world-map',
+    map: 'world',
     backgroundColor: '#ffffff',
-    datalessRegionColor: '#e5e7eb',
-    defaultColor: '#e5e7eb',
-    legend: 'none',
-    tooltip: { isHtml: false, trigger: 'both' },
-  };
-
-  geoChart = new google.visualization.GeoChart(document.getElementById('world-map'));
-  geoChart.draw(geoData, options);
-
-  // Map hover → highlight badge
-  google.visualization.events.addListener(geoChart, 'onmouseover', function(e) {
-    if (e.row == null) return;
-    var code = geoData.getValue(e.row, 0);
-    highlightBadge(code);
+    zoomOnScroll: false,
+    zoomButtons: false,
+    showTooltip: true,
+    regionStyle: {
+      initial: { fill: '#e5e7eb', stroke: '#fff', strokeWidth: 0.5 },
+      hover: { fill: '#f59e0b' },
+    },
+    regions: Object.keys(regionColors).map(function(code) {
+      return { code: code, style: { initial: { fill: regionColors[code] } } };
+    }),
+    onRegionTooltipShow: function(event, tooltip, code) {
+      var name = tooltip.text();
+      var isUser = userCountries[code] ? true : false;
+      var label = isUser ? ' (registered user)' : '';
+      tooltip.text(name + label);
+    },
+    // Map hover → highlight badge
+    onRegionOver: function(event, code) {
+      highlightBadge(code);
+    },
+    onRegionOut: function(event, code) {
+      clearBadgeHighlights();
+    },
   });
-  google.visualization.events.addListener(geoChart, 'onmouseout', function() {
-    clearBadgeHighlights();
-  });
 
-  // Build country badges — registered users first (dark), then visitors (light)
+  // Build country badges
   var userSorted = Object.entries(userCountries).sort(function(a,b) { return b[1]-a[1]; });
   var visitorOnly = Object.entries(visitorCountries)
     .filter(function(e) { return !userCountries[e[0]]; })
@@ -242,28 +209,35 @@ function drawRegionsMap() {
   }
   badges.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.5rem; justify-content:center; margin-top:1.5rem;';
 
-  var html = userSorted.map(function(e) {
-    return '<span class="country-badge" data-code="' + e[0] + '" style="background:#1e3a8a; color:#fff; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.85rem; font-weight:500; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s;">' +
-      flag(e[0]) + ' ' + countryName(e[0]) + '</span>';
+  var allBadges = userSorted.concat(visitorOnly.slice(0, 30));
+  badges.innerHTML = allBadges.map(function(e) {
+    var isUser = userCountries[e[0]] ? true : false;
+    var bg = isUser ? '#1e3a8a' : '#dbeafe';
+    var fg = isUser ? '#fff' : '#1e40af';
+    var name = worldMap && worldMap.regions && worldMap.regions[e[0]] ? worldMap.regions[e[0]].config.name || e[0] : e[0];
+    return '<span class="country-badge" data-code="' + e[0] + '" style="background:' + bg + '; color:' + fg + '; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.85rem; font-weight:500; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s;">' +
+      flag(e[0]) + ' ' + name + '</span>';
   }).join('');
-  html += visitorOnly.slice(0, 30).map(function(e) {
-    return '<span class="country-badge" data-code="' + e[0] + '" style="background:#dbeafe; color:#1e40af; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.85rem; font-weight:500; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s;">' +
-      flag(e[0]) + ' ' + countryName(e[0]) + '</span>';
-  }).join('');
-  badges.innerHTML = html;
 
   // Badge hover → highlight country on map
   badges.querySelectorAll('.country-badge').forEach(function(el) {
     el.addEventListener('mouseenter', function() {
       var code = this.dataset.code;
-      if (geoChart && codeToRow[code] != null) {
-        geoChart.setSelection([{row: codeToRow[code]}]);
+      // Highlight on map by changing the region fill to gold
+      var path = document.querySelector('#world-map path[data-code="' + code + '"]');
+      if (path) {
+        path.dataset.origFill = path.style.fill || path.getAttribute('fill');
+        path.style.fill = '#f59e0b';
       }
       this.style.transform = 'scale(1.1)';
       this.style.boxShadow = '0 2px 8px rgba(0,0,0,0.25)';
     });
     el.addEventListener('mouseleave', function() {
-      if (geoChart) geoChart.setSelection([]);
+      var code = this.dataset.code;
+      var path = document.querySelector('#world-map path[data-code="' + code + '"]');
+      if (path && path.dataset.origFill) {
+        path.style.fill = path.dataset.origFill;
+      }
       this.style.transform = '';
       this.style.boxShadow = '';
     });
@@ -307,8 +281,7 @@ async function loadStats() {
     document.getElementById('stat-user-countries').textContent = d.country_count;
 
     // Draw the world map with two-tone colors
-    mapData = { users: d.countries || {}, visitors: d.visitor_countries || {} };
-    if (chartsReady) drawRegionsMap();
+    drawRegionsMap(d.countries || {}, d.visitor_countries || {});
 
     // Ticker chart
     if (d.top_tickers && d.top_tickers.length > 0) {
