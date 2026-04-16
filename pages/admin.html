@@ -486,7 +486,10 @@ async function showUser(id) {
         '<button onclick="closeModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--gray-400);">&#10005;</button>' +
       '</div>' +
       '<div class="grid-3" style="margin:1.5rem 0; gap:1rem;">' +
-        '<div><strong>Institution:</strong><br>' + (esc(u.institution) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
+        '<div><strong>Institution:</strong><br>' + (esc(u.institution) || '<em style="color:var(--gray-400);">not set</em>') +
+          '<br><label style="font-size:0.8rem; color:var(--gray-500); cursor:pointer; margin-top:0.25rem; display:inline-flex; align-items:center; gap:0.3rem;">' +
+            '<input type="checkbox" ' + (u.hide_institution ? 'checked' : '') + ' onchange="toggleHideInstitution(' + u.id + ', this.checked)">' +
+            ' Hide from stats</label></div>' +
         '<div><strong>Country:</strong><br>' + (esc(u.country) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
         '<div><strong>Role:</strong><br>' + (esc(u.role) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
         '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
@@ -559,6 +562,14 @@ async function toggleVip(id, vip) {
   });
   closeModal();
   loadUsers();
+}
+
+async function toggleHideInstitution(id, hide) {
+  await fetch(API + '/v1/admin/users/' + id, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ hide_institution: hide })
+  });
 }
 
 async function saveNotes(id) {

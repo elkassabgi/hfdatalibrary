@@ -1726,7 +1726,8 @@ async function handleAdmin(path, request, env, cors, ip) {
         orcid_profile: u.orcid_profile_json ? JSON.parse(u.orcid_profile_json) : null,
         created_at: u.created_at, last_login_at: u.last_login_at, last_login_ip: u.last_login_ip, last_login_ua: u.last_login_ua,
         login_count: u.login_count, download_count: u.download_count, total_bytes_downloaded: u.total_bytes_downloaded,
-        notes: u.notes
+        notes: u.notes,
+        hide_institution: u.hide_institution ? true : false
       },
       recent_logins: logins.results,
       recent_downloads: downloads.results
@@ -1746,6 +1747,7 @@ async function handleAdmin(path, request, env, cors, ip) {
     if (body.notes !== undefined) { updates.push('notes = ?'); values.push(body.notes); }
     if (body.is_admin !== undefined) { updates.push('is_admin = ?'); values.push(body.is_admin ? 1 : 0); }
     if (body.is_vip !== undefined) { updates.push('is_vip = ?'); values.push(body.is_vip ? 1 : 0); }
+    if (body.hide_institution !== undefined) { updates.push('hide_institution = ?'); values.push(body.hide_institution ? 1 : 0); }
 
     if (updates.length === 0) return jsonRes({ error: 'No updates provided' }, 400, cors);
 
@@ -1759,7 +1761,7 @@ async function handleAdmin(path, request, env, cors, ip) {
 
     // Audit log
     const target = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first();
-    const actions = Object.keys(body).filter(k => ['is_active','is_admin','is_vip','notes'].includes(k));
+    const actions = Object.keys(body).filter(k => ['is_active','is_admin','is_vip','notes','hide_institution'].includes(k));
     await auditLog(env, user, 'update_user:' + actions.join(','), uid, target?.email, JSON.stringify(body), ip);
 
     return jsonRes({ message: 'User updated' }, 200, cors);
@@ -1838,8 +1840,8 @@ async function handlePublicStats(env, cors) {
   // Countries (from users table — registered users)
   const countries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(*) as users FROM users WHERE is_active = 1 AND country != "" GROUP BY UPPER(country) ORDER BY users DESC').all();
 
-  // Distinct institutions
-  const institutions = await env.DB.prepare('SELECT institution, COUNT(*) as users FROM users WHERE is_active = 1 AND institution != "" GROUP BY institution ORDER BY users DESC LIMIT 50').all();
+  // Distinct institutions (exclude hidden ones)
+  const institutions = await env.DB.prepare('SELECT institution, COUNT(*) as users FROM users WHERE is_active = 1 AND institution != "" AND COALESCE(hide_institution, 0) = 0 GROUP BY institution ORDER BY users DESC LIMIT 50').all();
 
   // Top downloaded tickers
   const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
