@@ -3,3 +3,5 @@ api/.wrangler/
 node_modules/
 data/raw/
 data/clean/
+__pycache__/
+pipeline/pcap_extract/pcap_extract.exe

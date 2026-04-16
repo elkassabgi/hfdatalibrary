@@ -55,7 +55,7 @@ from r2_client import (
 )
 
 PIPELINE_DIR = Path(__file__).parent
-GO_EXTRACTOR = PIPELINE_DIR / "pcap_extract" / "pcap_extract"
+GO_EXTRACTOR = PIPELINE_DIR / "pcap_extract" / ("pcap_extract.exe" if os.name == "nt" else "pcap_extract")
 
 
 METADATA_PATH = Path(__file__).parent.parent / "data" / "metadata.json"
