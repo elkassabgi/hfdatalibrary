@@ -310,12 +310,11 @@ async function loadStats() {
     function instIcon(name) {
       var domain = INST_DOMAINS[name];
       if (!domain) {
-        // Try to guess domain from name
         var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
         domain = words.join('') + '.edu';
       }
-      return '<img src="https://logo.clearbit.com/' + domain + '" width="20" height="20" ' +
-        'style="vertical-align:middle; margin-right:8px; border-radius:3px; object-fit:contain;" ' +
+      return '<img src="https://www.google.com/s2/favicons?sz=32&domain=' + domain + '" width="20" height="20" ' +
+        'style="vertical-align:middle; margin-right:8px; border-radius:3px;" ' +
         'onerror="this.style.display=\'none\'" alt="">';
     }
 
