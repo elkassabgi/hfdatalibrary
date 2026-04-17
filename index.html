@@ -184,13 +184,13 @@ print(df.head())
       <div class="card version-card raw">
         <span class="version-tag raw">Raw</span>
         <h3>Version 1: Raw</h3>
-        <p>Data as received from the source. No outlier removal, no gap-filling. Prices are split/dividend adjusted. 1.5+B bars.</p>
+        <p>Data as received from the source. No outlier removal, no gap-filling. Prices are split/dividend adjusted. <span data-meta="bars-raw-short">1.5+B</span> bars.</p>
         <p><strong>Best for:</strong> Market microstructure research, missingness analysis, studying the data itself.</p>
       </div>
       <div class="card version-card clean">
         <span class="version-tag clean">Clean</span>
         <h3>Version 2: Clean</h3>
-        <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. 1.5+B bars.</p>
+        <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. <span data-meta="bars-clean-short">1.5+B</span> bars.</p>
         <p><strong>Best for:</strong> Volatility estimation, spread measurement, jump detection — most empirical finance.</p>
       </div>
     </div>
