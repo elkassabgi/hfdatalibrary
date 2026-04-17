@@ -227,8 +227,8 @@
 
     // Animated bar counter on home page
     var counterEl = document.getElementById('bars-counter');
-    if (counterEl && meta.bars_clean) {
-      animateCounter(counterEl, meta.bars_clean);
+    if (counterEl && meta.bars_raw) {
+      animateCounter(counterEl, meta.bars_raw);
     }
 
     // Update quality bar widths
