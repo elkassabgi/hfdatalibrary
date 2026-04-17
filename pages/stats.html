@@ -263,12 +263,67 @@ async function loadStats() {
       document.getElementById('ticker-chart').innerHTML = '<p style="color:var(--gray-400);">No downloads yet. Be the first!</p>';
     }
 
-    // Institutions
+    // Institutions — with school icons via Clearbit Logo API
+    var INST_DOMAINS = {
+      'University of Central Arkansas': 'uca.edu',
+      'Stanford University': 'stanford.edu',
+      'Renmin University of China': 'ruc.edu.cn',
+      'Georgia Institute of Technology': 'gatech.edu',
+      'Copenhagen Business School': 'cbs.dk',
+      'Harvard University': 'harvard.edu',
+      'MIT': 'mit.edu',
+      'Massachusetts Institute of Technology': 'mit.edu',
+      'Yale University': 'yale.edu',
+      'Princeton University': 'princeton.edu',
+      'Columbia University': 'columbia.edu',
+      'University of Chicago': 'uchicago.edu',
+      'New York University': 'nyu.edu',
+      'University of Pennsylvania': 'upenn.edu',
+      'Duke University': 'duke.edu',
+      'Northwestern University': 'northwestern.edu',
+      'University of Michigan': 'umich.edu',
+      'University of California, Berkeley': 'berkeley.edu',
+      'UCLA': 'ucla.edu',
+      'London School of Economics': 'lse.ac.uk',
+      'University of Oxford': 'ox.ac.uk',
+      'University of Cambridge': 'cam.ac.uk',
+      'London Business School': 'london.edu',
+      'University of Toronto': 'utoronto.ca',
+      'National University of Singapore': 'nus.edu.sg',
+      'Peking University': 'pku.edu.cn',
+      'Tsinghua University': 'tsinghua.edu.cn',
+      'University of Hong Kong': 'hku.hk',
+      'ETH Zurich': 'ethz.ch',
+      'University of Texas at Austin': 'utexas.edu',
+      'University of Illinois': 'illinois.edu',
+      'Cornell University': 'cornell.edu',
+      'Carnegie Mellon University': 'cmu.edu',
+      'University of Wisconsin': 'wisc.edu',
+      'University of Minnesota': 'umn.edu',
+      'Ohio State University': 'osu.edu',
+      'University of Florida': 'ufl.edu',
+      'University of Washington': 'uw.edu',
+      'Boston University': 'bu.edu',
+      'University of Southern California': 'usc.edu',
+    };
+
+    function instIcon(name) {
+      var domain = INST_DOMAINS[name];
+      if (!domain) {
+        // Try to guess domain from name
+        var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
+        domain = words.join('') + '.edu';
+      }
+      return '<img src="https://logo.clearbit.com/' + domain + '" width="20" height="20" ' +
+        'style="vertical-align:middle; margin-right:8px; border-radius:3px; object-fit:contain;" ' +
+        'onerror="this.style.display=\'none\'" alt="">';
+    }
+
     if (d.institutions && d.institutions.length > 0) {
       document.getElementById('institution-list').innerHTML =
         '<div class="inst-list">' +
         d.institutions.slice(0, 20).map(i =>
-          '<div><span class="inst-name">' + i.institution + '</span></div>'
+          '<div style="display:flex; align-items:center; padding:0.3rem 0;">' + instIcon(i.institution) + '<span class="inst-name">' + i.institution + '</span></div>'
         ).join('') +
         '</div>';
     } else {
