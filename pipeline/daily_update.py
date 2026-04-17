@@ -341,6 +341,25 @@ def _process_ticker_batch(batch_args):
     return results
 
 
+def _upload_cleaning_log(d: date, ticker_stats: list) -> None:
+    """Upload a per-ticker cleaning log CSV for this date to R2."""
+    try:
+        from r2_client import get_client, get_bucket
+        client = get_client()
+        bucket = get_bucket()
+
+        lines = ["ticker,date,raw_bars,clean_bars,bars_removed"]
+        for s in sorted(ticker_stats, key=lambda x: x["ticker"]):
+            lines.append(f'{s["ticker"]},{d.isoformat()},{s["raw_bars"]},{s["clean_bars"]},{s["removed"]}')
+        csv_body = "\n".join(lines).encode("utf-8")
+
+        key = f"logs/cleaning/{d.isoformat()}.csv"
+        client.put_object(Bucket=bucket, Key=key, Body=csv_body, ContentType="text/csv")
+        print(f"[cleaning_log] Uploaded {key} ({len(ticker_stats)} tickers)")
+    except Exception as e:
+        print(f"[cleaning_log] WARN: failed to upload log: {e}")
+
+
 def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_updated: int) -> None:
     """Update metadata.json with the new data timestamp and counts."""
     if not METADATA_PATH.exists():
@@ -433,6 +452,7 @@ def main():
         total_uploaded = 0
         total_new_raw = 0
         total_new_clean = 0
+        ticker_stats = []  # per-ticker cleaning stats for the log
         per_ticker = new_bars.groupby("ticker")
         total_tickers = len(per_ticker)
 
@@ -456,12 +476,22 @@ def main():
                         total_uploaded += data.get("uploaded_bytes", 0)
                         total_new_raw += data.get("new_raw_bars", 0)
                         total_new_clean += data.get("new_clean_bars", 0)
+                        ticker_stats.append({
+                            "ticker": ticker,
+                            "raw_bars": data.get("new_raw_bars", 0),
+                            "clean_bars": data.get("new_clean_bars", 0),
+                            "removed": data.get("new_raw_bars", 0) - data.get("new_clean_bars", 0),
+                        })
                     else:
                         print(f"  {ticker} FAILED: {data}")
 
         print(f"  [{tickers_updated}/{total_tickers}] tickers completed")
 
-        # 4. Update metadata
+        # 4. Upload daily cleaning log to R2
+        if not args.dry_run and ticker_stats:
+            _upload_cleaning_log(d, ticker_stats)
+
+        # 5. Update metadata
         if not args.dry_run:
             update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
 
