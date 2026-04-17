@@ -267,7 +267,7 @@ async function loadStats() {
     var INST_DOMAINS = {
       'University of Central Arkansas': 'uca.edu',
       'Stanford University': 'stanford.edu',
-      'Renmin University of China': 'ruc.edu.cn',
+      'Renmin University of China': 'CUSTOM:https://upload.wikimedia.org/wikipedia/en/thumb/1/11/Renmin_University_of_China_logo.svg/250px-Renmin_University_of_China_logo.svg.png',
       'Georgia Institute of Technology': 'gatech.edu',
       'Copenhagen Business School': 'cbs.dk',
       'Harvard University': 'harvard.edu',
@@ -308,13 +308,20 @@ async function loadStats() {
     };
 
     function instIcon(name) {
-      var domain = INST_DOMAINS[name];
-      if (!domain) {
-        var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
-        domain = words.join('') + '.edu';
+      var val = INST_DOMAINS[name];
+      var url;
+      if (val && val.startsWith('CUSTOM:')) {
+        url = val.substring(7);
+      } else {
+        var domain = val;
+        if (!domain) {
+          var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
+          domain = words.join('') + '.edu';
+        }
+        url = 'https://www.google.com/s2/favicons?sz=32&domain=' + domain;
       }
-      return '<img src="https://www.google.com/s2/favicons?sz=32&domain=' + domain + '" width="20" height="20" ' +
-        'style="vertical-align:middle; margin-right:8px; border-radius:3px;" ' +
+      return '<img src="' + url + '" width="20" height="20" ' +
+        'style="vertical-align:middle; margin-right:8px; border-radius:3px; object-fit:contain;" ' +
         'onerror="this.style.display=\'none\'" alt="">';
     }
 
