@@ -265,16 +265,20 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         print(f"[merge_ticker] DRY RUN {ticker}: would write {len(merged_raw)} raw bars")
         return stats
 
-    # 3. Incremental cleaning — only clean new bars, not the full history
+    # 3. Cleaning — incremental for new (forward) data, full re-clean for backfill
     existing_clean = download_parquet(client, "clean", ticker)
 
+    # Detect backfill: new bars are OLDER than the latest existing clean bar
+    is_backfill = False
     if existing_clean is not None and not existing_clean.empty:
         existing_clean["datetime"] = pd.to_datetime(existing_clean["datetime"])
         if existing_clean["datetime"].dt.tz is not None:
             existing_clean["datetime"] = existing_clean["datetime"].dt.tz_localize(None)
         existing_clean = existing_clean[[c for c in STANDARD_COLS if c in existing_clean.columns]]
+        is_backfill = new_bars["datetime"].max() < existing_clean["datetime"].max()
 
-        # Take last CONTEXT_BARS of existing clean as context for rolling window
+    if existing_clean is not None and not existing_clean.empty and not is_backfill:
+        # Incremental: only clean new bars using context window
         context = existing_clean.tail(CONTEXT_BARS)
         to_clean = pd.concat([context, new_bars], ignore_index=True)
         cleaned_chunk = clean_bars(to_clean)
@@ -286,7 +290,7 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             subset=["datetime"], keep="last"
         ).sort_values("datetime").reset_index(drop=True)
     else:
-        # First-ever run: clean the whole history
+        # Backfill or first-ever run: clean the full merged raw
         merged_clean = clean_bars(merged_raw)
 
     stats["clean_total_bars"] = len(merged_clean)
