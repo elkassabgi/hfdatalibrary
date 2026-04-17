@@ -234,7 +234,7 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
 
     Returns a stats dict.
     """
-    stats = {"ticker": ticker, "new_bars": len(new_bars), "uploaded_bytes": 0}
+    stats = {"ticker": ticker, "new_bars": len(new_bars), "new_raw_bars": len(new_bars), "new_clean_bars": 0, "uploaded_bytes": 0}
 
     # Standard columns we care about (keeps schema consistent across legacy + new data)
     STANDARD_COLS = ["datetime", "Open", "High", "Low", "Close", "Volume", "source"]
@@ -277,6 +277,8 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         existing_clean = existing_clean[[c for c in STANDARD_COLS if c in existing_clean.columns]]
         is_backfill = new_bars["datetime"].max() < existing_clean["datetime"].max()
 
+    existing_clean_count = len(existing_clean) if existing_clean is not None and not existing_clean.empty else 0
+
     if existing_clean is not None and not existing_clean.empty and not is_backfill:
         # Incremental: only clean new bars using context window
         context = existing_clean.tail(CONTEXT_BARS)
@@ -294,6 +296,7 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         merged_clean = clean_bars(merged_raw)
 
     stats["clean_total_bars"] = len(merged_clean)
+    stats["new_clean_bars"] = len(merged_clean) - existing_clean_count
 
     # 4. Aggregate
     raw_aggs = aggregate_all(merged_raw)
@@ -338,7 +341,7 @@ def _process_ticker_batch(batch_args):
     return results
 
 
-def update_metadata(d: date, total_new_bars: int, tickers_updated: int) -> None:
+def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_updated: int) -> None:
     """Update metadata.json with the new data timestamp and counts."""
     if not METADATA_PATH.exists():
         print(f"[update_metadata] WARN: {METADATA_PATH} not found, skipping")
@@ -353,12 +356,13 @@ def update_metadata(d: date, total_new_bars: int, tickers_updated: int) -> None:
     meta["end_date"] = d.isoformat()
     meta["update_summary"] = (
         f"Daily update: added trading data for {d.isoformat()} "
-        f"({total_new_bars:,} new bars across {tickers_updated:,} tickers)."
+        f"({new_raw_bars:,} new bars across {tickers_updated:,} tickers)."
     )
 
-    # Update bar counts
-    meta["bars_raw"] = meta.get("bars_raw", 0) + total_new_bars
-    meta["bars_clean"] = meta.get("bars_clean", 0) + total_new_bars
+    # Update bar counts — track raw and clean separately
+    meta["bars_raw"] = meta.get("bars_raw", 0) + new_raw_bars
+    meta["bars_clean"] = meta.get("bars_clean", 0) + new_clean_bars
+    meta["bars_removed"] = meta["bars_raw"] - meta["bars_clean"]
 
     with open(METADATA_PATH, "w") as f:
         json.dump(meta, f, indent=2)
@@ -427,6 +431,8 @@ def main():
 
         tickers_updated = 0
         total_uploaded = 0
+        total_new_raw = 0
+        total_new_clean = 0
         per_ticker = new_bars.groupby("ticker")
         total_tickers = len(per_ticker)
 
@@ -448,6 +454,8 @@ def main():
                     if status == "ok":
                         tickers_updated += 1
                         total_uploaded += data.get("uploaded_bytes", 0)
+                        total_new_raw += data.get("new_raw_bars", 0)
+                        total_new_clean += data.get("new_clean_bars", 0)
                     else:
                         print(f"  {ticker} FAILED: {data}")
 
@@ -455,7 +463,7 @@ def main():
 
         # 4. Update metadata
         if not args.dry_run:
-            update_metadata(d, len(new_bars), tickers_updated)
+            update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
 
         elapsed = time.time() - start
         body = (
