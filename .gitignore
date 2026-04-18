@@ -5,3 +5,14 @@ data/raw/
 data/clean/
 __pycache__/
 pipeline/pcap_extract/pcap_extract.exe
+
+# Local-only files (not for git)
+legacy_scripts/
+HOSTING_RESEARCH_REPORT.md
+session_log.md
+IEX_PIPELINE_PLAN.md
+WEBSITE_PLAN.md
+
+# Secrets and large files
+.env*
+data/cleaning_detail.csv

@@ -197,8 +197,8 @@ def test_on_ticker(name, df):
 def main():
     # Try to find real data
     data_dirs = [
-        Path("D:/research/research_home/data/clean"),
-        Path("D:/research/research_home/data_merged"),
+        Path("D:/research/HF_JFEC_data/data/clean"),
+        Path("D:/research/HF_JFEC_data/data_merged"),
         Path("E:/elkassabgi_analysis_v2/data/pitrading_only"),
     ]
 
