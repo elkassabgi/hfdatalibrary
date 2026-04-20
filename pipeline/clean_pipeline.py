@@ -2,7 +2,7 @@
 clean_pipeline.py — Apply the documented 9-step cleaning pipeline to a DataFrame
 of 1-minute OHLCV bars.
 
-The rules are documented in pages/docs.html under "Methodology". This script
+The rules are documented in pages/docs under "Methodology". This script
 re-implements them from spec so the repo is self-contained.
 
 Steps (applied in order; a bar that fails any step is removed):

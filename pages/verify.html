@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Verify Email — HF Data Library</title>
-  <link rel="canonical" href="https://hfdatalibrary.com/pages/verify.html">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/verify">
   <meta name="robots" content="noindex">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -53,14 +53,14 @@
         '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:2.5rem;">' +
           '<h2 style="color:#065f46; margin-bottom:0.5rem;">Email verified!</h2>' +
           '<p style="color:#047857;">Your account is now active. You can download data and use the API.</p>' +
-          '<a href="download.html" class="btn btn-primary" style="margin-top:1rem;">Go to Downloads</a>' +
+          '<a href="download" class="btn btn-primary" style="margin-top:1rem;">Go to Downloads</a>' +
         '</div>';
     } else {
       el.innerHTML =
         '<div style="background:#fef2f2; border:1px solid #fecaca; border-radius:12px; padding:2.5rem;">' +
           '<h2 style="color:#991b1b; margin-bottom:0.5rem;">Verification failed</h2>' +
           '<p style="color:#dc2626;">' + (data.error || 'Invalid or expired link.') + '</p>' +
-          '<p style="margin-top:1rem;"><a href="download.html#register">Register again</a> or contact <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a></p>' +
+          '<p style="margin-top:1rem;"><a href="download#register">Register again</a> or contact <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a></p>' +
         '</div>';
     }
   } catch (e) {

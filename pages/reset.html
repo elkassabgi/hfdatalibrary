@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Reset Password — HF Data Library</title>
-  <link rel="canonical" href="https://hfdatalibrary.com/pages/reset.html">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/reset">
   <meta name="robots" content="noindex">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -67,7 +67,7 @@ async function resetPassword() {
       document.getElementById('reset-form').innerHTML =
         '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.5rem; text-align:center;">' +
           '<strong style="color:#065f46;">Password reset!</strong>' +
-          '<p style="color:#047857; margin-top:0.5rem;">You can now <a href="download.html#register">log in</a> with your new password.</p>' +
+          '<p style="color:#047857; margin-top:0.5rem;">You can now <a href="download#register">log in</a> with your new password.</p>' +
         '</div>';
     } else {
       result.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Reset failed.') + '</p>';

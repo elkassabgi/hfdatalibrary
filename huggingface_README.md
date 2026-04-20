@@ -156,9 +156,9 @@ You are free to share and adapt the material for any purpose, including commerci
 
 - **Website:** https://hfdatalibrary.com
 - **API:** https://api.hfdatalibrary.com
-- **Documentation:** https://hfdatalibrary.com/pages/docs.html
-- **Data dictionary:** https://hfdatalibrary.com/pages/dictionary.html
-- **Code samples:** https://hfdatalibrary.com/pages/code.html
+- **Documentation:** https://hfdatalibrary.com/pages/docs
+- **Data dictionary:** https://hfdatalibrary.com/pages/dictionary
+- **Code samples:** https://hfdatalibrary.com/pages/code
 - **GitHub:** https://github.com/elkassabgi/hfdatalibrary
 - **Zenodo:** https://zenodo.org/records/19501605
 - **Contact:** admin@hfdatalibrary.com

@@ -57,7 +57,7 @@ export default {
     try {
       // ── Public endpoints ──
       if (path === '/' || path === '')
-        return jsonRes({ name: 'HF Data Library API', version: '2.0', author: 'Ahmed Elkassabgi', docs: 'https://hfdatalibrary.com/pages/api.html' }, 200, cors);
+        return jsonRes({ name: 'HF Data Library API', version: '2.0', author: 'Ahmed Elkassabgi', docs: 'https://hfdatalibrary.com/pages/api' }, 200, cors);
 
       if (path === '/v1/status')
         return await handleStatus(env, cors);
@@ -376,7 +376,7 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   const error = url.searchParams.get('error');
 
   if (error || !code) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
   }
 
   // Exchange code for token
@@ -396,7 +396,7 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   });
 
   if (!tokenRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=token_exchange_failed`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 302);
   }
 
   const tokenData = await tokenRes.json();
@@ -422,14 +422,14 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   if (linkingUserId) {
     // Linking mode: tie this ORCID to the specified user
     if (user && user.id !== linkingUserId) {
-      return Response.redirect(`${SITE_URL}/pages/account.html?oauth_error=orcid_already_linked_to_another_account`, 302);
+      return Response.redirect(`${SITE_URL}/pages/account?oauth_error=orcid_already_linked_to_another_account`, 302);
     }
     // Fetch and store ORCID profile data
     const profile = await fetchOrcidProfile(orcidId);
     const profileJson = profile ? JSON.stringify(profile) : null;
     await env.DB.prepare('UPDATE users SET orcid_id = ?, orcid_profile_json = ? WHERE id = ?')
       .bind(orcidId, profileJson, linkingUserId).run();
-    return Response.redirect(`${SITE_URL}/pages/account.html?orcid_linked=1`, 302);
+    return Response.redirect(`${SITE_URL}/pages/account?orcid_linked=1`, 302);
   }
 
   if (!user) {
@@ -452,12 +452,12 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
     if (profile?.emails?.[0]) {
       params.set('oauth_email', profile.emails[0]);
     }
-    return Response.redirect(`${SITE_URL}/pages/download.html?${params.toString()}#register`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?${params.toString()}#register`, 302);
   }
 
   // Existing user with linked ORCID — log them in
   if (!user.is_active) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=account_deactivated`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 302);
   }
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
@@ -470,7 +470,7 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   return new Response(null, {
     status: 302,
     headers: {
-      'Location': `${SITE_URL}/pages/download.html?oauth_success=1&session=${sessionId}`,
+      'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
       'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`
     }
   });
@@ -492,7 +492,7 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   const error = url.searchParams.get('error');
 
   if (error || !code) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
   }
 
   // Exchange code for token
@@ -509,7 +509,7 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   });
 
   if (!tokenRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=token_exchange_failed`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 302);
   }
 
   const tokenData = await tokenRes.json();
@@ -519,14 +519,14 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
   });
   if (!userRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=userinfo_failed`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=userinfo_failed`, 302);
   }
   const profile = await userRes.json();
   const email = (profile.email || '').toLowerCase();
   const name = profile.name || email.split('@')[0];
 
   if (!email) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=no_email`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=no_email`, 302);
   }
 
   // Look up existing user by email
@@ -564,7 +564,7 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   }
 
   if (!user.is_active) {
-    return Response.redirect(`${SITE_URL}/pages/download.html?oauth_error=account_deactivated`, 302);
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 302);
   }
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
@@ -577,7 +577,7 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   return new Response(null, {
     status: 302,
     headers: {
-      'Location': `${SITE_URL}/pages/download.html?oauth_success=1&session=${sessionId}`,
+      'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
       'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`
     }
   });
@@ -701,7 +701,7 @@ async function sendEmail(env, to, subject, htmlBody, fromEmail = FROM_EMAIL, fro
 }
 
 function verificationEmail(name, token) {
-  const link = SITE_URL + '/pages/verify.html?token=' + token;
+  const link = SITE_URL + '/pages/verify?token=' + token;
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
       <h2 style="color: #1a2332;">Welcome to the HF Data Library</h2>
@@ -733,14 +733,14 @@ function adminNotificationEmail(user, ip, ua, country) {
         <tr><td style="padding: 6px 12px;"><strong>User Agent</strong></td><td style="padding: 6px 12px; font-size: 0.85rem; color: #6b7280;">${ua}</td></tr>
       </table>
       <p style="text-align: center; margin: 2rem 0;">
-        <a href="https://hfdatalibrary.com/pages/admin.html" style="background: #1a2332; color: #d4a843; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Open Admin Panel</a>
+        <a href="https://hfdatalibrary.com/pages/admin" style="background: #1a2332; color: #d4a843; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Open Admin Panel</a>
       </p>
       <p style="font-size: 0.8rem; color: #9ca3af;">HF Data Library — automatic notification</p>
     </div>`;
 }
 
 function resetEmail(name, token) {
-  const link = SITE_URL + '/pages/reset.html?token=' + token;
+  const link = SITE_URL + '/pages/reset?token=' + token;
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
       <h2 style="color: #1a2332;">Password Reset</h2>
@@ -1458,7 +1458,7 @@ async function handleSendNewsletter(request, env, cors) {
 
   // Test mode: send only to the admin
   if (test_only) {
-    const unsubUrl = `${SITE_URL}/pages/unsubscribe.html?token=${user.unsubscribe_token || 'test'}`;
+    const unsubUrl = `${SITE_URL}/pages/unsubscribe?token=${user.unsubscribe_token || 'test'}`;
     const html = buildNewsletterHtml(subject, body_html, user.name, unsubUrl);
     const ok = await sendEmail(env, user.email, '[TEST] ' + subject, html, NEWSLETTER_FROM, NEWSLETTER_FROM_NAME);
     return jsonRes({ message: ok ? 'Test email sent to ' + user.email : 'Failed to send test email' }, ok ? 200 : 500, cors);
@@ -1474,7 +1474,7 @@ async function handleSendNewsletter(request, env, cors) {
 
   // Send emails (Resend allows batch sends, but let's be safe and send individually for now)
   for (const sub of subscribers.results) {
-    const unsubUrl = `${SITE_URL}/pages/unsubscribe.html?token=${sub.unsubscribe_token}`;
+    const unsubUrl = `${SITE_URL}/pages/unsubscribe?token=${sub.unsubscribe_token}`;
     const html = buildNewsletterHtml(subject, body_html, sub.name, unsubUrl);
     const ok = await sendEmail(env, sub.email, subject, html, NEWSLETTER_FROM, NEWSLETTER_FROM_NAME);
     if (ok) success++; else failed++;

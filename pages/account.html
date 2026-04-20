@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My Account — HF Data Library</title>
-  <link rel="canonical" href="https://hfdatalibrary.com/pages/account.html">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/account">
   <meta name="author" content="Ahmed Elkassabgi">
   <meta name="robots" content="noindex">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
@@ -20,15 +20,15 @@
     <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
-      <li><a href="data.html">Data</a></li>
-      <li><a href="tickers.html">Tickers</a></li>
-      <li><a href="docs.html">Documentation</a></li>
-      <li><a href="api.html">API</a></li>
-      <li><a href="download.html">Download</a></li>
-      <li><a href="code.html">Code</a></li>
-      <li><a href="cite.html">Cite</a></li>
-      <li><a href="stats.html">Stats</a></li>
-      <li><a href="contact.html">Contact</a></li>
+      <li><a href="data">Data</a></li>
+      <li><a href="tickers">Tickers</a></li>
+      <li><a href="docs">Documentation</a></li>
+      <li><a href="api">API</a></li>
+      <li><a href="download">Download</a></li>
+      <li><a href="code">Code</a></li>
+      <li><a href="cite">Cite</a></li>
+      <li><a href="stats">Stats</a></li>
+      <li><a href="contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -44,7 +44,7 @@
   <div class="container" style="max-width:800px;">
     <div id="not-logged-in" style="display:none; text-align:center; padding:3rem;">
       <h2>Not logged in</h2>
-      <p style="color:var(--gray-500);">Please <a href="download.html#register">log in</a> to view your account.</p>
+      <p style="color:var(--gray-500);">Please <a href="download#register">log in</a> to view your account.</p>
     </div>
 
     <div id="account-content" style="display:none;">
@@ -277,7 +277,7 @@ async function loadDownloadHistory() {
     const d = await r.json();
     const el = document.getElementById('download-history');
     if (!d.downloads || d.downloads.length === 0) {
-      el.innerHTML = '<p style="color:var(--gray-400); font-size:0.9rem;">No downloads yet. <a href="download.html">Browse data</a></p>';
+      el.innerHTML = '<p style="color:var(--gray-400); font-size:0.9rem;">No downloads yet. <a href="download">Browse data</a></p>';
       return;
     }
     el.innerHTML =

@@ -99,7 +99,7 @@
   // ── User Widget in Navbar ──
   const API_BASE = 'https://api.hfdatalibrary.com';
   const isSubpage2 = window.location.pathname.includes('/pages/');
-  const downloadUrl = isSubpage2 ? 'download.html' : 'pages/download.html';
+  const downloadUrl = isSubpage2 ? 'download' : 'pages/download';
 
   async function buildUserWidget() {
     const navLinks = document.querySelector('.nav-links');
@@ -142,9 +142,9 @@
             '<div style="font-weight:600; color:var(--navy);">' + user.name + '</div>' +
             '<div style="font-size:0.8rem; color:var(--gray-500);">' + user.email + '</div>' +
           '</div>' +
-          '<a href="' + (isSubpage2 ? 'account.html' : 'pages/account.html') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
+          '<a href="' + (isSubpage2 ? 'account' : 'pages/account') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
           '<a href="' + downloadUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Downloads</a>' +
-          (user.is_admin ? '<a href="' + (isSubpage2 ? 'admin.html' : 'pages/admin.html') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
+          (user.is_admin ? '<a href="' + (isSubpage2 ? 'admin' : 'pages/admin') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
           '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">Log out</div>' +
         '</div>';
     } else {
