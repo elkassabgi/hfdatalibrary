@@ -82,6 +82,7 @@ jobs:
           python pipeline/daily_update.py $ARGS
 
       - name: Commit and push metadata
+        id: commit
         if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           git config user.name "HF Data Library Bot"
@@ -89,8 +90,21 @@ jobs:
           git add data/metadata.json
           if git diff --cached --quiet; then
             echo "No metadata changes to commit"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Daily data update: $(date -u +%Y-%m-%d)"
             git pull --rebase
             git push
+            echo "committed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # Pushes made via GITHUB_TOKEN don't trigger other workflows (anti-recursion),
+      # so deploy.yml won't fire on bot commits. Deploy inline here instead — the
+      # checkout tree already has the committed metadata.
+      - name: Deploy to Cloudflare Pages
+        if: ${{ github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name=hfdatalibrary --branch=main
