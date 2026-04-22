@@ -402,7 +402,7 @@ async function loadCampaigns() {
     document.getElementById('campaign-history').innerHTML = d.campaigns.map(c =>
       '<div style="padding:0.5rem 0; border-bottom:1px solid var(--gray-100);">' +
         '<strong>' + esc(c.subject) + '</strong>' +
-        '<span style="margin-left:1rem; color:var(--gray-500);">' + c.sent_at + '</span>' +
+        '<span style="margin-left:1rem; color:var(--gray-500);">' + fmtCT(c.sent_at) + '</span>' +
         '<span style="margin-left:1rem; color:var(--gray-500);">' + c.success_count + '/' + c.recipients_count + ' delivered</span>' +
       '</div>'
     ).join('');
@@ -428,7 +428,7 @@ async function loadStats() {
         '<span style="color:var(--gray-500);">' + u.email + '</span>' +
         '<span>' + u.institution + '</span>' +
         '<span style="color:var(--gray-400);">' + u.country + '</span>' +
-        '<span style="color:var(--gray-400);">' + u.created_at + '</span>' +
+        '<span style="color:var(--gray-400);">' + fmtCT(u.created_at) + '</span>' +
       '</div>'
     ).join('');
     document.getElementById('recent-users').innerHTML = html || '<p style="color:var(--gray-400);">No users yet.</p>';
@@ -473,11 +473,11 @@ async function showUser(id) {
     const u = d.user;
 
     const logins = d.recent_logins.map(l =>
-      '<tr><td>' + l.timestamp + '</td><td>' + l.ip_address + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
+      '<tr><td>' + fmtCT(l.timestamp) + '</td><td>' + l.ip_address + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
     ).join('');
 
     const dls = d.recent_downloads.map(dl =>
-      '<tr><td>' + dl.timestamp + '</td><td>' + dl.ticker + '</td><td>' + dl.version + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + dl.ip_address + '</td></tr>'
+      '<tr><td>' + fmtCT(dl.timestamp) + '</td><td>' + dl.ticker + '</td><td>' + dl.version + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + dl.ip_address + '</td></tr>'
     ).join('');
 
     document.getElementById('modal-content').innerHTML =
@@ -494,8 +494,8 @@ async function showUser(id) {
         '<div><strong>Country:</strong><br>' + (esc(u.country) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
         '<div><strong>Role:</strong><br>' + (esc(u.role) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
         '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
-        '<div><strong>Registered:</strong><br>' + u.created_at + '</div>' +
-        '<div><strong>Last Login:</strong><br>' + (u.last_login_at || 'Never') + '</div>' +
+        '<div><strong>Registered:</strong><br>' + fmtCT(u.created_at) + '</div>' +
+        '<div><strong>Last Login:</strong><br>' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</div>' +
         '<div><strong>Last IP:</strong><br><code>' + (u.last_login_ip || '-') + '</code></div>' +
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
@@ -593,7 +593,7 @@ async function loadDownloads() {
     const r = await fetch(API + '/v1/admin/downloads?limit=50', { headers: authHeaders() });
     const d = await r.json();
     document.getElementById('download-log').innerHTML = d.downloads.map(dl =>
-      '<tr><td class="mono" style="font-size:0.8rem;">' + dl.timestamp + '</td><td>' + esc(dl.name || '-') + '</td><td style="font-size:0.8rem;">' + esc(dl.email || '-') + '</td><td><strong>' + dl.ticker + '</strong></td><td>' + dl.version + '</td><td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td class="mono" style="font-size:0.8rem;">' + dl.ip_address + '</td></tr>'
+      '<tr><td class="mono" style="font-size:0.8rem;">' + fmtCT(dl.timestamp) + '</td><td>' + esc(dl.name || '-') + '</td><td style="font-size:0.8rem;">' + esc(dl.email || '-') + '</td><td><strong>' + dl.ticker + '</strong></td><td>' + dl.version + '</td><td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td class="mono" style="font-size:0.8rem;">' + dl.ip_address + '</td></tr>'
     ).join('') || '<tr><td colspan="7" style="color:var(--gray-400);">No downloads yet.</td></tr>';
   } catch (e) {
     console.error('Downloads error:', e);
@@ -601,6 +601,26 @@ async function loadDownloads() {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// Format a SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS") or ISO string as US Central time.
+function fmtCT(ts) {
+  if (!ts) return '-';
+  // SQLite datetime('now') returns UTC with no tz marker. Append Z so Date parses as UTC.
+  const iso = ts.includes('T')
+    ? (ts.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(ts) ? ts : ts + 'Z')
+    : ts.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }) + ' CT';
+}
 
 // ── Auto-login if session exists ──
 (async function() {
