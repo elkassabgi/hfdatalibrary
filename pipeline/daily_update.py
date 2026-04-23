@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 import traceback
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Set, Dict, List, Optional
 import urllib.request
@@ -369,7 +369,8 @@ def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_upd
     with open(METADATA_PATH) as f:
         meta = json.load(f)
 
-    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.utcnow()
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     meta["data_updated"] = now_iso
     meta["website_updated"] = now_iso
     meta["end_date"] = d.isoformat()
@@ -377,6 +378,15 @@ def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_upd
         f"Daily update: added trading data for {d.isoformat()} "
         f"({new_raw_bars:,} new bars across {tickers_updated:,} tickers)."
     )
+
+    # Next scheduled pipeline run — cron is "0 6 * * 2-6" (Tue-Sat 6:00 UTC).
+    # Advance one day at a time until we hit Tue–Sat (weekday 1–5).
+    next_run = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    for _ in range(7):
+        next_run += timedelta(days=1)
+        if next_run.weekday() in (1, 2, 3, 4, 5):
+            break
+    meta["next_update"] = next_run.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Update bar counts — track raw and clean separately
     meta["bars_raw"] = meta.get("bars_raw", 0) + new_raw_bars
