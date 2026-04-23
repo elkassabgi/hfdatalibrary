@@ -123,6 +123,20 @@
     </div>
   </section>
 
+  <!-- Daily digest (preview) -->
+  <section style="padding:1rem 0;">
+    <div class="container">
+      <h3 style="margin-bottom:1rem;">Daily Activity Digest</h3>
+      <div class="card" style="padding:1.25rem;">
+        <p style="margin:0 0 0.75rem; color:var(--gray-600); font-size:0.9rem;">
+          An activity digest is sent to <strong>elkassabgi@gmail.com</strong> every evening at 02:00 UTC (~9 PM Central). Click below to preview now with data from the last 24 hours.
+        </p>
+        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="previewDigest()">Send me the digest now</button>
+        <div id="digest-result" style="margin-top:0.75rem; font-size:0.9rem;"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Newsletter -->
   <section style="padding:2rem 0;">
     <div class="container">
@@ -348,6 +362,22 @@ async function disable2fa() {
 }
 
 // ── Newsletter ──
+async function previewDigest() {
+  const out = document.getElementById('digest-result');
+  out.innerHTML = '<span style="color:var(--gray-500);">Sending...</span>';
+  try {
+    const r = await fetch(API + '/v1/admin/digest/preview', { method: 'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (r.ok) {
+      out.innerHTML = '<span style="color:#059669;">Sent — check your inbox.</span>';
+    } else {
+      out.innerHTML = '<span style="color:var(--red);">' + (d.error || d.message || 'Failed') + '</span>';
+    }
+  } catch (e) {
+    out.innerHTML = '<span style="color:var(--red);">Connection error.</span>';
+  }
+}
+
 async function sendNewsletter(testOnly) {
   const subject = document.getElementById('news-subject').value.trim();
   const body = document.getElementById('news-body').value.trim();

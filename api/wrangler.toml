@@ -14,6 +14,11 @@ binding = "DB"
 database_name = "hfdatalibrary-db"
 database_id = "a396506e-e78a-4978-bc38-883056f98810"
 
+# Daily activity digest — 02:00 UTC = 21:00 CDT (summer) / 20:00 CST (winter).
+# Fires scheduled() handler in src/index.js.
+[triggers]
+crons = ["0 2 * * *"]
+
 # Route will be configured via dashboard — token needs Zone Workers Routes permission
 # [[routes]]
 # pattern = "api.hfdatalibrary.com/*"

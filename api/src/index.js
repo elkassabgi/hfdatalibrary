@@ -172,6 +172,12 @@ export default {
     } catch (err) {
       return jsonRes({ error: 'Internal server error', detail: err.message }, 500, cors);
     }
+  },
+
+  // Cron trigger (see wrangler.toml [triggers]). Fires at 02:00 UTC daily =
+  // 21:00 CDT (DST) / 20:00 CST. The daily activity digest goes to admin.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(sendDailyDigest(env));
   }
 };
 
@@ -736,6 +742,162 @@ function adminNotificationEmail(user, ip, ua, country) {
         <a href="https://hfdatalibrary.com/pages/admin" style="background: #1a2332; color: #d4a843; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Open Admin Panel</a>
       </p>
       <p style="font-size: 0.8rem; color: #9ca3af;">HF Data Library — automatic notification</p>
+    </div>`;
+}
+
+// ══════════════════════════════════════
+// ── Daily Activity Digest (cron) ──
+// ══════════════════════════════════════
+
+async function sendDailyDigest(env) {
+  // Gather everything in a single Promise.all for speed.
+  const [
+    newUsers,
+    loginSuccess,
+    loginFail,
+    uniqueLoggedIn,
+    topCountries,
+    downloadAgg,
+    topTickers,
+    topUsers,
+    topInstitutions,
+  ] = await Promise.all([
+    env.DB.prepare(
+      "SELECT name, email, institution, country, role, created_at FROM users WHERE created_at > datetime('now', '-1 day') ORDER BY created_at DESC"
+    ).all(),
+    env.DB.prepare(
+      "SELECT COUNT(*) as c FROM login_history WHERE timestamp > datetime('now', '-1 day') AND success = 1"
+    ).first(),
+    env.DB.prepare(
+      "SELECT COUNT(*) as c FROM login_history WHERE timestamp > datetime('now', '-1 day') AND success = 0"
+    ).first(),
+    env.DB.prepare(
+      "SELECT COUNT(DISTINCT user_id) as c FROM login_history WHERE timestamp > datetime('now', '-1 day') AND success = 1"
+    ).first(),
+    env.DB.prepare(
+      "SELECT country, COUNT(*) as c FROM login_history WHERE timestamp > datetime('now', '-1 day') AND country IS NOT NULL AND country != '' AND country != 'unknown' GROUP BY country ORDER BY c DESC LIMIT 10"
+    ).all(),
+    env.DB.prepare(
+      "SELECT COUNT(*) as c, COALESCE(SUM(bytes_served), 0) as bytes, COUNT(DISTINCT user_id) as users FROM download_log WHERE timestamp > datetime('now', '-1 day')"
+    ).first(),
+    env.DB.prepare(
+      "SELECT ticker, COUNT(*) as c, COALESCE(SUM(bytes_served), 0) as bytes FROM download_log WHERE timestamp > datetime('now', '-1 day') GROUP BY ticker ORDER BY c DESC LIMIT 5"
+    ).all(),
+    env.DB.prepare(
+      "SELECT u.name, u.email, u.institution, COUNT(*) as c, COALESCE(SUM(dl.bytes_served), 0) as bytes FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id WHERE dl.timestamp > datetime('now', '-1 day') AND u.id IS NOT NULL GROUP BY dl.user_id ORDER BY c DESC LIMIT 5"
+    ).all(),
+    env.DB.prepare(
+      "SELECT u.institution, COUNT(*) as c FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id WHERE dl.timestamp > datetime('now', '-1 day') AND u.institution IS NOT NULL AND u.institution != '' GROUP BY u.institution ORDER BY c DESC LIMIT 5"
+    ).all(),
+  ]);
+
+  const stats = {
+    date_ct: new Date().toLocaleDateString('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: 'long', day: 'numeric' }),
+    new_users: newUsers.results || [],
+    logins_success: loginSuccess?.c || 0,
+    logins_fail: loginFail?.c || 0,
+    unique_users_logged_in: uniqueLoggedIn?.c || 0,
+    countries: topCountries.results || [],
+    downloads_count: downloadAgg?.c || 0,
+    downloads_bytes: downloadAgg?.bytes || 0,
+    downloads_users: downloadAgg?.users || 0,
+    top_tickers: topTickers.results || [],
+    top_users: topUsers.results || [],
+    top_institutions: topInstitutions.results || [],
+  };
+
+  const subject = `HF Data Library — daily digest (${stats.date_ct})`;
+  const html = dailyDigestEmail(stats);
+  const ok = await sendEmail(env, ADMIN_NOTIFY, subject, html);
+  console.log(`[daily-digest] sent=${ok} users=${stats.new_users.length} logins=${stats.logins_success} downloads=${stats.downloads_count}`);
+  return ok;
+}
+
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function dailyDigestEmail(s) {
+  const cell = 'padding:6px 12px; border-bottom:1px solid #e5e7eb; font-size:0.9rem;';
+  const cellHead = 'padding:6px 12px; border-bottom:2px solid #1a2332; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:#6b7280; text-align:left;';
+  const statCard = 'background:#f9fafb; border-radius:8px; padding:16px; text-align:center;';
+  const bigNum = 'font-family:Menlo,Consolas,monospace; font-size:1.8rem; font-weight:700; color:#1a2332; line-height:1.1;';
+  const bigLabel = 'font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:#6b7280; margin-top:4px;';
+
+  const statsCards = `
+    <table style="width:100%; border-collapse:separate; border-spacing:8px; margin:1rem 0;">
+      <tr>
+        <td style="${statCard}"><div style="${bigNum}">${s.new_users.length}</div><div style="${bigLabel}">New users</div></td>
+        <td style="${statCard}"><div style="${bigNum}">${s.logins_success}</div><div style="${bigLabel}">Logins</div></td>
+        <td style="${statCard}"><div style="${bigNum}">${s.downloads_count}</div><div style="${bigLabel}">Downloads</div></td>
+        <td style="${statCard}"><div style="${bigNum}">${fmtBytes(s.downloads_bytes)}</div><div style="${bigLabel}">Served</div></td>
+      </tr>
+    </table>`;
+
+  const newUsersSection = s.new_users.length === 0
+    ? '<p style="color:#6b7280; font-style:italic;">No new registrations in the last 24 hours.</p>'
+    : `<table style="width:100%; border-collapse:collapse; margin:0.5rem 0 1.5rem;">
+        <tr><th style="${cellHead}">Name</th><th style="${cellHead}">Email</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Country</th><th style="${cellHead}">Role</th></tr>
+        ${s.new_users.map(u => `
+          <tr><td style="${cell}">${escapeHtml(u.name)}</td><td style="${cell}">${escapeHtml(u.email)}</td><td style="${cell}">${escapeHtml(u.institution)}</td><td style="${cell}">${escapeHtml(u.country)}</td><td style="${cell}">${escapeHtml(u.role)}</td></tr>`).join('')}
+      </table>`;
+
+  const tickersSection = s.top_tickers.length === 0
+    ? '<p style="color:#6b7280; font-style:italic;">No downloads in the last 24 hours.</p>'
+    : `<table style="width:100%; border-collapse:collapse; margin:0.5rem 0 1.5rem;">
+        <tr><th style="${cellHead}">Ticker</th><th style="${cellHead}">Downloads</th><th style="${cellHead}">Bytes</th></tr>
+        ${s.top_tickers.map(t => `
+          <tr><td style="${cell}"><strong>${escapeHtml(t.ticker)}</strong></td><td style="${cell}">${t.c}</td><td style="${cell}">${fmtBytes(t.bytes)}</td></tr>`).join('')}
+      </table>`;
+
+  const usersSection = s.top_users.length === 0
+    ? ''
+    : `<h3 style="margin-top:1.5rem;">Top users by downloads</h3>
+       <table style="width:100%; border-collapse:collapse; margin:0.5rem 0 1.5rem;">
+        <tr><th style="${cellHead}">User</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Count</th><th style="${cellHead}">Bytes</th></tr>
+        ${s.top_users.map(u => `
+          <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}">${fmtBytes(u.bytes)}</td></tr>`).join('')}
+      </table>`;
+
+  const institutionsLine = s.top_institutions.length === 0
+    ? ''
+    : `<p><strong>Active institutions:</strong> ${s.top_institutions.map(i => `${escapeHtml(i.institution)} (${i.c})`).join(', ')}</p>`;
+
+  const countriesLine = s.countries.length === 0
+    ? ''
+    : `<p><strong>Login countries:</strong> ${s.countries.map(c => `${escapeHtml(c.country)} (${c.c})`).join(', ')}</p>`;
+
+  const failLine = s.logins_fail > 0
+    ? `<p style="color:#b91c1c;"><strong>Failed login attempts:</strong> ${s.logins_fail}</p>`
+    : '';
+
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 680px; margin: 0 auto; color: #1a2332;">
+      <h2 style="color:#1a2332; margin-bottom:0.25rem;">Daily activity — ${s.date_ct}</h2>
+      <p style="color:#6b7280; margin-top:0;">24-hour summary for HF Data Library.</p>
+      ${statsCards}
+      <h3 style="margin-top:1.5rem;">New registrations (${s.new_users.length})</h3>
+      ${newUsersSection}
+      <h3 style="margin-top:1.5rem;">Top tickers downloaded</h3>
+      ${tickersSection}
+      ${usersSection}
+      <h3 style="margin-top:1.5rem;">Logins &amp; reach</h3>
+      <p><strong>${s.logins_success}</strong> successful logins from <strong>${s.unique_users_logged_in}</strong> unique users.</p>
+      ${countriesLine}
+      ${institutionsLine}
+      ${failLine}
+      <p style="text-align:center; margin:2rem 0;">
+        <a href="${SITE_URL}/pages/admin" style="background:#1a2332; color:#d4a843; padding:12px 32px; border-radius:8px; text-decoration:none; font-weight:600;">Open Admin Panel</a>
+      </p>
+      <p style="font-size:0.75rem; color:#9ca3af; text-align:center;">HF Data Library — automatic daily digest, sent ~9 PM Central.</p>
     </div>`;
 }
 
@@ -1765,6 +1927,13 @@ async function handleAdmin(path, request, env, cors, ip) {
     await auditLog(env, user, 'update_user:' + actions.join(','), uid, target?.email, JSON.stringify(body), ip);
 
     return jsonRes({ message: 'User updated' }, 200, cors);
+  }
+
+  // POST /v1/admin/digest/preview — fire daily activity digest on demand (testing)
+  if (path === '/v1/admin/digest/preview' && request.method === 'POST') {
+    const ok = await sendDailyDigest(env);
+    await auditLog(env, user, 'digest:preview', null, null, null, ip);
+    return jsonRes({ message: ok ? 'Daily digest sent.' : 'Digest failed — check worker logs.' }, ok ? 200 : 500, cors);
   }
 
   // GET /v1/admin/stats — dashboard stats
