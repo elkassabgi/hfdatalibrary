@@ -32,6 +32,7 @@ import tempfile
 import traceback
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Set, Dict, List, Optional
 import urllib.request
@@ -379,14 +380,19 @@ def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_upd
         f"({new_raw_bars:,} new bars across {tickers_updated:,} tickers)."
     )
 
-    # Next scheduled pipeline run — cron is "0 6 * * 2-6" (Tue-Sat 6:00 UTC).
-    # Advance one day at a time until we hit Tue–Sat (weekday 1–5).
-    next_run = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    # User-facing "next update" promise: next Tue-Sat 06:00 America/Chicago
+    # (DST auto-handled by ZoneInfo). Pipeline cron technically fires at 06:00
+    # UTC = ~01:00 CT, but data is consistently settled and deployed by 6 AM
+    # Central, which is what the site displays to users. Stored as UTC in ISO.
+    CT = ZoneInfo("America/Chicago")
+    now_ct = now.replace(tzinfo=timezone.utc).astimezone(CT)
+    next_ct = now_ct.replace(hour=6, minute=0, second=0, microsecond=0)
     for _ in range(7):
-        next_run += timedelta(days=1)
-        if next_run.weekday() in (1, 2, 3, 4, 5):
+        next_ct += timedelta(days=1)
+        if next_ct.weekday() in (1, 2, 3, 4, 5):  # Tue-Sat
             break
-    meta["next_update"] = next_run.strftime("%Y-%m-%dT%H:%M:%SZ")
+    next_utc = next_ct.astimezone(timezone.utc)
+    meta["next_update"] = next_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Update bar counts — track raw and clean separately
     meta["bars_raw"] = meta.get("bars_raw", 0) + new_raw_bars

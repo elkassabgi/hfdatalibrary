@@ -9,11 +9,12 @@
   const isSubpage = window.location.pathname.includes('/pages/');
   const basePath = isSubpage ? '../data/metadata.json' : 'data/metadata.json';
 
-  // Format large numbers: 1533014567 → "1.53B"
+  // Format large numbers: 1533014567 → "1.53B" (floor, never round up —
+  // reported counts should never overstate the data we actually have).
   function formatBars(n) {
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+    if (n >= 1e9) return (Math.floor(n / 1e7) / 100).toFixed(2) + 'B';
+    if (n >= 1e6) return (Math.floor(n / 1e5) / 10).toFixed(1) + 'M';
+    if (n >= 1e3) return Math.floor(n / 1e3) + 'K';
     return n.toLocaleString();
   }
 
@@ -37,8 +38,9 @@
       if (progress < 1) {
         requestAnimationFrame(step);
       } else {
-        // Final value with written-out label below
-        var billions = (target / 1e9).toFixed(2) + '+ Billion';
+        // Final value with written-out label below — floor to 2 decimals
+        // so 1,538,207,376 reads as "1.53+ Billion" (not 1.54 from rounding).
+        var billions = (Math.floor(target / 1e7) / 100).toFixed(2) + '+ Billion';
         el.style.lineHeight = '1.1';
         el.innerHTML = target.toLocaleString() + '<br><span style="font-size:0.45em; opacity:0.7; line-height:1;">(' + billions + ')</span>';
       }
