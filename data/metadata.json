@@ -1,17 +1,17 @@
 {
-  "website_updated": "2026-04-23T08:05:27Z",
-  "data_updated": "2026-04-23T08:05:27Z",
-  "update_summary": "Daily update: added trading data for 2026-04-22 (278,943 new bars across 1,102 tickers).",
+  "website_updated": "2026-04-24T08:12:43Z",
+  "data_updated": "2026-04-24T08:12:43Z",
+  "update_summary": "Daily update: added trading data for 2026-04-23 (284,402 new bars across 1,103 tickers).",
   "version": "1.0",
   "tickers": 1391,
-  "bars_raw": 1538207376,
-  "bars_clean": 1491449829,
-  "bars_removed": 46757547,
+  "bars_raw": 1538491778,
+  "bars_clean": 1491722081,
+  "bars_removed": 46769697,
   "trading_days": 5847,
   "years_of_data": 23,
   "academic_variables": 25,
   "start_date": "2002-12-30",
-  "end_date": "2026-04-22",
+  "end_date": "2026-04-23",
   "earliest_date": "1991-01-02",
   "quintiles": {
     "q5": {
@@ -41,5 +41,5 @@
     }
   },
   "status": "operational",
-  "next_update": "2026-04-24T11:00:00Z"
+  "next_update": "2026-04-25T11:00:00Z"
 }
