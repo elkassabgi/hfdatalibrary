@@ -1910,6 +1910,11 @@ async function handleAdmin(path, request, env, cors, ip) {
     if (body.is_admin !== undefined) { updates.push('is_admin = ?'); values.push(body.is_admin ? 1 : 0); }
     if (body.is_vip !== undefined) { updates.push('is_vip = ?'); values.push(body.is_vip ? 1 : 0); }
     if (body.hide_institution !== undefined) { updates.push('hide_institution = ?'); values.push(body.hide_institution ? 1 : 0); }
+    // Profile fields — admin can correct typos / unify naming for stats display.
+    if (typeof body.name === 'string' && body.name.trim().length > 0) { updates.push('name = ?'); values.push(body.name.trim()); }
+    if (typeof body.institution === 'string' && body.institution.trim().length > 0) { updates.push('institution = ?'); values.push(body.institution.trim()); }
+    if (typeof body.country === 'string' && body.country.trim().length > 0) { updates.push('country = ?'); values.push(body.country.trim()); }
+    if (typeof body.role === 'string' && body.role.trim().length > 0) { updates.push('role = ?'); values.push(body.role.trim()); }
 
     if (updates.length === 0) return jsonRes({ error: 'No updates provided' }, 400, cors);
 
@@ -1923,7 +1928,7 @@ async function handleAdmin(path, request, env, cors, ip) {
 
     // Audit log
     const target = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first();
-    const actions = Object.keys(body).filter(k => ['is_active','is_admin','is_vip','notes','hide_institution'].includes(k));
+    const actions = Object.keys(body).filter(k => ['is_active','is_admin','is_vip','notes','hide_institution','name','institution','country','role'].includes(k));
     await auditLog(env, user, 'update_user:' + actions.join(','), uid, target?.email, JSON.stringify(body), ip);
 
     return jsonRes({ message: 'User updated' }, 200, cors);

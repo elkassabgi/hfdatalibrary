@@ -510,25 +510,33 @@ async function showUser(id) {
       '<tr><td>' + fmtCT(dl.timestamp) + '</td><td>' + dl.ticker + '</td><td>' + dl.version + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + dl.ip_address + '</td></tr>'
     ).join('');
 
+    const inputStyle = 'width:100%; padding:0.4rem 0.55rem; border:1px solid var(--gray-300); border-radius:4px; font-size:0.85rem; font-family:var(--font-sans);';
     document.getElementById('modal-content').innerHTML =
       '<div style="display:flex; justify-content:space-between; align-items:start;">' +
-        '<div><h2 style="margin-bottom:0.25rem;">' + esc(u.name) + '</h2>' +
-        '<p style="color:var(--gray-500); margin:0;">' + esc(u.email) + '</p></div>' +
+        '<div style="flex:1;">' +
+          '<input id="user-edit-name" value="' + esc(u.name) + '" style="' + inputStyle + ' font-size:1.4rem; font-weight:600; color:var(--navy); border:1px solid transparent; padding:0.25rem 0.4rem; margin-bottom:0.25rem;" onfocus="this.style.borderColor=\'var(--gray-300)\'" onblur="this.style.borderColor=\'transparent\'">' +
+          '<p style="color:var(--gray-500); margin:0;">' + esc(u.email) + '</p>' +
+        '</div>' +
         '<button onclick="closeModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--gray-400);">&#10005;</button>' +
       '</div>' +
       '<div class="grid-3" style="margin:1.5rem 0; gap:1rem;">' +
-        '<div><strong>Institution:</strong><br>' + (esc(u.institution) || '<em style="color:var(--gray-400);">not set</em>') +
-          '<br><label style="font-size:0.8rem; color:var(--gray-500); cursor:pointer; margin-top:0.25rem; display:inline-flex; align-items:center; gap:0.3rem;">' +
+        '<div><strong>Institution:</strong><br>' +
+          '<input id="user-edit-institution" value="' + esc(u.institution || '') + '" style="' + inputStyle + '">' +
+          '<label style="font-size:0.8rem; color:var(--gray-500); cursor:pointer; margin-top:0.35rem; display:inline-flex; align-items:center; gap:0.3rem;">' +
             '<input type="checkbox" ' + (u.hide_institution ? 'checked' : '') + ' onchange="toggleHideInstitution(' + u.id + ', this.checked)">' +
             ' Hide from stats</label></div>' +
-        '<div><strong>Country:</strong><br>' + (esc(u.country) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
-        '<div><strong>Role:</strong><br>' + (esc(u.role) || '<em style="color:var(--gray-400);">not set</em>') + '</div>' +
+        '<div><strong>Country:</strong><br><input id="user-edit-country" value="' + esc(u.country || '') + '" style="' + inputStyle + '"></div>' +
+        '<div><strong>Role:</strong><br><input id="user-edit-role" value="' + esc(u.role || '') + '" style="' + inputStyle + '"></div>' +
         '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
         '<div><strong>Registered:</strong><br>' + fmtCT(u.created_at) + '</div>' +
         '<div><strong>Last Login:</strong><br>' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</div>' +
         '<div><strong>Last IP:</strong><br><code>' + (u.last_login_ip || '-') + '</code></div>' +
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
+      '</div>' +
+      '<div style="margin-bottom:1rem;">' +
+        '<button class="btn btn-sm btn-primary" onclick="saveUserProfile(' + u.id + ')">Save profile changes</button>' +
+        '<span id="user-edit-result" style="margin-left:0.75rem; font-size:0.85rem;"></span>' +
       '</div>' +
       (u.orcid_id || u.google_id ? '<div style="margin-bottom:1rem; padding:0.75rem 1rem; background:#f9fafb; border-radius:8px; font-size:0.9rem;">' +
         '<strong>Linked accounts:</strong><br>' +
@@ -571,6 +579,37 @@ async function showUser(id) {
     document.getElementById('user-modal').classList.add('open');
   } catch (e) {
     console.error('User detail error:', e);
+  }
+}
+
+async function saveUserProfile(id) {
+  const out = document.getElementById('user-edit-result');
+  const body = {
+    name: document.getElementById('user-edit-name').value,
+    institution: document.getElementById('user-edit-institution').value,
+    country: document.getElementById('user-edit-country').value,
+    role: document.getElementById('user-edit-role').value,
+  };
+  out.textContent = 'Saving...';
+  out.style.color = 'var(--gray-500)';
+  try {
+    const r = await fetch(API + '/v1/admin/users/' + id, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      out.textContent = 'Saved.';
+      out.style.color = '#059669';
+      loadUsers();
+    } else {
+      out.textContent = d.error || 'Failed';
+      out.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    out.textContent = 'Connection error.';
+    out.style.color = 'var(--red)';
   }
 }
 
