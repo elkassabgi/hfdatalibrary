@@ -2052,13 +2052,17 @@ async function handlePublicStats(env, cors) {
   // Country codes from login_history (Cloudflare cf-ipcountry)
   const accessCountries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(DISTINCT user_id) as users FROM login_history WHERE country IS NOT NULL AND country != "" AND country != "unknown" GROUP BY UPPER(country)').all();
 
-  // Merge registered user country data
+  // Merge registered user country data. Only accept ISO-shaped codes (2-3
+  // ASCII letters). The previous `length <= 3` check passed CJK strings
+  // like "中国" (length 2 in UTF-16) and corrupted byte sequences, which
+  // ended up rendering as broken badges under the world map.
+  const ISO = /^[A-Za-z]{2,3}$/;
   const userCountryMap = {};
   for (const row of countries.results) {
-    if (row.country && row.country.length <= 3) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
+    if (row.country && ISO.test(row.country)) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
   }
   for (const row of accessCountries.results) {
-    if (row.country && row.country.length <= 3) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
+    if (row.country && ISO.test(row.country)) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
   }
 
   // Cloudflare Analytics — cumulative visitor countries since site launch
