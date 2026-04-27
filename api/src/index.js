@@ -22,6 +22,150 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8080', // for local dev
 ];
 
+// Country name -> ISO 3166-1 alpha-2 code. Users register by typing the
+// country, but the world map (Google GeoChart) and flag CDN both want ISO-2.
+// Keys are lowercased; lookup via normalizeCountry() handles both directions.
+// Includes common variants (e.g. "USA", "U.S.", "America" all map to US).
+const COUNTRY_TO_ISO = {
+  // North America
+  'united states': 'US', 'united states of america': 'US', 'usa': 'US', 'u.s.': 'US', 'u.s.a.': 'US', 'us': 'US', 'america': 'US',
+  'canada': 'CA',
+  'mexico': 'MX',
+  // Europe
+  'united kingdom': 'GB', 'uk': 'GB', 'great britain': 'GB', 'britain': 'GB', 'england': 'GB', 'scotland': 'GB', 'wales': 'GB', 'northern ireland': 'GB',
+  'ireland': 'IE',
+  'germany': 'DE', 'deutschland': 'DE',
+  'france': 'FR',
+  'spain': 'ES', 'españa': 'ES',
+  'portugal': 'PT',
+  'italy': 'IT', 'italia': 'IT',
+  'netherlands': 'NL', 'holland': 'NL', 'the netherlands': 'NL',
+  'belgium': 'BE',
+  'switzerland': 'CH',
+  'austria': 'AT',
+  'sweden': 'SE',
+  'norway': 'NO',
+  'denmark': 'DK',
+  'finland': 'FI',
+  'iceland': 'IS',
+  'poland': 'PL',
+  'czech republic': 'CZ', 'czechia': 'CZ',
+  'slovakia': 'SK',
+  'hungary': 'HU',
+  'romania': 'RO',
+  'bulgaria': 'BG',
+  'greece': 'GR',
+  'turkey': 'TR', 'türkiye': 'TR', 'turkiye': 'TR',
+  'russia': 'RU', 'russian federation': 'RU',
+  'ukraine': 'UA',
+  'belarus': 'BY',
+  'lithuania': 'LT',
+  'latvia': 'LV',
+  'estonia': 'EE',
+  'croatia': 'HR',
+  'serbia': 'RS',
+  'slovenia': 'SI',
+  'luxembourg': 'LU',
+  // Asia
+  'china': 'CN', 'people\'s republic of china': 'CN', 'prc': 'CN', 'mainland china': 'CN',
+  'hong kong': 'HK',
+  'taiwan': 'TW', 'republic of china': 'TW', 'roc': 'TW',
+  'japan': 'JP',
+  'south korea': 'KR', 'korea': 'KR', 'republic of korea': 'KR', 'rok': 'KR',
+  'north korea': 'KP', 'dprk': 'KP',
+  'india': 'IN',
+  'pakistan': 'PK',
+  'bangladesh': 'BD',
+  'sri lanka': 'LK',
+  'nepal': 'NP',
+  'singapore': 'SG',
+  'malaysia': 'MY',
+  'indonesia': 'ID',
+  'philippines': 'PH', 'the philippines': 'PH',
+  'thailand': 'TH',
+  'vietnam': 'VN', 'viet nam': 'VN',
+  'cambodia': 'KH',
+  'laos': 'LA',
+  'myanmar': 'MM', 'burma': 'MM',
+  'mongolia': 'MN',
+  'kazakhstan': 'KZ',
+  'uzbekistan': 'UZ',
+  'iran': 'IR',
+  'iraq': 'IQ',
+  'israel': 'IL',
+  'palestine': 'PS',
+  'lebanon': 'LB',
+  'syria': 'SY',
+  'jordan': 'JO',
+  'saudi arabia': 'SA', 'ksa': 'SA',
+  'united arab emirates': 'AE', 'uae': 'AE', 'u.a.e.': 'AE',
+  'qatar': 'QA',
+  'kuwait': 'KW',
+  'bahrain': 'BH',
+  'oman': 'OM',
+  'yemen': 'YE',
+  'afghanistan': 'AF',
+  // Oceania
+  'australia': 'AU',
+  'new zealand': 'NZ',
+  // South America
+  'brazil': 'BR', 'brasil': 'BR',
+  'argentina': 'AR',
+  'chile': 'CL',
+  'colombia': 'CO',
+  'peru': 'PE',
+  'venezuela': 'VE',
+  'ecuador': 'EC',
+  'uruguay': 'UY',
+  'paraguay': 'PY',
+  'bolivia': 'BO',
+  // Africa
+  'south africa': 'ZA',
+  'egypt': 'EG',
+  'nigeria': 'NG',
+  'kenya': 'KE',
+  'ethiopia': 'ET',
+  'morocco': 'MA',
+  'algeria': 'DZ',
+  'tunisia': 'TN',
+  'ghana': 'GH',
+  'tanzania': 'TZ',
+  'uganda': 'UG',
+  'senegal': 'SN',
+  'cameroon': 'CM',
+  'zimbabwe': 'ZW',
+  'angola': 'AO',
+  // Caribbean / Central America
+  'costa rica': 'CR',
+  'panama': 'PA',
+  'guatemala': 'GT',
+  'honduras': 'HN',
+  'el salvador': 'SV',
+  'nicaragua': 'NI',
+  'cuba': 'CU',
+  'dominican republic': 'DO',
+  'jamaica': 'JM',
+  'haiti': 'HT',
+  'puerto rico': 'PR',
+  'trinidad and tobago': 'TT',
+};
+
+// Map a free-form country string to a 2-letter ISO code.
+// - Already-shaped ISO-2 codes (case-insensitive) pass through, uppercased.
+// - 3-letter codes like "USA" / "GBR" are treated as common shorthand and looked up.
+// - Full names are looked up case-insensitive after trimming.
+// - Returns null for anything we can't classify.
+function normalizeCountry(input) {
+  if (!input || typeof input !== 'string') return null;
+  const s = input.trim();
+  if (s.length === 0) return null;
+  // Pure ISO-2 (e.g. "US", "cn") — accept directly.
+  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
+  // Full-name (or common abbreviation) lookup.
+  const hit = COUNTRY_TO_ISO[s.toLowerCase()];
+  return hit || null;
+}
+
 // Rate limits: key -> { max, window_seconds }
 const RATE_LIMITS = {
   'api:login': { max: 5, window: 300 },         // 5 login attempts per 5 min per IP
@@ -1053,6 +1197,10 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
     return jsonRes({ error: 'Name, institution, country, and role must use English/Latin letters only.' }, 400, cors);
   }
+  // Normalize country to ISO-2 if recognized — "United States" / "USA" / "us" all
+  // become "US". Falls back to original (trimmed) for unrecognized free-text so we
+  // don't reject countries we haven't enumerated.
+  const normalizedCountry = normalizeCountry(userCountry) || userCountry.trim();
   // Password strength
   const pw = checkPasswordStrength(password);
   if (!pw.ok) return jsonRes({ error: pw.error }, 400, cors);
@@ -1072,7 +1220,7 @@ async function handleRegister(request, env, cors, ip, ua, country) {
 
   await env.DB.prepare(
     'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
-  ).bind(name, email.toLowerCase(), passwordHash, institution, userCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
+  ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
 
@@ -1927,13 +2075,15 @@ async function handleAdmin(path, request, env, cors, ip) {
     if (body.hide_institution !== undefined) { updates.push('hide_institution = ?'); values.push(body.hide_institution ? 1 : 0); }
     // Profile fields — admin can correct typos / unify naming for stats display.
     // Each must pass the Latin-only check (same rule as /v1/auth/register).
+    // Country is also normalized to ISO-2 if recognizable.
     for (const f of ['name', 'institution', 'country', 'role']) {
       if (typeof body[f] === 'string') {
-        const v = body[f].trim();
+        let v = body[f].trim();
         if (v.length === 0) continue; // skip empty (don't wipe field)
         if (!isLatinish(v)) {
           return jsonRes({ error: `${f} must use English/Latin letters only.` }, 400, cors);
         }
+        if (f === 'country') v = normalizeCountry(v) || v;
         updates.push(`${f} = ?`);
         values.push(v);
       }
@@ -2052,18 +2202,18 @@ async function handlePublicStats(env, cors) {
   // Country codes from login_history (Cloudflare cf-ipcountry)
   const accessCountries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(DISTINCT user_id) as users FROM login_history WHERE country IS NOT NULL AND country != "" AND country != "unknown" GROUP BY UPPER(country)').all();
 
-  // Merge registered user country data. Only accept ISO-shaped codes (2-3
-  // ASCII letters). The previous `length <= 3` check passed CJK strings
-  // like "中国" (length 2 in UTF-16) and corrupted byte sequences, which
-  // ended up rendering as broken badges under the world map.
-  const ISO = /^[A-Za-z]{2,3}$/;
+  // Merge registered user country data. Normalize each row's country to an
+  // ISO-2 code via normalizeCountry() so "United States", "USA", "U.S." and
+  // "us" all collapse to "US". Anything that fails normalization (CJK,
+  // corrupted bytes, free-text we don't recognize) is dropped before
+  // reaching the world map renderer.
   const userCountryMap = {};
-  for (const row of countries.results) {
-    if (row.country && ISO.test(row.country)) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
-  }
-  for (const row of accessCountries.results) {
-    if (row.country && ISO.test(row.country)) userCountryMap[row.country] = (userCountryMap[row.country] || 0) + row.users;
-  }
+  const accumulate = (country, users) => {
+    const code = normalizeCountry(country);
+    if (code) userCountryMap[code] = (userCountryMap[code] || 0) + users;
+  };
+  for (const row of countries.results) accumulate(row.country, row.users);
+  for (const row of accessCountries.results) accumulate(row.country, row.users);
 
   // Cloudflare Analytics — cumulative visitor countries since site launch
   let visitorCountryMap = {};
