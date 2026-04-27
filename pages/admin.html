@@ -496,11 +496,22 @@ async function loadUsers() {
 }
 
 // ── Show user detail ──
+let userEditOriginal = null;
 async function showUser(id) {
   try {
     const r = await fetch(API + '/v1/admin/users/' + id, { headers: authHeaders() });
     const d = await r.json();
     const u = d.user;
+    // Snapshot the original values so saveUserProfile() can send diffs only.
+    // Without this, an admin editing just "country" would also re-submit the
+    // user's original name/institution — which fails validation if those
+    // happen to contain non-Latin characters from a pre-validator signup.
+    userEditOriginal = {
+      name: u.name || '',
+      institution: u.institution || '',
+      country: u.country || '',
+      role: u.role || '',
+    };
 
     const logins = d.recent_logins.map(l =>
       '<tr><td>' + fmtCT(l.timestamp) + '</td><td>' + l.ip_address + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
@@ -584,12 +595,24 @@ async function showUser(id) {
 
 async function saveUserProfile(id) {
   const out = document.getElementById('user-edit-result');
-  const body = {
-    name: document.getElementById('user-edit-name').value,
-    institution: document.getElementById('user-edit-institution').value,
-    country: document.getElementById('user-edit-country').value,
-    role: document.getElementById('user-edit-role').value,
+  // Build a diff against the snapshot from showUser(). Only include fields
+  // the admin actually changed — the validator on the server then only runs
+  // against new values.
+  const current = {
+    name: document.getElementById('user-edit-name').value.trim(),
+    institution: document.getElementById('user-edit-institution').value.trim(),
+    country: document.getElementById('user-edit-country').value.trim(),
+    role: document.getElementById('user-edit-role').value.trim(),
   };
+  const body = {};
+  for (const k of ['name', 'institution', 'country', 'role']) {
+    if (userEditOriginal && current[k] !== userEditOriginal[k]) body[k] = current[k];
+  }
+  if (Object.keys(body).length === 0) {
+    out.textContent = 'No changes.';
+    out.style.color = 'var(--gray-500)';
+    return;
+  }
   out.textContent = 'Saving...';
   out.style.color = 'var(--gray-500)';
   try {
@@ -600,8 +623,10 @@ async function saveUserProfile(id) {
     });
     const d = await r.json();
     if (r.ok) {
-      out.textContent = 'Saved.';
+      out.textContent = 'Saved (' + Object.keys(body).join(', ') + ').';
       out.style.color = '#059669';
+      // Update snapshot so subsequent saves diff against the new state.
+      Object.assign(userEditOriginal, body);
       loadUsers();
     } else {
       out.textContent = d.error || 'Failed';
