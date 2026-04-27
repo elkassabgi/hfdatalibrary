@@ -921,6 +921,14 @@ async function registerUser() {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Please fill in all fields.</p>';
     return;
   }
+  // Profile fields render publicly (stats page world map, institutions list).
+  // Reject non-Latin characters before submission — server enforces same rule.
+  const latinish = s => /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s);
+  if (!latinish(name) || !latinish(institution) || !latinish(country) || !latinish(role)) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must use English/Latin letters only (e.g. write "China", not "中国").</p>';
+    return;
+  }
   if (password.length < 8) {
     result.style.display = 'block';
     result.innerHTML = '<p style="color:var(--red); margin:0;">Password must be at least 8 characters.</p>';

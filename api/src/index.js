@@ -216,6 +216,16 @@ async function checkRateLimit(env, key, ruleName) {
   return { ok: true, remaining: rule.max - existing.count - 1 };
 }
 
+// Profile fields are displayed publicly (stats page world map, institutions list,
+// admin emails). Restrict them to Latin script + digits + common punctuation so a
+// user submitting "中国" doesn't render Chinese characters under the world map.
+// Allows accented Latin (é, ü, ñ, etc.) for European institutions/names.
+function isLatinish(s) {
+  if (typeof s !== 'string' || s.length === 0) return false;
+  return /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s)
+      && /[\p{Script=Latin}]/u.test(s); // require at least one actual letter
+}
+
 function rateLimitResponse(retryAfter, cors) {
   return new Response(
     JSON.stringify({ error: `Rate limit exceeded. Try again in ${retryAfter} seconds.` }),
@@ -1037,6 +1047,11 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // Field length limits
   if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) {
     return jsonRes({ error: 'One or more fields exceed length limits' }, 400, cors);
+  }
+  // Latin/English characters only — these strings render publicly on the stats page
+  // (world map, institutions list) and in admin emails. Reject CJK, Cyrillic, Arabic, etc.
+  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
+    return jsonRes({ error: 'Name, institution, country, and role must use English/Latin letters only.' }, 400, cors);
   }
   // Password strength
   const pw = checkPasswordStrength(password);
@@ -1911,10 +1926,18 @@ async function handleAdmin(path, request, env, cors, ip) {
     if (body.is_vip !== undefined) { updates.push('is_vip = ?'); values.push(body.is_vip ? 1 : 0); }
     if (body.hide_institution !== undefined) { updates.push('hide_institution = ?'); values.push(body.hide_institution ? 1 : 0); }
     // Profile fields — admin can correct typos / unify naming for stats display.
-    if (typeof body.name === 'string' && body.name.trim().length > 0) { updates.push('name = ?'); values.push(body.name.trim()); }
-    if (typeof body.institution === 'string' && body.institution.trim().length > 0) { updates.push('institution = ?'); values.push(body.institution.trim()); }
-    if (typeof body.country === 'string' && body.country.trim().length > 0) { updates.push('country = ?'); values.push(body.country.trim()); }
-    if (typeof body.role === 'string' && body.role.trim().length > 0) { updates.push('role = ?'); values.push(body.role.trim()); }
+    // Each must pass the Latin-only check (same rule as /v1/auth/register).
+    for (const f of ['name', 'institution', 'country', 'role']) {
+      if (typeof body[f] === 'string') {
+        const v = body[f].trim();
+        if (v.length === 0) continue; // skip empty (don't wipe field)
+        if (!isLatinish(v)) {
+          return jsonRes({ error: `${f} must use English/Latin letters only.` }, 400, cors);
+        }
+        updates.push(`${f} = ?`);
+        values.push(v);
+      }
+    }
 
     if (updates.length === 0) return jsonRes({ error: 'No updates provided' }, 400, cors);
 
