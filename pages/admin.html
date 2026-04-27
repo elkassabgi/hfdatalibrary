@@ -474,20 +474,25 @@ async function loadUsers() {
     if (r.status === 403) { adminLogout(); return; }
     const d = await r.json();
 
-    const html = d.users.map(u =>
-      '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;">' +
-        '<div><strong>' + esc(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
+    // Latin-only check matching the server-side validator. Used to flag
+    // pre-validator records so the admin can find and clean them up.
+    const isLatinish = s => !s || (/^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s));
+    const html = d.users.map(u => {
+      const dirty = !isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role);
+      const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
+      return '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;' + (dirty ? ' background:#fffbeb; border-left:3px solid #f59e0b;' : '') + '">' +
+        '<div><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
         '<div style="font-size:0.8rem;">' + esc(u.email) + '</div>' +
-        '<div>' + esc(u.institution) + '</div>' +
-        '<div>' + esc(u.country) + '</div>' +
-        '<div>' + esc(u.role) + '</div>' +
+        '<div>' + dirtyMark(u.institution) + '</div>' +
+        '<div>' + dirtyMark(u.country) + '</div>' +
+        '<div>' + dirtyMark(u.role) + '</div>' +
         '<div class="mono">' + u.download_count + '</div>' +
         '<div>' +
           (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
           (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') +
         '</div>' +
-      '</div>'
-    ).join('');
+      '</div>';
+    }).join('');
 
     document.getElementById('users-list').innerHTML = html || '<div style="padding:1rem; color:var(--gray-400);">No users.</div>';
   } catch (e) {
