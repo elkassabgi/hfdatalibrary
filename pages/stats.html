@@ -182,8 +182,19 @@ var COUNTRY_NAMES = {
 function countryName(code) { return COUNTRY_NAMES[code] || code; }
 
 function drawRegionsMap() {
-  var userCountries = mapData.users;
+  var userCountries = Object.assign({}, mapData.users);
   var visitorCountries = mapData.visitors;
+
+  // PINNED_USER_COUNTRIES: ISO-2 codes we always want shown on the map and
+  // in the registered-user badge list, even if no user record currently
+  // resolves to them. Used when the data source under-represents real
+  // user presence (e.g. a Palestinian user whose account is registered
+  // with country=Israel because they cannot access the platform from PS).
+  var PINNED_USER_COUNTRIES = ['PS'];
+  for (var pinned of PINNED_USER_COUNTRIES) {
+    if (!userCountries[pinned]) userCountries[pinned] = 1;
+  }
+
   var allCodes = new Set([...Object.keys(userCountries), ...Object.keys(visitorCountries)]);
   if (allCodes.size === 0) return;
 
@@ -205,17 +216,12 @@ function drawRegionsMap() {
   chart.draw(data, options);
 
   // Build country badges — registered users first (dark), then visitors (light).
-  // HIDE_FROM_BADGES suppresses specific country codes from the badge list
-  // *without* removing them from the map data above. The country tile keeps
-  // its highlight color; only the chip below the map is hidden. Used when
-  // there's a legitimate registered/visitor presence we don't want surfaced
-  // in the public list (e.g. a single user we don't want flagged).
-  var HIDE_FROM_BADGES = new Set(['IL']);
+  // userCountries already includes PINNED_USER_COUNTRIES from the block above,
+  // so pinned codes will appear in the dark-blue (registered) badge list.
   var userSorted = Object.entries(userCountries)
-    .filter(function(e) { return !HIDE_FROM_BADGES.has(e[0]); })
     .sort(function(a,b) { return b[1]-a[1]; });
   var visitorOnly = Object.entries(visitorCountries)
-    .filter(function(e) { return !userCountries[e[0]] && !HIDE_FROM_BADGES.has(e[0]); })
+    .filter(function(e) { return !userCountries[e[0]]; })
     .sort(function(a,b) { return b[1]-a[1]; });
 
   var badges = document.getElementById('country-badges');
