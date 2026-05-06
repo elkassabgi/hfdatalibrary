@@ -2199,8 +2199,20 @@ async function handlePublicStats(env, cors) {
   // Registrations per week (last 12 weeks)
   const regTrend = await env.DB.prepare("SELECT strftime('%Y-W%W', created_at) as week, COUNT(*) as registrations FROM users WHERE created_at > datetime('now', '-84 days') GROUP BY week ORDER BY week").all();
 
-  // Country codes from login_history (Cloudflare cf-ipcountry)
-  const accessCountries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(DISTINCT user_id) as users FROM login_history WHERE country IS NOT NULL AND country != "" AND country != "unknown" GROUP BY UPPER(country)').all();
+  // Country codes from login_history (Cloudflare cf-ipcountry).
+  // Inner-join users so deactivated/revoked users stop contributing to the
+  // registered-user country counts. Without this, an admin "deleting" the
+  // only IL user via Revoke Access still left IL=2 in the country map
+  // because their historical login_history rows kept being counted.
+  // Visitor traffic from the same country (via Cloudflare Analytics) still
+  // surfaces as a light-blue badge / map tile, so the country isn't lost
+  // from the visualization — just demoted from registered-user to visitor.
+  const accessCountries = await env.DB.prepare(
+    'SELECT UPPER(lh.country) as country, COUNT(DISTINCT lh.user_id) as users ' +
+    'FROM login_history lh JOIN users u ON lh.user_id = u.id ' +
+    'WHERE u.is_active = 1 AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
+    'GROUP BY UPPER(lh.country)'
+  ).all();
 
   // Merge registered user country data. Normalize each row's country to an
   // ISO-2 code via normalizeCountry() so "United States", "USA", "U.S." and
