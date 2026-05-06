@@ -204,10 +204,18 @@ function drawRegionsMap() {
   var chart = new google.visualization.GeoChart(document.getElementById('world-map'));
   chart.draw(data, options);
 
-  // Build country badges — registered users first (dark), then visitors (light)
-  var userSorted = Object.entries(userCountries).sort(function(a,b) { return b[1]-a[1]; });
+  // Build country badges — registered users first (dark), then visitors (light).
+  // HIDE_FROM_BADGES suppresses specific country codes from the badge list
+  // *without* removing them from the map data above. The country tile keeps
+  // its highlight color; only the chip below the map is hidden. Used when
+  // there's a legitimate registered/visitor presence we don't want surfaced
+  // in the public list (e.g. a single user we don't want flagged).
+  var HIDE_FROM_BADGES = new Set(['IL']);
+  var userSorted = Object.entries(userCountries)
+    .filter(function(e) { return !HIDE_FROM_BADGES.has(e[0]); })
+    .sort(function(a,b) { return b[1]-a[1]; });
   var visitorOnly = Object.entries(visitorCountries)
-    .filter(function(e) { return !userCountries[e[0]]; })
+    .filter(function(e) { return !userCountries[e[0]] && !HIDE_FROM_BADGES.has(e[0]); })
     .sort(function(a,b) { return b[1]-a[1]; });
 
   var badges = document.getElementById('country-badges');
