@@ -2184,8 +2184,25 @@ async function handlePublicStats(env, cors) {
   const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
   const weekDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-7 days')").first();
 
-  // Countries (from users table — registered users)
-  const countries = await env.DB.prepare('SELECT UPPER(country) as country, COUNT(*) as users FROM users WHERE is_active = 1 AND country != "" GROUP BY UPPER(country) ORDER BY users DESC').all();
+  // Per-(user, country) DISTINCT pairs across both signals an active user
+  // contributes to: their self-declared profile country, and any country
+  // they've actually logged in from (cf-ipcountry from login_history).
+  // UNION dedupes — if the user typed "IL" AND logged in from IL, they
+  // count once for IL, not twice. UNION ALL would double-count.
+  // Wrapped as a CTE so the GROUP BY counts distinct users per country.
+  const countries = await env.DB.prepare(
+    'WITH user_countries AS ( ' +
+    '  SELECT id AS user_id, UPPER(country) AS country FROM users ' +
+    '    WHERE is_active = 1 AND country != "" ' +
+    '  UNION ' +
+    '  SELECT lh.user_id, UPPER(lh.country) FROM login_history lh ' +
+    '    JOIN users u ON lh.user_id = u.id ' +
+    '    WHERE u.is_active = 1 AND lh.country IS NOT NULL ' +
+    '      AND lh.country != "" AND lh.country != "unknown" ' +
+    ') ' +
+    'SELECT country, COUNT(DISTINCT user_id) as users FROM user_countries ' +
+    'GROUP BY country ORDER BY users DESC'
+  ).all();
 
   // Distinct institutions (exclude hidden ones)
   const institutions = await env.DB.prepare('SELECT institution, COUNT(*) as users FROM users WHERE is_active = 1 AND institution != "" AND COALESCE(hide_institution, 0) = 0 GROUP BY institution ORDER BY users DESC LIMIT 50').all();
@@ -2199,33 +2216,15 @@ async function handlePublicStats(env, cors) {
   // Registrations per week (last 12 weeks)
   const regTrend = await env.DB.prepare("SELECT strftime('%Y-W%W', created_at) as week, COUNT(*) as registrations FROM users WHERE created_at > datetime('now', '-84 days') GROUP BY week ORDER BY week").all();
 
-  // Country codes from login_history (Cloudflare cf-ipcountry).
-  // Inner-join users so deactivated/revoked users stop contributing to the
-  // registered-user country counts. Without this, an admin "deleting" the
-  // only IL user via Revoke Access still left IL=2 in the country map
-  // because their historical login_history rows kept being counted.
-  // Visitor traffic from the same country (via Cloudflare Analytics) still
-  // surfaces as a light-blue badge / map tile, so the country isn't lost
-  // from the visualization — just demoted from registered-user to visitor.
-  const accessCountries = await env.DB.prepare(
-    'SELECT UPPER(lh.country) as country, COUNT(DISTINCT lh.user_id) as users ' +
-    'FROM login_history lh JOIN users u ON lh.user_id = u.id ' +
-    'WHERE u.is_active = 1 AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
-    'GROUP BY UPPER(lh.country)'
-  ).all();
-
-  // Merge registered user country data. Normalize each row's country to an
-  // ISO-2 code via normalizeCountry() so "United States", "USA", "U.S." and
-  // "us" all collapse to "US". Anything that fails normalization (CJK,
-  // corrupted bytes, free-text we don't recognize) is dropped before
-  // reaching the world map renderer.
+  // Normalize each row's country to an ISO-2 code via normalizeCountry() so
+  // "United States", "USA", "U.S." and "us" all collapse to "US". Anything
+  // that fails normalization (CJK, corrupted bytes, free-text we don't
+  // recognize) is dropped before reaching the world map renderer.
   const userCountryMap = {};
-  const accumulate = (country, users) => {
-    const code = normalizeCountry(country);
-    if (code) userCountryMap[code] = (userCountryMap[code] || 0) + users;
-  };
-  for (const row of countries.results) accumulate(row.country, row.users);
-  for (const row of accessCountries.results) accumulate(row.country, row.users);
+  for (const row of countries.results) {
+    const code = normalizeCountry(row.country);
+    if (code) userCountryMap[code] = (userCountryMap[code] || 0) + row.users;
+  }
 
   // Cloudflare Analytics — cumulative visitor countries since site launch
   let visitorCountryMap = {};
