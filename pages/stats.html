@@ -307,6 +307,9 @@ async function loadStats() {
       'Saint Peter\'s University': 'saintpeters.edu',
       'Erasmus Universiteit Rotterdam': 'eur.nl',
       'Stanford': 'stanford.edu',
+      'University of Manchester': 'manchester.ac.uk',
+      'Singapore university of technology and design': 'sutd.edu.sg',
+      'Hongkong university': 'hku.hk',
       'Harvard University': 'harvard.edu',
       'MIT': 'mit.edu',
       'Massachusetts Institute of Technology': 'mit.edu',
@@ -362,10 +365,61 @@ async function loadStats() {
         'onerror="this.style.display=\'none\'" alt="">';
     }
 
+    // Prestige ordering for the institutions panel. Lower rank = higher
+    // prestige, surfaces toward the top of the list. Loosely based on QS
+    // World University Rankings 2024-25 (general universities) with
+    // specialty/business schools placed by domain reputation (Copenhagen
+    // Business School strong in business; MIPT strong in physics; etc.).
+    // Aliases for the same school (e.g. "Stanford" / "Stanford University",
+    // "Hongkong university" / "University of Hong Kong") share a rank.
+    // Anything not in this map falls to the bottom and sorts alphabetically.
+    var INST_PRESTIGE = {
+      'Stanford University': 10, 'Stanford': 10,
+      'National University of Singapore': 20,
+      'Cornell University': 30,
+      'University of Hong Kong': 40, 'Hongkong university': 40,
+      'University of Sydney': 50,
+      'University of Manchester': 60,
+      'University of Michigan': 70,
+      'University of Maryland, College Park': 80,
+      'Georgia Institute of Technology': 90,
+      'University of Illinois': 100,
+      'University of Nottingham': 110,
+      'University of North Carolina': 120,
+      'Erasmus Universiteit Rotterdam': 130,
+      'University of Wisconsin-Madison': 140,
+      'University of Minnesota': 150,
+      'Ohio State University': 160,
+      'Moscow Institute of Physics and Technology': 170,
+      'Copenhagen Business School': 180,
+      'Singapore university of technology and design': 190,
+      'Toronto Metropolitan University': 200,
+      'Renmin University of China': 210,
+      'Shanghai University of Finance and Economics': 220,
+      'BITS Pilani': 230,
+      'Konkuk University Graduate School': 240,
+      'Central China Normal University': 250,
+      'University of Portsmouth': 260,
+      'University of Arkansas': 270,
+      'Texas State University': 280,
+      'University of Central Arkansas': 290,
+      'University of Southern Mississippi': 300,
+      'Yanan University': 310,
+      'Saint Peter\'s University': 320,
+      'Texas A&M international University': 330,
+      'University of Medicine and Pharmacy of Craiova': 340,
+    };
+
     if (d.institutions && d.institutions.length > 0) {
+      var sorted = d.institutions.slice().sort(function(a, b) {
+        var ar = INST_PRESTIGE[a.institution] || 9999;
+        var br = INST_PRESTIGE[b.institution] || 9999;
+        if (ar !== br) return ar - br;
+        return a.institution.localeCompare(b.institution);
+      });
       document.getElementById('institution-list').innerHTML =
         '<div class="inst-list">' +
-        d.institutions.slice(0, 20).map(i =>
+        sorted.slice(0, 20).map(i =>
           '<div style="display:flex; align-items:center; padding:0.3rem 0;">' + instIcon(i.institution) + '<span class="inst-name">' + i.institution + '</span></div>'
         ).join('') +
         '</div>';
