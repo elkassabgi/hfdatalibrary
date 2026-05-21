@@ -29,6 +29,22 @@
     .inst-list { font-size:0.9rem; line-height:2; }
     .inst-list .inst-name { color:var(--navy); font-weight:500; }
     .inst-list .inst-count { color:var(--gray-400); font-family:var(--font-mono); font-size:0.8rem; margin-left:0.5rem; }
+    .inst-more-toggle {
+      display:flex; align-items:center; padding:0.3rem 0; margin-top:0.5rem;
+      cursor:pointer; user-select:none; color:var(--navy); font-weight:500;
+      border-top:1px solid var(--gray-100); padding-top:0.6rem;
+      transition: color 0.15s;
+    }
+    .inst-more-toggle:hover { color:var(--gold); }
+    .inst-more-toggle:hover .inst-more-sign { background:var(--navy); color:var(--gold); border-color:var(--navy); }
+    .inst-more-sign {
+      display:inline-flex; align-items:center; justify-content:center;
+      width:20px; height:20px; margin-right:8px;
+      border:1px solid var(--navy); border-radius:3px;
+      font-size:0.95rem; line-height:1; font-weight:600; color:var(--navy);
+      background:#fff;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
   </style>
 </head>
 <body>
@@ -440,12 +456,8 @@ async function loadStats() {
       var html = '<div class="inst-list">' + top.map(instRow).join('');
       if (rest.length > 0) {
         html +=
-          '<div id="inst-more-toggle" onclick="toggleInstMore()" ' +
-            'style="display:flex; align-items:center; padding:0.3rem 0; margin-top:0.25rem; ' +
-            'cursor:pointer; color:var(--gray-500); font-weight:500; user-select:none;">' +
-            '<span id="inst-more-sign" style="display:inline-flex; align-items:center; justify-content:center; ' +
-              'width:20px; height:20px; margin-right:8px; border:1px solid var(--gray-300); ' +
-              'border-radius:3px; font-size:0.9rem; line-height:1; color:var(--navy);">+</span>' +
+          '<div id="inst-more-toggle" class="inst-more-toggle" onclick="toggleInstMore()">' +
+            '<span id="inst-more-sign" class="inst-more-sign">+</span>' +
             '<span>Other schools (' + rest.length + ')</span>' +
           '</div>' +
           '<div id="inst-more" style="display:none;">' +
