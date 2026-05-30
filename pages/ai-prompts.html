@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Prompts — HF Data Library</title>
+  <meta name="description" content="Copy-paste prompts for ChatGPT, Claude, and other AI assistants to download HF Data Library 1-minute OHLCV data, build datasets, and run microstructure analyses without writing code yourself.">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/ai-prompts">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .step-grid {
+      display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap:1rem; margin-bottom:2rem;
+    }
+    .step-card {
+      padding:1.25rem; background:var(--gray-50);
+      border:1px solid var(--gray-200); border-radius:8px;
+    }
+    .step-num {
+      display:inline-flex; align-items:center; justify-content:center;
+      width:28px; height:28px; border-radius:50%;
+      background:var(--navy); color:var(--gold);
+      font-weight:700; font-size:0.9rem; margin-bottom:0.5rem;
+    }
+    .step-title { font-weight:600; color:var(--navy); margin-bottom:0.35rem; }
+    .step-body { font-size:0.9rem; color:var(--gray-600); line-height:1.5; }
+    .prompt-card {
+      border:1px solid var(--gray-200); border-radius:8px;
+      margin-bottom:2rem; overflow:hidden;
+      background:#fff;
+    }
+    .prompt-head {
+      display:flex; justify-content:space-between; align-items:flex-start;
+      padding:1.25rem 1.25rem 0.75rem; gap:1rem; flex-wrap:wrap;
+    }
+    .prompt-head-text { flex:1; min-width:240px; }
+    .prompt-head h3 { margin:0 0 0.25rem; color:var(--navy); }
+    .prompt-head p { margin:0; color:var(--gray-500); font-size:0.9rem; line-height:1.45; }
+    .copy-btn {
+      flex-shrink:0;
+      display:inline-flex; align-items:center; gap:0.4rem;
+      padding:0.45rem 0.85rem; border-radius:6px;
+      background:#fff; border:1px solid var(--navy);
+      color:var(--navy); font-weight:600; font-size:0.85rem;
+      cursor:pointer; transition: background 0.15s, color 0.15s;
+      font-family: var(--font-sans);
+    }
+    .copy-btn:hover { background:var(--navy); color:var(--gold); }
+    .copy-btn.copied { background:#059669; border-color:#059669; color:#fff; }
+    .prompt-body pre {
+      margin:0; padding:1.25rem;
+      background:var(--gray-50);
+      border-top:1px solid var(--gray-200);
+      font-family: var(--font-mono); font-size:0.85rem;
+      line-height:1.55; color:var(--gray-800);
+      white-space:pre-wrap; word-wrap:break-word;
+      overflow-x:auto;
+    }
+    .prompt-foot {
+      padding:0.75rem 1.25rem;
+      background:#fdfdfd; border-top:1px solid var(--gray-100);
+      font-size:0.8rem; color:var(--gray-500); line-height:1.5;
+    }
+    .placeholder {
+      display:inline-block; padding:0.05em 0.4em; border-radius:3px;
+      background:#fef3c7; color:#92400e; font-family:var(--font-mono);
+      font-size:0.85em; font-weight:600;
+    }
+    .warning-box {
+      background:#fef2f2; border-left:4px solid #dc2626;
+      padding:1rem 1.25rem; border-radius:0 6px 6px 0;
+      margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55;
+    }
+    .info-box {
+      background:#eff6ff; border-left:4px solid var(--blue);
+      padding:1rem 1.25rem; border-radius:0 6px 6px 0;
+      margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55;
+    }
+    .tip-list { padding-left:1.5rem; line-height:1.7; color:var(--gray-700); }
+    .tip-list li { margin-bottom:0.5rem; }
+    .tip-list code { font-family:var(--font-mono); font-size:0.85em; background:var(--gray-100); padding:0.05em 0.35em; border-radius:3px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data">Data</a></li>
+      <li><a href="tickers">Tickers</a></li>
+      <li><a href="docs">Documentation</a></li>
+      <li><a href="api">API</a></li>
+      <li><a href="download">Download</a></li>
+      <li><a href="code">Code</a></li>
+      <li><a href="ai-prompts" class="active">AI Prompts</a></li>
+      <li><a href="cite">Cite</a></li>
+      <li><a href="stats">Stats</a></li>
+      <li><a href="contact">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <h1 style="color:#fff; margin-bottom:0.5rem;">AI Prompts</h1>
+    <p style="color:rgba(255,255,255,0.8); font-size:1.1rem; margin:0; max-width:680px;">
+      Copy-paste prompts for ChatGPT, Claude, and other AI assistants. Hand one to the AI, swap in your API key and tickers, and let it do the download and analysis for you.
+    </p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+
+    <h2>How to use this page</h2>
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <div class="step-title">Get an API key</div>
+        <div class="step-body">Register at the <a href="download#register">Download page</a>. Your key looks like <code style="font-family:var(--font-mono);">hfd_…</code>. Free, instant, 100 downloads/minute.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <div class="step-title">Copy a prompt</div>
+        <div class="step-body">Each card below has a <strong>Copy</strong> button in the top right. Pick the scenario closest to what you want and click it.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <div class="step-title">Replace the placeholders</div>
+        <div class="step-body">Yellow-pill tokens like <span class="placeholder">YOUR_API_KEY</span> and <span class="placeholder">AAPL</span> are meant to be edited. Swap in your real values.</div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">4</div>
+        <div class="step-title">Paste into the AI</div>
+        <div class="step-body">Use a model that can run code (Claude with computer use, ChatGPT Code Interpreter, Claude Code). Chat-only models will hand you a curl command — you run it.</div>
+      </div>
+    </div>
+
+    <div class="warning-box">
+      <strong>Never paste your API key into a public or shared chat.</strong> Use a private session. If you suspect leakage, regenerate your key from <a href="account">your account page</a> — old keys revoke instantly.
+    </div>
+
+    <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h2>Prompts</h2>
+
+    <!-- ── Prompt 1: Single ticker, full history ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>1. Download one ticker, full history</h3>
+          <p>Pulls the entire historical record (2002&ndash;present) for a single ticker as a parquet file, loads it with pandas, and prints a summary.</p>
+        </div>
+        <button class="copy-btn" data-target="p1">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p1">Download high-frequency stock data from the HF Data Library and give me a summary.
+
+Configuration:
+  ticker     = AAPL
+  version    = clean        # "clean" = filtered, "raw" = as-received
+  api_key    = YOUR_API_KEY
+
+Step 1 — Download the parquet file (entire history, ~24 years, single request):
+
+  curl -H "X-API-Key: YOUR_API_KEY" \
+       "https://api.hfdatalibrary.com/v1/bars/AAPL?version=clean" \
+       -o AAPL.parquet
+
+Step 2 — Load with pandas:
+
+  import pandas as pd
+  df = pd.read_parquet("AAPL.parquet")
+
+Columns: datetime (Eastern Time, tz-naive), open, high, low, close, volume, source.
+"source" is "pitrading" for pre-2022-03-04 and "iex" for post-2022-03-07.
+
+Step 3 — Report:
+  - total bars
+  - date range (first and last datetime)
+  - mean / min / max close price
+  - number of trading days with at least one bar
+  - first 5 rows</pre></div>
+      <div class="prompt-foot">
+        Swap <span class="placeholder">AAPL</span> for any ticker (e.g. NVDA, MSFT, SPY). Use <span class="placeholder">raw</span> instead of <span class="placeholder">clean</span> to get the unfiltered version. See the <a href="tickers">tickers page</a> for the full universe.
+      </div>
+    </div>
+
+    <!-- ── Prompt 2: Multiple tickers ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>2. Download several tickers and combine them</h3>
+          <p>Loops through a list of tickers, downloads each, and concatenates into a single long-format DataFrame.</p>
+        </div>
+        <button class="copy-btn" data-target="p2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p2">Download one-minute OHLCV data from the HF Data Library for several tickers and combine them into a single DataFrame.
+
+Configuration:
+  tickers    = AAPL, MSFT, GOOG, NVDA, AMZN, META, TSLA
+  version    = clean
+  api_key    = YOUR_API_KEY
+
+For each ticker, fetch the parquet:
+
+  curl -H "X-API-Key: YOUR_API_KEY" \
+       "https://api.hfdatalibrary.com/v1/bars/${TICKER}?version=clean" \
+       -o "${TICKER}.parquet"
+
+Combine in Python:
+
+  import pandas as pd, glob, os
+  dfs = []
+  for path in sorted(glob.glob("*.parquet")):
+      d = pd.read_parquet(path)
+      d["ticker"] = os.path.basename(path).replace(".parquet", "")
+      dfs.append(d)
+  combined = pd.concat(dfs, ignore_index=True)
+  combined = combined[["ticker", "datetime", "open", "high", "low", "close", "volume", "source"]]
+
+Report:
+  - bars per ticker
+  - shared (overlapping) date range across all tickers
+  - mean daily volume per ticker
+  - total combined row count and memory footprint</pre></div>
+      <div class="prompt-foot">
+        Pace the loop &mdash; the per-user rate limit is <strong>100 downloads/minute</strong>. For 50+ tickers, ask the AI to add a small <code style="font-family:var(--font-mono);">sleep</code> between requests.
+      </div>
+    </div>
+
+    <!-- ── Prompt 3: Date-range slice + RV ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>3. Date-range analysis (e.g., realized volatility for one quarter)</h3>
+          <p>Downloads a ticker, slices to a specific window client-side, and computes daily realized volatility from one-minute log returns.</p>
+        </div>
+        <button class="copy-btn" data-target="p3">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p3">Download HF Data Library data for one ticker, slice to a specific date range, and compute daily realized volatility.
+
+Configuration:
+  ticker     = NVDA
+  version    = clean
+  start_date = 2024-10-01
+  end_date   = 2024-12-31
+  api_key    = YOUR_API_KEY
+
+Step 1 — Download (the API ships entire-ticker files; slice client-side):
+
+  curl -H "X-API-Key: YOUR_API_KEY" \
+       "https://api.hfdatalibrary.com/v1/bars/NVDA?version=clean" \
+       -o NVDA.parquet
+
+Step 2 — Slice and compute realized variance (sum of squared 1-min log returns per day):
+
+  import numpy as np, pandas as pd
+  df = pd.read_parquet("NVDA.parquet")
+  df["datetime"] = pd.to_datetime(df["datetime"])
+  window = df[(df.datetime >= "2024-10-01") & (df.datetime < "2025-01-01")].copy()
+  window["date"] = window.datetime.dt.date
+  window["log_ret"] = np.log(window.close).diff()
+  daily_rv = window.groupby("date")["log_ret"].apply(lambda r: (r**2).sum())
+
+Report:
+  - highest-RV trading day and its value
+  - the 5 trading days with the largest absolute close-to-close moves
+  - mean RV across the window
+  - a simple chart of daily RV over the window</pre></div>
+      <div class="prompt-foot">
+        For methodology, point the AI at the <a href="docs">documentation page</a> &mdash; cleaning rules and version trade-offs (raw vs clean, gap handling) are spelled out there.
+      </div>
+    </div>
+
+    <!-- ── Prompt 4: chat-only AI, generate curl ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>4. Chat-only AI &mdash; just generate the curl command</h3>
+          <p>For ChatGPT, Claude, etc. without code execution. The AI writes the curl; you paste it into your terminal.</p>
+        </div>
+        <button class="copy-btn" data-target="p4">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p4">I have an HF Data Library API key (https://hfdatalibrary.com) and need a shell command to download 1-minute OHLCV bars for a ticker.
+
+Configuration:
+  ticker  = AAPL
+  version = clean
+  api_key = YOUR_API_KEY
+
+The endpoint is:
+  GET https://api.hfdatalibrary.com/v1/bars/{TICKER}?version={VERSION}
+  Header: X-API-Key: YOUR_API_KEY
+
+Give me a single curl command that:
+  1. authenticates with X-API-Key
+  2. downloads the parquet file to ./AAPL_clean.parquet
+  3. fails with a non-zero exit code on HTTP error (so the shell knows it broke)
+  4. prints a short success message with the file size on completion
+
+Also give me the equivalent commands in:
+  - Python (using requests, save to disk)
+  - R (using httr2 or curl, save to disk)
+
+No explanation, just the four commands.</pre></div>
+      <div class="prompt-foot">
+        Useful when you're on a phone or shared machine and can't run scripts. The AI returns the commands; you copy and paste into your own terminal.
+      </div>
+    </div>
+
+    <!-- ── Prompt 5: Build a bundle (sector/index) ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>5. Build a sector or index bundle</h3>
+          <p>Hand the AI a list of tickers (or ask it to fetch one), download each, and assemble a sector-level dataset.</p>
+        </div>
+        <button class="copy-btn" data-target="p5">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p5">Build a one-minute OHLCV dataset for a sector / index from the HF Data Library.
+
+Configuration:
+  bundle     = Magnificent 7        # or: S&P 500, Dow 30, sector-tech, sector-financials
+  tickers    = AAPL, MSFT, GOOG, NVDA, AMZN, META, TSLA
+  version    = clean
+  api_key    = YOUR_API_KEY
+  out_dir    = mag7_data/
+
+If the bundle name is recognized but no tickers are supplied, look up the constituents (you can use https://hfdatalibrary.com/pages/tickers as a reference or a public source for index membership).
+
+Download each ticker, throttled to ~1 request/second to stay under the 100/min rate limit:
+
+  mkdir -p mag7_data
+  for T in AAPL MSFT GOOG NVDA AMZN META TSLA; do
+    curl -H "X-API-Key: YOUR_API_KEY" \
+         "https://api.hfdatalibrary.com/v1/bars/${T}?version=clean" \
+         -o "mag7_data/${T}.parquet"
+    sleep 1
+  done
+
+Then in Python:
+  import pandas as pd, glob, os
+  files = sorted(glob.glob("mag7_data/*.parquet"))
+  combined = pd.concat([
+      pd.read_parquet(f).assign(ticker=os.path.basename(f).replace(".parquet",""))
+      for f in files
+  ], ignore_index=True)
+  combined.to_parquet("mag7_combined.parquet")
+
+Report total bars, ticker count, date range, and combined-file size.</pre></div>
+      <div class="prompt-foot">
+        For index constituents that change over time (S&amp;P 500, etc.), tell the AI the date you want the membership snapshot from &mdash; otherwise it may use today's roster for a 2008 analysis.
+      </div>
+    </div>
+
+    <!-- ── Prompt 6: Coarser timeframes ── -->
+    <div class="prompt-card">
+      <div class="prompt-head">
+        <div class="prompt-head-text">
+          <h3>6. Download a coarser timeframe (5-min, hourly, daily&hellip;)</h3>
+          <p>The 1-minute endpoint is the simplest path. For other timeframes you use the two-step signed-URL flow.</p>
+        </div>
+        <button class="copy-btn" data-target="p6">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1H4a1 1 0 0 0-1 1v1H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1h1a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-2 13H2V4h1v8a1 1 0 0 0 1 1h5v1zm2-2H4V2h7v10z"/></svg>
+          <span class="label">Copy</span>
+        </button>
+      </div>
+      <div class="prompt-body"><pre id="p6">Download HF Data Library data at a non-1-minute timeframe. The /v1/bars/{TICKER} endpoint only serves 1min — for other intervals, use the signed-URL flow.
+
+Configuration:
+  ticker     = SPY
+  version    = clean
+  timeframe  = 5min          # allowed: 1min, 5min, 15min, 30min, hourly, daily, weekly, monthly
+  format     = parquet       # or csv
+  api_key    = YOUR_API_KEY
+
+Step 1 — Request a signed download URL (the token is valid 10 minutes):
+
+  curl -H "Authorization: Bearer YOUR_API_KEY" \
+       "https://api.hfdatalibrary.com/v1/download-token/SPY?version=clean&timeframe=5min&format=parquet"
+
+Response (JSON):
+  {
+    "url": "https://api.hfdatalibrary.com/v1/download/SPY?token=...",
+    "expires_at": "...",
+    "version": "clean", "timeframe": "5min", "format": "parquet"
+  }
+
+Step 2 — Fetch the `url` value (no auth header needed; the token authorizes it):
+
+  curl "<paste the url here>" -o SPY_clean_5min.parquet
+
+Then load with pandas as in prompt 1. Show me the first 5 rows and confirm the inter-bar spacing is 5 minutes.</pre></div>
+      <div class="prompt-foot">
+        The 1-minute version is the canonical dataset. Pre-aggregated 5/15/30-min and hourly/daily/weekly/monthly files are derived from it &mdash; same source, just coarser sampling.
+      </div>
+    </div>
+
+    <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+    <h2>Tips &amp; limits</h2>
+    <ul class="tip-list">
+      <li><strong>Rate limit:</strong> 100 downloads/minute per user. The bigger prompts (5, 6) should add a small <code>sleep</code> between requests; the AI usually does this without being asked.</li>
+      <li><strong>File sizes:</strong> a single ticker, clean, 1-min is roughly 30&ndash;80 MB (compressed parquet). A full Mag-7 bundle is ~400 MB. The full 1,391-ticker universe is ~13 GB.</li>
+      <li><strong>Schema:</strong> columns are <code>datetime</code> (Eastern Time, tz-naive), <code>open</code>, <code>high</code>, <code>low</code>, <code>close</code>, <code>volume</code>, <code>source</code>. No timezone metadata is embedded &mdash; if you localize, use America/New_York.</li>
+      <li><strong>Source splits:</strong> <code>source == "pitrading"</code> for pre-2022-03-04, <code>source == "iex"</code> for post-2022-03-07. Some research questions only want one or the other; the column makes that filter trivial.</li>
+      <li><strong>Raw vs Clean:</strong> "Raw" is as-received PiTrading/IEX bars. "Clean" applies the 9-step pipeline documented on the <a href="docs">docs page</a>. For replication of someone else's paper, match their cleaning &mdash; use raw and apply your own rules.</li>
+      <li><strong>If the AI hits a 401:</strong> the API key is wrong or revoked. Check <a href="account">your account page</a> &mdash; you can copy the current key or regenerate.</li>
+      <li><strong>If it hits a 403 about email verification or profile:</strong> verify the email link Resend sent on registration, then fill in your institution / country / role on the account page. Downloads are gated on both.</li>
+      <li><strong>Cite the dataset</strong> in any publication: see the <a href="cite">citation page</a> for BibTeX, APA, and the Zenodo DOI.</li>
+    </ul>
+
+    <div class="info-box">
+      <strong>Want a prompt added?</strong> If you have a workflow that AI assistants keep getting wrong (or a frequent analysis pattern), <a href="contact">email me</a> and I'll add a vetted prompt to this page.
+    </div>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. Licensed under <a href="license" style="color:var(--gold);">CC BY 4.0</a>.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Copy-to-clipboard for prompt cards. Uses the modern clipboard API where
+// available and falls back to a hidden textarea selection so the page
+// works in older browsers and in non-secure contexts.
+document.querySelectorAll('.copy-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var targetId = btn.getAttribute('data-target');
+    var pre = document.getElementById(targetId);
+    if (!pre) return;
+    var text = pre.textContent;
+    var done = function() {
+      btn.classList.add('copied');
+      btn.querySelector('.label').textContent = 'Copied';
+      setTimeout(function() {
+        btn.classList.remove('copied');
+        btn.querySelector('.label').textContent = 'Copy';
+      }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(function() { fallback(); });
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { btn.querySelector('.label').textContent = 'Press Ctrl+C'; }
+      document.body.removeChild(ta);
+    }
+  });
+});
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>
