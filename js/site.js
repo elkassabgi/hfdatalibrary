@@ -125,7 +125,7 @@
 
     const li = document.createElement('li');
     li.id = 'nav-user-widget';
-    li.style.marginLeft = '0.5rem';
+    li.style.marginLeft = '0.75rem';
 
     if (user) {
       const vipBadge = user.is_vip

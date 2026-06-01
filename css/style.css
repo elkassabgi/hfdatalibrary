@@ -375,13 +375,11 @@ td.mono { font-family: var(--font-mono); font-size: 0.85rem; }
 .footer-bottom .orcid { font-family: var(--font-mono); font-size: 0.8rem; }
 
 /* ── Responsive ── */
-@media (max-width: 768px) {
-  .hero h1 { font-size: 2rem; }
-  .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 1rem; }
-  .stat-number { font-size: 1.5rem; }
-  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-  .feature-row, .feature-row.reverse { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
-  .footer-grid { grid-template-columns: 1fr 1fr; }
+/* Collapse the nav to a hamburger before the link row gets cramped.
+   The full bar needs ~1105px (brand + 10 links + auth button + gap);
+   below that the links crowd and the Sign in / user button jams against
+   the right edge, so switch to the dropdown menu at 1120px. */
+@media (max-width: 1120px) {
   .nav-links { display: none; }
   .nav-links.open {
     display: flex;
@@ -394,6 +392,19 @@ td.mono { font-family: var(--font-mono); font-size: 0.85rem; }
     padding: 1rem;
     box-shadow: var(--shadow-lg);
   }
+  /* The injected auth button (#nav-user-widget) sits flush-right inside the
+     link row on desktop; in the stacked dropdown it should align with the
+     other links instead of floating off to the right. */
+  .nav-links.open #nav-user-widget { margin-left: 0; margin-top: 0.5rem; }
   .nav-toggle { display: block; }
+}
+
+@media (max-width: 768px) {
+  .hero h1 { font-size: 2rem; }
+  .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .stat-number { font-size: 1.5rem; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .feature-row, .feature-row.reverse { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+  .footer-grid { grid-template-columns: 1fr 1fr; }
   .footer-bottom { flex-direction: column; gap: 0.5rem; text-align: center; }
 }
