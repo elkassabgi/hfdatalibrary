@@ -2204,8 +2204,29 @@ async function handlePublicStats(env, cors) {
     'GROUP BY country ORDER BY users DESC'
   ).all();
 
-  // Distinct institutions (exclude hidden ones)
-  const institutions = await env.DB.prepare('SELECT institution, COUNT(*) as users FROM users WHERE is_active = 1 AND institution != "" AND COALESCE(hide_institution, 0) = 0 GROUP BY institution ORDER BY users DESC LIMIT 50').all();
+  // Distinct institutions (exclude hidden ones + placeholder junk).
+  // Many users type "none", "n/a", "self", etc. instead of a real
+  // institution. Filter these out server-side BEFORE the LIMIT so junk
+  // (e.g. "None" currently ranks #1 by count) doesn't consume top slots
+  // or push real schools off the list. Match is case-insensitive and
+  // whitespace-trimmed. Real companies (NVIDIA, TeleAI, brokerages) are
+  // intentionally NOT blocked — only non-institutional placeholders.
+  // To exclude a newly-seen junk value, add its lowercase form here.
+  const INSTITUTION_BLOCKLIST = [
+    'none', 'n/a', 'na', 'n.a.', 'n.a', 'no', 'nil', 'null', 'nan',
+    'self', 'myself', 'me', 'private', 'personal', 'home', 'individual',
+    'individuals', 'independent', 'independent trader', 'unaffiliated',
+    'unknown', 'student', 'retired', 'retail', 'retail trader',
+    'retail investor', 'freelance', 'freelancer', 'trader', 'aleppo',
+    '-', '--', '.', '..', '...', 'x', 'xx', 'test', 'asdf',
+  ];
+  const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
+  const institutions = await env.DB.prepare(
+    'SELECT institution, COUNT(*) as users FROM users ' +
+    'WHERE is_active = 1 AND TRIM(institution) != "" AND COALESCE(hide_institution, 0) = 0 ' +
+    'AND LOWER(TRIM(institution)) NOT IN (' + instPlaceholders + ') ' +
+    'GROUP BY institution ORDER BY users DESC LIMIT 50'
+  ).bind(...INSTITUTION_BLOCKLIST).all();
 
   // Top downloaded tickers
   const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
