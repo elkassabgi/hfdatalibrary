@@ -860,6 +860,42 @@ async function sendEmail(env, to, subject, htmlBody, fromEmail = FROM_EMAIL, fro
   return response.ok;
 }
 
+async function sendEmailBatch(env, items) {
+  // items: array of full email objects {from, to, subject, html} — Resend's
+  // batch endpoint accepts up to 100 per call. One retry on 429/network error.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch('https://api.resend.com/emails/batch', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(items)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const sent = Array.isArray(data?.data) ? data.data.length : items.length;
+        return { success: sent, failed: items.length - sent };
+      }
+      if (response.status === 429 && attempt === 0) {
+        await new Promise(res => setTimeout(res, 1100));
+        continue;
+      }
+      console.error('Resend batch error:', response.status, await response.text());
+      return { success: 0, failed: items.length };
+    } catch (e) {
+      if (attempt === 0) {
+        await new Promise(res => setTimeout(res, 1100));
+        continue;
+      }
+      console.error('Resend batch exception:', e);
+      return { success: 0, failed: items.length };
+    }
+  }
+  return { success: 0, failed: items.length };
+}
+
 function verificationEmail(name, token) {
   const link = SITE_URL + '/pages/verify?token=' + token;
   return `
@@ -1797,12 +1833,32 @@ async function handleSendNewsletter(request, env, cors) {
   const total = subscribers.results.length;
   let success = 0, failed = 0;
 
-  // Send emails (Resend allows batch sends, but let's be safe and send individually for now)
-  for (const sub of subscribers.results) {
-    const unsubUrl = `${SITE_URL}/pages/unsubscribe?token=${sub.unsubscribe_token}`;
-    const html = buildNewsletterHtml(subject, body_html, sub.name, unsubUrl);
-    const ok = await sendEmail(env, sub.email, subject, html, NEWSLETTER_FROM, NEWSLETTER_FROM_NAME);
-    if (ok) success++; else failed++;
+  // Send via Resend's batch endpoint, 50 per call. Per-subscriber fetches
+  // exceed the Workers subrequest cap and Resend's rate limit on real list
+  // sizes — that combination is what 500'd the first campaign send.
+  const BATCH_SIZE = 50;
+  const payloads = subscribers.results.map(sub => ({
+    from: `${NEWSLETTER_FROM_NAME} <${NEWSLETTER_FROM}>`,
+    to: [sub.email],
+    subject,
+    html: buildNewsletterHtml(subject, body_html, sub.name,
+      `${SITE_URL}/pages/unsubscribe?token=${sub.unsubscribe_token}`)
+  }));
+
+  try {
+    for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
+      const chunk = payloads.slice(i, i + BATCH_SIZE);
+      const r = await sendEmailBatch(env, chunk);
+      success += r.success;
+      failed += r.failed;
+      if (i + BATCH_SIZE < payloads.length) {
+        await new Promise(res => setTimeout(res, 600));  // stay under Resend req/s limit
+      }
+    }
+  } catch (e) {
+    // Never let a mid-send exception produce an opaque 500 — record what we know
+    console.error('Newsletter send aborted mid-stream:', e);
+    failed = total - success;
   }
 
   const userId = user.user_id || user.id;
