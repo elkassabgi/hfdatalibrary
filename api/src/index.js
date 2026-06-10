@@ -308,6 +308,10 @@ export default {
       if (path === '/v1/newsletter/unsubscribe-toggle' && request.method === 'POST')
         return await handleToggleSubscribe(request, env, cors, false);
 
+      // ── Resend webhooks (bounce/complaint list hygiene) ──
+      if (path === '/v1/webhooks/resend' && request.method === 'POST')
+        return await handleResendWebhook(request, env);
+
       // ── Admin endpoints ──
       if (path.startsWith('/v1/admin/'))
         return await handleAdmin(path, request, env, cors, ip);
@@ -894,6 +898,103 @@ async function sendEmailBatch(env, items) {
     }
   }
   return { success: 0, failed: items.length };
+}
+
+// ══════════════════════════════════════
+// ── Resend Webhook (list hygiene) ──
+// ══════════════════════════════════════
+// Auto-unsubscribes addresses that hard-bounce or file spam complaints, and
+// emails the admin about each removal. Setup:
+//   1. Resend dashboard → Webhooks → Add endpoint:
+//        https://api.hfdatalibrary.com/v1/webhooks/resend
+//      Events: email.bounced, email.complained, email.suppressed
+//   2. Copy the signing secret (whsec_...) into the Worker secret
+//      RESEND_WEBHOOK_SECRET (Cloudflare dashboard → Worker → Settings).
+
+async function verifySvixSignature(secret, svixId, svixTimestamp, svixSignature, rawBody) {
+  if (!secret || !svixId || !svixTimestamp || !svixSignature) return false;
+
+  // Replay protection: reject timestamps more than 5 minutes off
+  const ts = parseInt(svixTimestamp, 10);
+  if (!ts || Math.abs(Date.now() / 1000 - ts) > 300) return false;
+
+  const secretBytes = Uint8Array.from(atob(secret.replace(/^whsec_/, '')), c => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey('raw', secretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
+  const sigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedContent));
+  const expected = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+
+  // Header carries space-separated versioned signatures: "v1,<base64> v1,<base64>"
+  return svixSignature.split(' ').some(part => {
+    const [version, sig] = part.split(',');
+    return version === 'v1' && sig === expected;
+  });
+}
+
+async function handleResendWebhook(request, env) {
+  const jsonHeaders = { 'Content-Type': 'application/json' };
+
+  if (!env.RESEND_WEBHOOK_SECRET) {
+    console.error('RESEND_WEBHOOK_SECRET not configured');
+    return new Response(JSON.stringify({ error: 'Webhook secret not configured' }), { status: 503, headers: jsonHeaders });
+  }
+
+  const rawBody = await request.text();
+  const valid = await verifySvixSignature(
+    env.RESEND_WEBHOOK_SECRET,
+    request.headers.get('svix-id'),
+    request.headers.get('svix-timestamp'),
+    request.headers.get('svix-signature'),
+    rawBody
+  );
+  if (!valid) {
+    return new Response(JSON.stringify({ error: 'Invalid signature' }), { status: 401, headers: jsonHeaders });
+  }
+
+  let event;
+  try { event = JSON.parse(rawBody); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: jsonHeaders });
+  }
+
+  const type = event?.type || '';
+  if (!['email.bounced', 'email.complained', 'email.suppressed'].includes(type)) {
+    // Acknowledge everything else so Resend doesn't retry
+    return new Response(JSON.stringify({ received: true, ignored: type }), { status: 200, headers: jsonHeaders });
+  }
+
+  const addresses = Array.isArray(event?.data?.to) ? event.data.to : [event?.data?.to].filter(Boolean);
+  const reason = type.replace('email.', '');
+  const detail = event?.data?.bounce?.message || event?.data?.bounce?.subType || '';
+
+  let removed = 0;
+  for (const addr of addresses) {
+    const email = String(addr).toLowerCase();
+    const res = await env.DB.prepare(
+      'UPDATE users SET newsletter_subscribed = 0 WHERE email = ? AND newsletter_subscribed = 1'
+    ).bind(email).run();
+
+    if (res.meta && res.meta.changes > 0) {
+      removed++;
+      try {
+        await auditLog(env, { user_id: null, id: null, email: 'resend-webhook' },
+          'newsletter_auto_unsubscribe', null, email, `${reason}${detail ? ': ' + detail : ''}`, 'webhook');
+      } catch (e) {
+        console.error('Webhook audit log failed:', e);
+      }
+      // The admin notification — so a dead address never goes unnoticed
+      await sendEmail(
+        env,
+        ADMIN_EMAILS[0],
+        `[HFDL] Subscriber auto-removed (${reason}): ${email}`,
+        `<p><strong>${email}</strong> was automatically unsubscribed from the newsletter.</p>` +
+        `<p><strong>Reason:</strong> ${reason}${detail ? ' — ' + detail : ''}</p>` +
+        `<p style="color:#6b7280;font-size:13px;">Triggered by Resend webhook event <code>${type}</code>. ` +
+        `Resend has also added this address to its suppression list, so future sends skip it automatically.</p>`
+      );
+    }
+  }
+
+  return new Response(JSON.stringify({ received: true, type, removed }), { status: 200, headers: jsonHeaders });
 }
 
 function verificationEmail(name, token) {
@@ -1861,16 +1962,23 @@ async function handleSendNewsletter(request, env, cors) {
     failed = total - success;
   }
 
-  const userId = user.user_id || user.id;
-  await env.DB.prepare(
-    'INSERT INTO newsletter_campaigns (subject, body_html, sent_by_user_id, recipients_count, success_count, failed_count) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(subject, body_html, userId, total, success, failed).run();
+  // Emails are already delivered at this point — recording the campaign must
+  // never turn a successful send into a 500.
+  let historyRecorded = true;
+  try {
+    const userId = user.user_id || user.id || null;
+    await env.DB.prepare(
+      'INSERT INTO newsletter_campaigns (subject, body_html, sent_by_user_id, recipients_count, success_count, failed_count) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(subject, body_html, userId, total, success, failed).run();
 
-  // Audit log
-  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  await auditLog(env, user, 'send_newsletter', null, null, `${total} recipients, subject: ${subject}`, ip);
+    const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+    await auditLog(env, user, 'send_newsletter', null, null, `${total} recipients, subject: ${subject}`, ip);
+  } catch (e) {
+    console.error('Campaign history insert failed:', e);
+    historyRecorded = false;
+  }
 
-  return jsonRes({ message: 'Newsletter sent', total, success, failed }, 200, cors);
+  return jsonRes({ message: 'Newsletter sent', total, success, failed, history_recorded: historyRecorded }, 200, cors);
 }
 
 // ══════════════════════════════════════
