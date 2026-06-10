@@ -17,9 +17,16 @@ Pipeline:
   8. Send success/failure email via Resend
 
 Usage:
-  python daily_update.py             # process previous trading day
-  python daily_update.py 2026-04-09  # process a specific date
+  python daily_update.py             # catch-up mode: process EVERY missed trading
+                                     # day since metadata end_date (cap: CATCHUP_MAX_DAYS,
+                                     # default 5/run; remainder picked up next run)
+  python daily_update.py 2026-04-09  # process a specific date only (no catch-up)
   python daily_update.py --dry-run   # dry run, no R2 writes
+
+Catch-up state lives in data/metadata.json:
+  end_date      — latest successfully processed session (never regresses)
+  missing_days  — sessions that failed or had no pcap; retried every run until
+                  they succeed or age past IEX HIST's ~12-month retention window
 """
 from __future__ import annotations
 import os
@@ -45,7 +52,7 @@ CONTEXT_BARS = 100         # Context window for incremental cleaning
 
 # Pipeline modules (same directory)
 sys.path.insert(0, str(Path(__file__).parent))
-from trading_days import previous_trading_day
+from trading_days import previous_trading_day, trading_days_between
 from iex_manifest import get_tops_pcap_for_date
 from tops_parser import parse_trades_csv, Trade
 from build_bars import build_bars, bars_to_dataframe
@@ -374,7 +381,10 @@ def update_metadata(d: date, new_raw_bars: int, new_clean_bars: int, tickers_upd
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     meta["data_updated"] = now_iso
     meta["website_updated"] = now_iso
-    meta["end_date"] = d.isoformat()
+    # Never regress end_date when backfilling an older missed day
+    # (ISO date strings compare chronologically)
+    if not meta.get("end_date") or d.isoformat() > meta["end_date"]:
+        meta["end_date"] = d.isoformat()
     meta["update_summary"] = (
         f"Daily update: added trading data for {d.isoformat()} "
         f"({new_raw_bars:,} new bars across {tickers_updated:,} tickers)."
@@ -429,110 +439,230 @@ def send_email(subject: str, body_html: str) -> None:
         print(f"[send_email] FAILED: {r.status_code} {r.text[:300]}")
 
 
+def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
+    """Run the full pipeline for one trading day. Raises on failure.
+
+    Returns a stats dict:
+      {"date": d, "status": "ok"|"no_data", "tickers": int, "new_bars": int,
+       "uploaded_mb": float, "elapsed_min": float}
+    """
+    day_start = time.time()
+
+    new_bars = parse_day(d, universe)
+    if new_bars.empty:
+        return {"date": d, "status": "no_data", "tickers": 0, "new_bars": 0,
+                "uploaded_mb": 0.0, "elapsed_min": (time.time() - day_start) / 60}
+
+    print(f"[{d}] Total new bars: {len(new_bars):,}")
+    if dry_run:
+        print("DRY RUN — no R2 writes")
+
+    tickers_updated = 0
+    total_uploaded = 0
+    total_new_raw = 0
+    total_new_clean = 0
+    ticker_stats = []  # per-ticker cleaning stats for the log
+    per_ticker = new_bars.groupby("ticker")
+    total_tickers = len(per_ticker)
+
+    # Split tickers into N_PROCESSES batches for multiprocessing
+    all_ticker_groups = [(ticker, group) for ticker, group in per_ticker]
+    batches = [all_ticker_groups[i::N_PROCESSES] for i in range(N_PROCESSES)]
+
+    print(f"  Processing {total_tickers} tickers across {N_PROCESSES} processes...")
+
+    with ProcessPoolExecutor(max_workers=N_PROCESSES) as executor:
+        batch_futures = {
+            executor.submit(_process_ticker_batch, (batch, dry_run)): i
+            for i, batch in enumerate(batches)
+        }
+
+        for future in as_completed(batch_futures):
+            batch_results = future.result()
+            for status, ticker, data in batch_results:
+                if status == "ok":
+                    tickers_updated += 1
+                    total_uploaded += data.get("uploaded_bytes", 0)
+                    total_new_raw += data.get("new_raw_bars", 0)
+                    total_new_clean += data.get("new_clean_bars", 0)
+                    ticker_stats.append({
+                        "ticker": ticker,
+                        "raw_bars": data.get("new_raw_bars", 0),
+                        "clean_bars": data.get("new_clean_bars", 0),
+                        "removed": data.get("new_raw_bars", 0) - data.get("new_clean_bars", 0),
+                    })
+                else:
+                    print(f"  {ticker} FAILED: {data}")
+
+    print(f"  [{tickers_updated}/{total_tickers}] tickers completed")
+
+    # Upload daily cleaning log, then advance metadata for this day
+    if not dry_run and ticker_stats:
+        _upload_cleaning_log(d, ticker_stats)
+    if not dry_run:
+        update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
+
+    return {"date": d, "status": "ok", "tickers": tickers_updated,
+            "new_bars": len(new_bars), "uploaded_mb": total_uploaded / 1e6,
+            "elapsed_min": (time.time() - day_start) / 60}
+
+
+def read_pipeline_state() -> tuple[Optional[date], List[date]]:
+    """Read (end_date, missing_days) from metadata.json."""
+    if not METADATA_PATH.exists():
+        return None, []
+    with open(METADATA_PATH) as f:
+        meta = json.load(f)
+    end_d = None
+    if meta.get("end_date"):
+        try:
+            end_d = date.fromisoformat(meta["end_date"])
+        except ValueError:
+            pass
+    missing = []
+    for s in meta.get("missing_days", []):
+        try:
+            missing.append(date.fromisoformat(s))
+        except ValueError:
+            pass
+    return end_d, missing
+
+
+def save_missing_days(missing: List[date]) -> None:
+    """Persist the missing-days ledger to metadata.json."""
+    if not METADATA_PATH.exists():
+        return
+    with open(METADATA_PATH) as f:
+        meta = json.load(f)
+    meta["missing_days"] = sorted(d.isoformat() for d in set(missing))
+    with open(METADATA_PATH, "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"[save_missing_days] ledger now: {meta['missing_days']}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("date", nargs="?", help="YYYY-MM-DD (default: previous trading day)")
+    parser.add_argument("date", nargs="?",
+                        help="YYYY-MM-DD: process this date only. Default: catch-up mode "
+                             "(all missed trading days since metadata end_date)")
     parser.add_argument("--dry-run", action="store_true", help="Don't write to R2")
     args = parser.parse_args()
 
     start = time.time()
 
+    # IEX HIST retains ~12 trailing months; days older than this are unrecoverable
+    retention_cutoff = datetime.utcnow().date() - timedelta(days=350)
+    max_days = int(os.environ.get("CATCHUP_MAX_DAYS", "5"))
+
+    prior_missing: List[date] = []
+    deferred: List[date] = []
+    dropped_stale: List[date] = []
+
     if args.date:
-        d = datetime.strptime(args.date, "%Y-%m-%d").date()
+        # Explicit single-date mode — no catch-up
+        days = [datetime.strptime(args.date, "%Y-%m-%d").date()]
+        _, prior_missing = read_pipeline_state()
     else:
-        d = previous_trading_day()
-    print(f"=== Daily update for {d} ===")
+        target = previous_trading_day()
+        end_d, prior_missing = read_pipeline_state()
+        if end_d is None:
+            days = [target]
+        else:
+            gap = trading_days_between(end_d, target)
+            candidates = sorted(set(gap) | set(prior_missing))
+            dropped_stale = [x for x in candidates if x < retention_cutoff]
+            candidates = [x for x in candidates if x >= retention_cutoff]
+            days = candidates[:max_days]
+            deferred = candidates[max_days:]
 
-    try:
-        # 1. Load universe
-        universe = load_universe()
-        print(f"Universe: {len(universe)} tickers")
-
-        # 2. Parse the day
-        new_bars = parse_day(d, universe)
-        if new_bars.empty:
-            send_email(
-                f"Daily pipeline: no data for {d}",
-                f"<p>No TOPS pcap published for {d}, or no trades for our universe. Skipping update.</p>"
-            )
-            print("Done (no data).")
-            return 0
-
-        print(f"Total new bars: {len(new_bars):,}")
-
-        # 3. Merge per ticker (each process creates its own R2 client)
-        if args.dry_run:
-            print("DRY RUN — no R2 writes")
-
-        tickers_updated = 0
-        total_uploaded = 0
-        total_new_raw = 0
-        total_new_clean = 0
-        ticker_stats = []  # per-ticker cleaning stats for the log
-        per_ticker = new_bars.groupby("ticker")
-        total_tickers = len(per_ticker)
-
-        # Split tickers into N_PROCESSES batches for multiprocessing
-        all_ticker_groups = [(ticker, group) for ticker, group in per_ticker]
-        batches = [all_ticker_groups[i::N_PROCESSES] for i in range(N_PROCESSES)]
-
-        print(f"  Processing {total_tickers} tickers across {N_PROCESSES} processes...")
-
-        with ProcessPoolExecutor(max_workers=N_PROCESSES) as executor:
-            batch_futures = {
-                executor.submit(_process_ticker_batch, (batch, args.dry_run)): i
-                for i, batch in enumerate(batches)
-            }
-
-            for future in as_completed(batch_futures):
-                batch_results = future.result()
-                for status, ticker, data in batch_results:
-                    if status == "ok":
-                        tickers_updated += 1
-                        total_uploaded += data.get("uploaded_bytes", 0)
-                        total_new_raw += data.get("new_raw_bars", 0)
-                        total_new_clean += data.get("new_clean_bars", 0)
-                        ticker_stats.append({
-                            "ticker": ticker,
-                            "raw_bars": data.get("new_raw_bars", 0),
-                            "clean_bars": data.get("new_clean_bars", 0),
-                            "removed": data.get("new_raw_bars", 0) - data.get("new_clean_bars", 0),
-                        })
-                    else:
-                        print(f"  {ticker} FAILED: {data}")
-
-        print(f"  [{tickers_updated}/{total_tickers}] tickers completed")
-
-        # 4. Upload daily cleaning log to R2
-        if not args.dry_run and ticker_stats:
-            _upload_cleaning_log(d, ticker_stats)
-
-        # 5. Update metadata
-        if not args.dry_run:
-            update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
-
-        elapsed = time.time() - start
-        body = (
-            f"<h2>Daily update succeeded</h2>"
-            f"<p><strong>Date:</strong> {d}</p>"
-            f"<p><strong>Tickers updated:</strong> {tickers_updated:,}</p>"
-            f"<p><strong>New bars:</strong> {len(new_bars):,}</p>"
-            f"<p><strong>Bytes uploaded:</strong> {total_uploaded/1e6:.1f} MB</p>"
-            f"<p><strong>Elapsed:</strong> {elapsed/60:.1f} minutes</p>"
-        )
-        send_email(f"Daily update OK: {d} ({tickers_updated} tickers)", body)
-        print(f"Done in {elapsed/60:.1f} min")
+    if not days:
+        print("Nothing to do: no missed trading days.")
         return 0
 
+    label = days[0] if len(days) == 1 else f"{days[0]}..{days[-1]} ({len(days)} days)"
+    print(f"=== Daily update for {label} ===")
+    if deferred:
+        print(f"  (deferring {len(deferred)} more day(s) to next run: {deferred[0]}..{deferred[-1]})")
+    if dropped_stale:
+        print(f"  WARNING: {len(dropped_stale)} day(s) beyond IEX ~12-month retention, unrecoverable: "
+              f"{[x.isoformat() for x in dropped_stale]}")
+
+    results: List[dict] = []
+    failures: List[tuple] = []
+    new_missing = set(prior_missing) - set(dropped_stale)
+
+    try:
+        universe = load_universe()
+        print(f"Universe: {len(universe)} tickers")
     except Exception as e:
         tb = traceback.format_exc()
         print(f"FATAL: {e}\n{tb}")
-        send_email(
-            f"Daily pipeline FAILED: {d}",
-            f"<h2>Daily update failed</h2><p><strong>Date:</strong> {d}</p>"
-            f"<pre>{tb}</pre>"
-        )
+        send_email("Daily pipeline FAILED: setup",
+                   f"<h2>Daily update failed before processing</h2><pre>{tb}</pre>")
         return 1
+
+    for d in days:
+        print(f"\n--- Processing {d} ---")
+        try:
+            r = process_day(d, universe, dry_run=args.dry_run)
+            results.append(r)
+            if r["status"] == "ok":
+                new_missing.discard(d)
+            else:
+                # No pcap published (yet) — keep in ledger to retry next run
+                new_missing.add(d)
+                print(f"[{d}] no data published; will retry on future runs")
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"FATAL for {d}: {e}\n{tb}")
+            failures.append((d, tb))
+            new_missing.add(d)
+
+    if not args.dry_run:
+        save_missing_days(sorted(new_missing))
+
+    # ── Summary email ──────────────────────────────────────────────────────
+    elapsed = (time.time() - start) / 60
+    ok = [r for r in results if r["status"] == "ok"]
+    nodata = [r for r in results if r["status"] == "no_data"]
+
+    rows = ""
+    for r in results:
+        rows += (f"<tr><td>{r['date']}</td><td>{r['status']}</td>"
+                 f"<td>{r['tickers']:,}</td><td>{r['new_bars']:,}</td>"
+                 f"<td>{r['elapsed_min']:.1f} min</td></tr>")
+    for d, tb in failures:
+        rows += (f"<tr><td>{d}</td><td>FAILED</td><td colspan=3>"
+                 f"<pre style='white-space:pre-wrap'>{tb[-1500:]}</pre></td></tr>")
+
+    body = (
+        f"<h2>Daily update summary</h2>"
+        f"<table border=1 cellpadding=4 cellspacing=0>"
+        f"<tr><th>Date</th><th>Status</th><th>Tickers</th><th>New bars</th><th>Time</th></tr>"
+        f"{rows}</table>"
+        f"<p><strong>Total elapsed:</strong> {elapsed:.1f} minutes</p>"
+    )
+    if nodata:
+        body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
+    if deferred:
+        body += (f"<p><strong>Deferred to next run</strong> (CATCHUP_MAX_DAYS={max_days}): "
+                 f"{', '.join(x.isoformat() for x in deferred)}</p>")
+    if dropped_stale:
+        body += (f"<p><strong>⚠ Unrecoverable</strong> (beyond IEX ~12-month retention): "
+                 f"{', '.join(x.isoformat() for x in dropped_stale)}</p>")
+
+    if failures:
+        subject = f"Daily update: {len(ok)} OK, {len(failures)} FAILED"
+    elif len(ok) == 1 and not nodata and not deferred:
+        subject = f"Daily update OK: {ok[0]['date']} ({ok[0]['tickers']} tickers)"
+    elif ok:
+        subject = f"Daily update OK: {len(ok)} day(s) incl. catch-up"
+    else:
+        subject = f"Daily pipeline: no data for {', '.join(str(r['date']) for r in nodata)}"
+    send_email(subject, body)
+
+    print(f"\nDone in {elapsed:.1f} min — {len(ok)} ok, {len(nodata)} no-data, {len(failures)} failed")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

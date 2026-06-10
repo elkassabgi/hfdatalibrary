@@ -56,6 +56,23 @@ def is_trading_day(d: date) -> bool:
     return not schedule.empty
 
 
+def trading_days_between(start_exclusive: date, end_inclusive: date) -> list[date]:
+    """All NYSE trading days d with start_exclusive < d <= end_inclusive, ascending.
+
+    Used by the catch-up logic in daily_update.py to enumerate every session
+    missed since the last successful update (e.g., across a multi-day IEX outage).
+    """
+    if end_inclusive <= start_exclusive:
+        return []
+
+    import pandas_market_calendars as mcal
+
+    nyse = mcal.get_calendar("NYSE")
+    start = start_exclusive + timedelta(days=1)
+    schedule = nyse.schedule(start_date=start.isoformat(), end_date=end_inclusive.isoformat())
+    return [ts.to_pydatetime().date() for ts in schedule.index]
+
+
 if __name__ == "__main__":
     import sys
 

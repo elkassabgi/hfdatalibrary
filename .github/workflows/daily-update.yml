@@ -83,7 +83,9 @@ jobs:
 
       - name: Commit and push metadata
         id: commit
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        # !cancelled(): run even if some catch-up days failed, so metadata
+        # (end_date + missing_days ledger) preserves the partial progress
+        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' }}
         run: |
           git config user.name "HF Data Library Bot"
           git config user.email "admin@hfdatalibrary.com"
@@ -102,7 +104,9 @@ jobs:
       # so deploy.yml won't fire on bot commits. Deploy inline here instead — the
       # checkout tree already has the committed metadata.
       - name: Deploy to Cloudflare Pages
-        if: ${{ github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
+        # !cancelled(): if partial-failure metadata was committed, still deploy
+        # it so the site's "data through" stays truthful
+        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
