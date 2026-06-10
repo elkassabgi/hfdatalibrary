@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy static site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy API Worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
