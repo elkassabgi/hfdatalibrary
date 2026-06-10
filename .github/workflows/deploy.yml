@@ -30,3 +30,9 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
           workingDirectory: api
+          # Sync Worker secrets from GitHub on every deploy. Listed names are
+          # read from the env below and pushed via `wrangler secret put`.
+          secrets: |
+            RESEND_WEBHOOK_SECRET
+        env:
+          RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
