@@ -19,6 +19,24 @@
 </head>
 <body>
 
+<!-- Service notice: IEX upstream outage (added 2026-06-13) -->
+<div id="iex-outage-banner" data-notice="iex-outage-2026-06" style="display:none; background:#fef3c7; border-bottom:1px solid #f0c850; color:#7a5a10;">
+  <div class="container" style="display:flex; align-items:flex-start; gap:0.75rem; padding:0.7rem 0; font-size:0.92rem; line-height:1.45;">
+    <span aria-hidden="true" style="font-size:1.1rem; line-height:1.3;">&#9888;</span>
+    <div style="flex:1;">
+      <strong>Service notice — daily updates temporarily paused.</strong>
+      Our upstream provider, <strong>IEX Exchange</strong>, is experiencing an outage of its historical data service. IEX is working to resolve it. The library remains fully available and is current through <strong>June&nbsp;10,&nbsp;2026</strong>; sessions from June&nbsp;11 onward will be added automatically once IEX restores service.
+    </div>
+    <button type="button" onclick="(function(){try{localStorage.setItem('iex-outage-2026-06','dismissed')}catch(e){}document.getElementById('iex-outage-banner').style.display='none';})()" aria-label="Dismiss notice" style="background:none; border:none; color:#7a5a10; font-size:1.2rem; line-height:1; cursor:pointer; padding:0 0.25rem;">&times;</button>
+  </div>
+</div>
+<script>
+  (function(){
+    try { if (localStorage.getItem('iex-outage-2026-06') !== 'dismissed') document.getElementById('iex-outage-banner').style.display='block'; }
+    catch(e) { document.getElementById('iex-outage-banner').style.display='block'; }
+  })();
+</script>
+
 <nav class="navbar">
   <div class="container">
     <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
