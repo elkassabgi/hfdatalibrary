@@ -43,6 +43,7 @@
   "status": "operational",
   "next_update": "2026-06-12T11:00:00Z",
   "missing_days": [
-    "2026-06-11"
+    "2026-06-11",
+    "2026-06-12"
   ]
 }
