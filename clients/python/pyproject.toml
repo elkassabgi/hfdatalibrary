@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hfdatalibrary"
+version = "0.1.0"
+description = "Python client for the HF Data Library — free 1-minute OHLCV data for U.S. equities and ETFs"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Ahmed Elkassabgi" }]
+keywords = ["finance", "stock-market", "ohlcv", "intraday", "high-frequency", "backtesting", "research-data"]
+dependencies = [
+    "requests>=2.20",
+    "pandas>=1.0",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=6.0"]
+
+[project.urls]
+Homepage = "https://hfdatalibrary.com"
+Documentation = "https://hfdatalibrary.com/pages/docs"
+Source = "https://github.com/elkassabgi/hfdatalibrary"
+
+[tool.setuptools]
+packages = ["hfdatalibrary"]

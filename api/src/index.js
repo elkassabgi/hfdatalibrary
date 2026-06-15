@@ -1998,7 +1998,11 @@ async function handleSymbols(env, cors) {
 
   const symbols = allObjects
     .filter(o => o.key.endsWith('.parquet'))
-    .map(o => ({ ticker: o.key.replace('clean/', '').replace('.parquet', ''), size_bytes: o.size, last_modified: o.uploaded }))
+    // Only top-level 1-minute files: clean/{ticker}.parquet. Skip nested
+    // timeframe dirs (clean/5min/{ticker}.parquet, etc.) which would otherwise
+    // appear as bogus "5min/AAPL" tickers and inflate the count 8x.
+    .filter(o => !o.key.slice('clean/'.length).includes('/'))
+    .map(o => ({ ticker: o.key.slice('clean/'.length).replace('.parquet', ''), size_bytes: o.size, last_modified: o.uploaded }))
     .sort((a, b) => a.ticker.localeCompare(b.ticker));
   return jsonRes({ count: symbols.length, symbols }, 200, cors);
 }
