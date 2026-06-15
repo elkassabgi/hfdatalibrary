@@ -1288,6 +1288,34 @@ async function requireAuth(request, env) {
   return user;
 }
 
+// Returns a specific, actionable 401 message explaining WHY auth failed —
+// distinguishes missing key / invalid key / inactive / expired so users
+// (esp. programmatic ones) know to regenerate rather than seeing a bare 401.
+const ACCOUNT_URL = 'https://hfdatalibrary.com/pages/account';
+async function explainAuthFailure(request, env) {
+  let apiKey = request.headers.get('X-API-Key');
+  if (!apiKey) {
+    try { apiKey = new URL(request.url).searchParams.get('api_key'); } catch (e) { /* ignore */ }
+  }
+  if (!apiKey) {
+    return `Authentication required. Provide your API key in the X-API-Key header (or log in). Get a key at ${ACCOUNT_URL}`;
+  }
+  const row = await env.DB.prepare(
+    'SELECT is_active, api_key_expires_at FROM users WHERE api_key = ?'
+  ).bind(apiKey).first();
+  if (!row) {
+    return `Invalid API key. Check the value or generate a new one at ${ACCOUNT_URL}`;
+  }
+  if (!row.is_active) {
+    return 'This account is inactive. Contact admin@hfdatalibrary.com';
+  }
+  if (row.api_key_expires_at) {
+    const day = String(row.api_key_expires_at).slice(0, 10);
+    return `Your API key expired on ${day}. API keys are valid for 30 days — regenerate yours at ${ACCOUNT_URL} (regenerating issues a new key value, so update your scripts).`;
+  }
+  return `Authentication failed. Manage your key at ${ACCOUNT_URL}`;
+}
+
 // ══════════════════════════════════════
 // ── Auth Handlers ──
 // ══════════════════════════════════════
@@ -2019,7 +2047,7 @@ async function handleSymbolInfo(ticker, env, cors) {
 
 async function handleBars(ticker, request, env, cors, ip) {
   const user = await requireAuth(request, env);
-  if (!user) return jsonRes({ error: 'Authentication required. Log in or provide X-API-Key header.' }, 401, cors);
+  if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data. Check your inbox.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
@@ -2048,7 +2076,7 @@ const VALID_TIMEFRAMES = ['1min', '5min', '15min', '30min', 'hourly', 'daily', '
 
 async function handleDownloadToken(ticker, request, env, cors) {
   const user = await requireAuth(request, env);
-  if (!user) return jsonRes({ error: 'Authentication required' }, 401, cors);
+  if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
@@ -2097,7 +2125,7 @@ async function handleDownload(ticker, request, env, cors, ip) {
     user = await requireAuth(request, env);
   }
 
-  if (!user) return jsonRes({ error: 'Authentication required' }, 401, cors);
+  if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
@@ -2192,7 +2220,29 @@ async function handleAdmin(path, request, env, cors, ip) {
 
     const total = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
 
-    return jsonRes({ total: total.count, users: users.results }, 200, cors);
+    // Abuse detection: flag accounts that share a last-login IP with other
+    // accounts (signal of temp-email account farming / API reselling). Computed
+    // across ALL users, not just this page.
+    const sharedRows = await env.DB.prepare(
+      "SELECT last_login_ip AS ip, COUNT(*) AS c FROM users " +
+      "WHERE last_login_ip IS NOT NULL AND last_login_ip != '' " +
+      "GROUP BY last_login_ip HAVING c > 1"
+    ).all();
+    const sharedMap = {};
+    for (const r of sharedRows.results) sharedMap[r.ip] = r.c;
+
+    const usersOut = users.results.map(u => ({
+      ...u,
+      shared_ip: !!(u.last_login_ip && sharedMap[u.last_login_ip]),
+      shared_ip_count: u.last_login_ip ? (sharedMap[u.last_login_ip] || 1) : 0,
+    }));
+
+    return jsonRes({
+      total: total.count,
+      users: usersOut,
+      shared_ip_clusters: sharedRows.results.length,
+      flagged_users: usersOut.filter(u => u.shared_ip).length,
+    }, 200, cors);
   }
 
   // GET /v1/admin/users/:id — single user detail
