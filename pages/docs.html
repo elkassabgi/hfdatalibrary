@@ -161,6 +161,22 @@
       <li><strong>Trading hours only</strong> — 09:30–16:00 Eastern Time</li>
       <li><strong>Split/dividend adjusted</strong> — all prices adjusted for corporate actions</li>
     </ul>
+
+    <h3 style="margin-top:2.5rem;">Universe construction &amp; survivorship</h3>
+    <p>The 1,391-ticker universe is a <strong>fixed snapshot</strong> of constituents as they stood around 2022–2023, with each ticker's history extended back as far as the source data allows (the majority to December 2002). The universe was <em>not</em> reconstructed point-in-time: it does not add or remove names as companies listed, delisted, merged, or failed over history.</p>
+
+    <div style="background:#fef3c7; border:1px solid #f0c850; border-radius:8px; padding:1rem 1.25rem; margin:1rem 0; color:#5a4708;">
+      <p style="margin:0 0 0.5rem;"><strong>&#9888; This dataset is survivorship-biased, most severely before 2022.</strong></p>
+      <p style="margin:0;">Because constituents were fixed circa 2023, companies that delisted, were acquired, or went bankrupt before ~2021 are <strong>absent</strong> — for instance, none of the 2008 financial-crisis casualties (Lehman Brothers, Bear Stearns, Countrywide, Washington Mutual, and the like) appear. Analyses or backtests over <strong>2002–2021</strong> therefore see only firms that survived to ~2023, which systematically overstates returns and can distort any survivorship-sensitive result. The <strong>2022-onward</strong> period is close to point-in-time — it includes names that traded then and subsequently delisted (e.g.&nbsp;SVB Financial, First Republic) — so the bias there is minimal.</p>
+    </div>
+
+    <p style="margin-bottom:0.4rem;"><strong>Guidance:</strong></p>
+    <ul style="margin-left:1.5rem;">
+      <li><strong>Suitable as-is for:</strong> current-universe and recent-period (2022+) analysis, data-cleaning/methodology research, and intraday microstructure on surviving names.</li>
+      <li><strong>Use with explicit caution for:</strong> long-horizon backtests, cross-sectional asset pricing, or any return/risk study spanning 2002–2021, where missing delisted names would materially change results — adjust for or disclose the bias accordingly.</li>
+      <li><strong>Separate from survivorship:</strong> the post-March-2022 <strong>IEX-only volume caveat</strong> noted under <em>Data sources</em> above (≈2–3% of consolidated volume) also applies to the recent period.</li>
+    </ul>
+    <p>A point-in-time, delisting-inclusive universe (built from CRSP/TAQ) is a known future direction, not part of the current release.</p>
   </div>
 </section>
 
