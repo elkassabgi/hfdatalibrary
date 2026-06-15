@@ -480,16 +480,18 @@ async function loadUsers() {
     const html = d.users.map(u => {
       const dirty = !isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role);
       const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
-      // Shared-IP flag takes visual precedence (red) over the Latin-char flag (amber).
-      const rowStyle = u.shared_ip ? ' background:#fef2f2; border-left:3px solid #dc2626;'
+      // Security flags (shared IP or disposable email) take visual precedence
+      // (red) over the data-quality / Latin-char flag (amber).
+      const rowStyle = (u.shared_ip || u.disposable_email) ? ' background:#fef2f2; border-left:3px solid #dc2626;'
                      : (dirty ? ' background:#fffbeb; border-left:3px solid #f59e0b;' : '');
       const ipCell = u.last_login_ip
         ? '<code style="font-size:0.78rem;">' + esc(u.last_login_ip) + '</code>'
           + (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="This IP is shared by ' + u.shared_ip_count + ' accounts — possible multi-account abuse">&#9888; ' + u.shared_ip_count + '</span>' : '')
         : '<span style="color:var(--gray-400);">-</span>';
+      const dispBadge = u.disposable_email ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="Disposable / temporary email domain">&#9888; temp</span>' : '';
       return '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;' + rowStyle + '">' +
         '<div><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
-        '<div style="font-size:0.8rem;">' + esc(u.email) + '</div>' +
+        '<div style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</div>' +
         '<div>' + dirtyMark(u.institution) + '</div>' +
         '<div>' + dirtyMark(u.country) + '</div>' +
         '<div>' + dirtyMark(u.role) + '</div>' +
@@ -502,8 +504,8 @@ async function loadUsers() {
       '</div>';
     }).join('');
 
-    const flaggedBar = (d.flagged_users > 0)
-      ? '<div style="padding:0.6rem 1rem; background:#fef2f2; border-bottom:1px solid #fca5a5; color:#b91c1c; font-size:0.85rem;">&#9888; <strong>' + d.flagged_users + '</strong> account(s) across <strong>' + d.shared_ip_clusters + '</strong> shared IP(s) — review red-flagged rows for multi-account abuse.</div>'
+    const flaggedBar = (d.flagged_users > 0 || d.disposable_users > 0)
+      ? '<div style="padding:0.6rem 1rem; background:#fef2f2; border-bottom:1px solid #fca5a5; color:#b91c1c; font-size:0.85rem;">&#9888; <strong>' + (d.flagged_users || 0) + '</strong> account(s) across <strong>' + (d.shared_ip_clusters || 0) + '</strong> shared IP(s); <strong>' + (d.disposable_users || 0) + '</strong> on disposable email domains — review red-flagged rows.</div>'
       : '';
     document.getElementById('users-list').innerHTML = flaggedBar + (html || '<div style="padding:1rem; color:var(--gray-400);">No users.</div>');
   } catch (e) {

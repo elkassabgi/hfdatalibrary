@@ -15,6 +15,30 @@ const NEWSLETTER_FROM = 'newsletter@hfdatalibrary.com';
 const NEWSLETTER_FROM_NAME = 'HF Data Library Newsletter';
 const SITE_URL = 'https://hfdatalibrary.com';
 
+// Known disposable / temporary email domains — a starter set of common
+// providers plus ones observed in abuse here. Used to flag likely throwaway
+// signups in the admin user list (a review signal, not an auto-ban). Extend
+// as new ones appear. NOTE: privacy providers (proton.me, tutanota) are NOT
+// disposable and are deliberately excluded.
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'passmail.net', 'passinbox.com', 'passmail.com',
+  'mailinator.com', 'guerrillamail.com', 'guerrillamail.info', 'grr.la', 'sharklasers.com',
+  '10minutemail.com', '10minutemail.net', 'temp-mail.org', 'tempmail.com', 'tempmail.net',
+  'tempr.email', 'throwawaymail.com', 'throwaway.email', 'yopmail.com', 'getnada.com', 'nada.email',
+  'trashmail.com', 'trashmail.de', 'maildrop.cc', 'dispostable.com', 'fakeinbox.com', 'mailnesia.com',
+  'mintemail.com', 'mohmal.com', 'emailondeck.com', 'spamgourmet.com', 'tempinbox.com', 'mailcatch.com',
+  'moakt.com', 'discard.email', 'inboxkitten.com', 'harakirimail.com', 'fakemail.net', 'tmail.ws',
+  'mailto.plus', 'fexbox.org', 'maileax.com', 'vmani.com', 'dropmail.me', 'minuteinbox.com',
+  'burnermail.io', 'guerrillamailblock.com', 'spam4.me', 'mvrht.net', 'tafmail.com', 'cuvox.de',
+]);
+
+function isDisposableEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const at = email.lastIndexOf('@');
+  if (at < 0) return false;
+  return DISPOSABLE_EMAIL_DOMAINS.has(email.slice(at + 1).toLowerCase().trim());
+}
+
 // Allowed CORS origins
 const ALLOWED_ORIGINS = [
   'https://hfdatalibrary.com',
@@ -2235,6 +2259,7 @@ async function handleAdmin(path, request, env, cors, ip) {
       ...u,
       shared_ip: !!(u.last_login_ip && sharedMap[u.last_login_ip]),
       shared_ip_count: u.last_login_ip ? (sharedMap[u.last_login_ip] || 1) : 0,
+      disposable_email: isDisposableEmail(u.email),
     }));
 
     return jsonRes({
@@ -2242,6 +2267,7 @@ async function handleAdmin(path, request, env, cors, ip) {
       users: usersOut,
       shared_ip_clusters: sharedRows.results.length,
       flagged_users: usersOut.filter(u => u.shared_ip).length,
+      disposable_users: usersOut.filter(u => u.disposable_email).length,
     }, 200, cors);
   }
 
