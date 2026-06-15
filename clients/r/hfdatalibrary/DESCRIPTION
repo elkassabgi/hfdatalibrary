@@ -1,0 +1,18 @@
+Package: hfdatalibrary
+Type: Package
+Title: Client for the HF Data Library
+Version: 0.1.0
+Authors@R: person("Ahmed", "Elkassabgi", role = c("aut", "cre"), email = "admin@hfdatalibrary.com")
+Description: Access free, research-grade 1-minute OHLCV data for U.S. equities
+    and ETFs from the HF Data Library (hfdatalibrary.com), in raw and clean
+    versions across eight timeframes. Returns tidy data frames.
+License: MIT + file LICENSE
+Encoding: UTF-8
+URL: https://hfdatalibrary.com, https://github.com/elkassabgi/hfdatalibrary
+BugReports: https://github.com/elkassabgi/hfdatalibrary/issues
+Imports:
+    httr,
+    arrow
+Suggests:
+    readr
+RoxygenNote: 7.2.3

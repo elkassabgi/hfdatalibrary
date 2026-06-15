@@ -1,0 +1,4 @@
+export(hfdl_set_key)
+export(hfdl_symbols)
+export(hfdl_get)
+importFrom(httr, GET, add_headers, status_code, content, timeout)
