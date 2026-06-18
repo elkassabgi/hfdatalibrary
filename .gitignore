@@ -12,6 +12,8 @@ HOSTING_RESEARCH_REPORT.md
 session_log.md
 IEX_PIPELINE_PLAN.md
 WEBSITE_PLAN.md
+zenodo_README.md
+huggingface_README.md
 
 # Secrets and large files
 .env*
