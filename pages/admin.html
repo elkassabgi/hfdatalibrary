@@ -16,7 +16,7 @@
     .admin-stat { text-align:center; padding:1.5rem; }
     .admin-stat .num { font-family: var(--font-mono); font-size:2rem; font-weight:700; color:var(--navy); }
     .admin-stat .label { font-size:0.8rem; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.05em; }
-    .user-row { display:grid; grid-template-columns: 1.7fr 2fr 1.4fr 0.9fr 0.9fr 0.8fr 1.3fr 0.75fr; gap:0.5rem; align-items:center; padding:0.75rem 1rem; border-bottom:1px solid var(--gray-200); font-size:0.85rem; }
+    .user-row { display:grid; grid-template-columns: 1.7fr 2fr 1.4fr 0.9fr 0.9fr 0.8fr 1.3fr 0.9fr 0.75fr; gap:0.5rem; align-items:center; padding:0.75rem 1rem; border-bottom:1px solid var(--gray-200); font-size:0.85rem; }
     .user-row:hover { background:var(--gray-50); }
     .user-header { font-weight:600; color:var(--gray-600); background:var(--gray-50); border-radius:var(--radius) var(--radius) 0 0; }
     .badge { display:inline-block; padding:0.15em 0.5em; border-radius:4px; font-size:0.75rem; font-weight:600; }
@@ -104,7 +104,7 @@
       </div>
       <div style="border:1px solid var(--gray-200); border-radius:var(--radius-lg); overflow:hidden;">
         <div class="user-row user-header">
-          <div>Name</div><div>Email</div><div>Institution</div><div>Country</div><div>Role</div><div>Downloads</div><div>Last IP</div><div>Status</div>
+          <div>Name</div><div>Email</div><div>Institution</div><div>Country</div><div>Role</div><div>Downloads</div><div>Last IP</div><div>IP Loc.</div><div>Status</div>
         </div>
         <div id="users-list"></div>
       </div>
@@ -489,6 +489,15 @@ async function loadUsers() {
           + (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="This IP is shared by ' + u.shared_ip_count + ' accounts — possible multi-account abuse">&#9888; ' + u.shared_ip_count + '</span>' : '')
         : '<span style="color:var(--gray-400);">-</span>';
       const dispBadge = u.disposable_email ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="Disposable / temporary email domain">&#9888; temp</span>' : '';
+      // IP-derived location (Cloudflare cf-ipcountry of the last-login IP), distinct
+      // from the self-declared Country. Conservative mismatch flag: only when the
+      // declared value is itself a short code, to avoid "United States" vs "US"
+      // false positives — the two columns sit side-by-side for visual comparison.
+      const dclCountry = (u.country || '').trim().toUpperCase();
+      const geoMismatch = u.ip_country && dclCountry && dclCountry.length <= 3 && dclCountry !== String(u.ip_country).trim().toUpperCase();
+      const ipLocCell = u.ip_country
+        ? '<code style="font-size:0.78rem;' + (geoMismatch ? ' background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; padding:0 0.25em; border-radius:3px;' : '') + '" title="' + (geoMismatch ? 'IP geolocates to ' + esc(u.ip_country) + ' but user declared &quot;' + esc(u.country) + '&quot;' : 'Geolocation of last-login IP (Cloudflare edge)') + '">' + esc(u.ip_country) + (geoMismatch ? ' &#9888;' : '') + '</code>'
+        : '<span style="color:var(--gray-400);">-</span>';
       return '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;' + rowStyle + '">' +
         '<div><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
         '<div style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</div>' +
@@ -497,6 +506,7 @@ async function loadUsers() {
         '<div>' + dirtyMark(u.role) + '</div>' +
         '<div class="mono">' + u.download_count + '</div>' +
         '<div>' + ipCell + '</div>' +
+        '<div>' + ipLocCell + '</div>' +
         '<div>' +
           (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
           (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') +

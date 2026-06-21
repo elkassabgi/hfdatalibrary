@@ -2238,8 +2238,15 @@ async function handleAdmin(path, request, env, cors, ip) {
     const limit = parseInt(url.searchParams.get('limit') || '100');
     const offset = parseInt(url.searchParams.get('offset') || '0');
 
+    // ip_country: geolocation (Cloudflare cf-ipcountry) of the user's last-login
+    // IP, resolved from login_history. This is the IP's actual country — distinct
+    // from users.country (self-declared) — so mismatches are visible to admins.
     const users = await env.DB.prepare(
-      'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?'
+      'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes, ' +
+      '(SELECT lh.country FROM login_history lh WHERE lh.ip_address = users.last_login_ip ' +
+      'AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
+      'ORDER BY lh.id DESC LIMIT 1) AS ip_country ' +
+      'FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?'
     ).bind(limit, offset).all();
 
     const total = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
