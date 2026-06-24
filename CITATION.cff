@@ -29,11 +29,3 @@ abstract: >-
   U.S. equities and ETFs, from December 2002 through the present. Three
   cleaning versions (Raw, Clean, Filled), 27 pre-computed academic
   variables, full methodology documentation. Updated weekly.
-preferred-citation:
-  type: article
-  authors:
-    - family-names: Elkassabgi
-      given-names: Ahmed
-  title: "The Sensitivity of High-Frequency Empirical Results to Data Cleaning Methodology"
-  journal: "Journal of Financial Econometrics"
-  year: 2026
