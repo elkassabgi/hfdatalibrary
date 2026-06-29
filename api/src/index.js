@@ -2470,14 +2470,52 @@ async function handlePublicStats(env, cors) {
     'unknown', 'student', 'retired', 'retail', 'retail trader',
     'retail investor', 'freelance', 'freelancer', 'trader', 'aleppo',
     '-', '--', '.', '..', '...', 'x', 'xx', 'test', 'asdf',
+    // added 2026-06-29 (seen in live data): more placeholders / non-institutions.
+    'non applicable', 'independent researcher', 'private trader', 'private use',
+    'privat', 'perso', 'persoonlijk', 'full-time employee', 'company', 'exploring',
+    'university', 'labs', 'new in fin', 'test university', 'rebel', 'myass',
+    '1qaz2wsx', 'gz', 'berln',
   ];
+  // Canonical names so the SAME school typed different ways (alias / typo /
+  // locale / casing) merges into ONE row instead of splitting its count across
+  // the list. Keyed by LOWER(TRIM(value)). Mirrors the normalizeCountry pass.
+  // Add an entry only when you're confident two values are the same institution.
+  const INSTITUTION_ALIASES = {
+    'stanford': 'Stanford University',
+    'havard': 'Harvard University',
+    'hongkong university': 'University of Hong Kong',
+    '中国人民大学': 'Renmin University of China', // 中国人民大学
+    'erasmus universiteit rotterdam': 'Erasmus University Rotterdam',
+    'michigan': 'University of Michigan',
+    'illinois': 'University of Illinois',
+    'cambridge': 'University of Cambridge',
+    'oxford university': 'University of Oxford',
+    'old dominion university': 'Old Dominion University',
+    'fordham': 'Fordham University',
+  };
   const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
-  const institutions = await env.DB.prepare(
+  // Fetch ALL non-junk institutions (no LIMIT) so aliases can merge BEFORE the
+  // top-N cut, then canonicalize + re-aggregate in JS (same approach as the
+  // country normalization below). ~150 distinct values, so no LIMIT is fine.
+  const instRaw = await env.DB.prepare(
     'SELECT institution, COUNT(*) as users FROM users ' +
     'WHERE is_active = 1 AND TRIM(institution) != "" AND COALESCE(hide_institution, 0) = 0 ' +
     'AND LOWER(TRIM(institution)) NOT IN (' + instPlaceholders + ') ' +
-    'GROUP BY institution ORDER BY users DESC LIMIT 50'
+    'GROUP BY institution'
   ).bind(...INSTITUTION_BLOCKLIST).all();
+  const instMerged = {};
+  for (const row of (instRaw.results || [])) {
+    const name = (row.institution || '').trim();
+    if (!name) continue;
+    const canon = INSTITUTION_ALIASES[name.toLowerCase()] || name;
+    instMerged[canon] = (instMerged[canon] || 0) + row.users;
+  }
+  const institutions = {
+    results: Object.keys(instMerged)
+      .map((institution) => ({ institution, users: instMerged[institution] }))
+      .sort((a, b) => b.users - a.users)
+      .slice(0, 50),
+  };
 
   // Top downloaded tickers
   const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
