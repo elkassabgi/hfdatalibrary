@@ -216,11 +216,14 @@ def _quality(g: pd.DataFrame):
     return obs, gap_rate, int(longest), max_since
 
 
-def compute_ticker(path, ticker: str) -> pd.DataFrame:
-    """Compute the 25 daily variables for one ticker's 1-minute parquet file."""
-    df = pd.read_parquet(path, columns=["datetime", "Open", "High", "Low", "Close", "Volume"])
+def compute_df(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Compute the 25 daily variables for one ticker from an in-memory 1-minute
+    DataFrame (cols: datetime, Open, High, Low, Close, Volume). Single source of
+    truth so both the file path and the daily pipeline (which holds bars in memory)
+    use identical math."""
     if df.empty:
         return pd.DataFrame()
+    df = df[["datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
     if df["datetime"].dtype == "object":
         df["datetime"] = pd.to_datetime(df["datetime"])
     df = df.sort_values("datetime")
@@ -238,6 +241,51 @@ def compute_ticker(path, ticker: str) -> pd.DataFrame:
     daily["amihud_illiquidity"] = daily["trade_date"].map(ctc.abs() / dv).to_numpy()
     daily["ticker"] = ticker
     return daily
+
+
+def compute_ticker(path, ticker: str) -> pd.DataFrame:
+    """Compute the 25 daily variables for one ticker's 1-minute parquet file."""
+    df = pd.read_parquet(path, columns=["datetime", "Open", "High", "Low", "Close", "Volume"])
+    return compute_df(df, ticker)
+
+
+def compute_recent_days(df: pd.DataFrame, ticker: str, existing_dates=None,
+                        max_new: int = 5) -> pd.DataFrame:
+    """Compute variables for only the genuinely-new trading day(s) in `df`,
+    bounding the compute to those days plus one prior trading day each (the only
+    cross-day context overnight_return/Amihud need - verified to reproduce the full
+    compute exactly). This is what the DAILY pipeline calls, so it never recomputes
+    decades for one new row.
+
+    existing_dates: trade_dates already stored in R2 (skipped). max_new caps how
+    many recent missing days a single run computes - a large gap means the one-time
+    historical backfill (separate local job) hasn't run yet, not that the daily run
+    should recompute 23 years.
+    """
+    if df.empty:
+        return pd.DataFrame()
+    d = df[["datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
+    if d["datetime"].dtype == "object":
+        d["datetime"] = pd.to_datetime(d["datetime"])
+    td = d["datetime"].dt.normalize()
+    all_dates = sorted(pd.unique(td))
+    have = {pd.Timestamp(x).normalize() for x in (existing_dates or [])}
+    new = [x for x in all_dates if x not in have]
+    if not new:
+        return pd.DataFrame()
+    targets = new[-max_new:]
+    pos = {x: i for i, x in enumerate(all_dates)}
+    need = set(targets)
+    for t in targets:                      # one prior trading day per target (context)
+        i = pos[t]
+        if i > 0:
+            need.add(all_dates[i - 1])
+    sub = d[td.isin(need)]
+    daily = compute_df(sub, ticker)
+    if daily.empty:
+        return daily
+    tset = set(targets)
+    return daily[daily["trade_date"].isin(tset)].reset_index(drop=True)
 
 
 # ---- batch runner ----------------------------------------------------------
