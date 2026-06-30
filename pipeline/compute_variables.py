@@ -7,7 +7,7 @@ which computed a different ~16-measure set (missing ~13 of the advertised 25) an
 only for the clean version.
 
 The 25 (dictionary numbering):
-  Volatility:   1 rv_5min  2 rv_1min  3 bipower_variation  4 parkinson  5 yang_zhang
+  Volatility:   1 rv_5min  2 rv_1min  3 bipower_variation  4 parkinson  5 rogers_satchell
   Spreads:      6 roll_spread_bps  7 corwin_schultz_bps
   Autocorr:     8 ac1  9 vr5  10 vr10
   Jumps:        11 bns_z  12 bns_jump_1pct  13 bns_jump_5pct
@@ -41,7 +41,6 @@ import numpy as np
 import pandas as pd
 
 # ---- constants (BNS) -------------------------------------------------------
-_MU1 = math.sqrt(2.0 / math.pi)                       # E|N(0,1)|
 _MU43 = 2.0 ** (2.0 / 3.0) * math.gamma(7.0 / 6.0) / math.gamma(0.5)  # E|Z|^(4/3)
 _THETA = (math.pi ** 2) / 4.0 + math.pi - 5.0        # ~0.6090 (Huang-Tauchen)
 SESSION_MINUTES = 390                                 # regular 09:30-16:00 grid
@@ -59,11 +58,6 @@ def _log_returns(prices: np.ndarray) -> np.ndarray:
     return np.diff(np.log(p))
 
 
-def _sampled_returns(prices: np.ndarray, step: int) -> np.ndarray:
-    p = prices[::step]
-    return _log_returns(p)
-
-
 def _day_vars(g: pd.DataFrame) -> pd.Series:
     """All within-day variables for one trading day (bars sorted by time)."""
     close = g["Close"].to_numpy(dtype=float)
@@ -77,8 +71,10 @@ def _day_vars(g: pd.DataFrame) -> pd.Series:
     ts = pd.to_datetime(g["datetime"].to_numpy())
     cs = pd.Series(np.where(close > 0, close, np.nan), index=ts)
     r1 = _log_returns(close)
-    c5 = cs.resample("5min").last().dropna().to_numpy()
-    c10 = cs.resample("10min").last().dropna().to_numpy()
+    # right-closed/right-labelled so 5/10-min closes land on the open-aligned grid
+    # (09:30,09:35,...,16:00) and each k-min return == sum of its k 1-min returns
+    c5 = cs.resample("5min", label="right", closed="right").last().dropna().to_numpy()
+    c10 = cs.resample("10min", label="right", closed="right").last().dropna().to_numpy()
     r5 = np.diff(np.log(c5)) if c5.size >= 2 else np.empty(0)
     r10 = np.diff(np.log(c10)) if c10.size >= 2 else np.empty(0)
     M = r1.size
@@ -91,13 +87,13 @@ def _day_vars(g: pd.DataFrame) -> pd.Series:
         bipower = (math.pi / 2.0) * float(np.sum(ar[1:] * ar[:-1]))
     else:
         bipower = np.nan
-    parkinson = (math.log(hi / lo) ** 2) / (4.0 * math.log(2.0)) if (hi > 0 and lo > 0 and hi > lo) else np.nan
-    # Rogers-Satchell (per-day core of Yang-Zhang)
+    parkinson = (math.log(hi / lo) ** 2) / (4.0 * math.log(2.0)) if (hi > 0 and lo > 0 and hi >= lo) else np.nan
+    # Rogers-Satchell (the drift-independent per-day core of Yang-Zhang 2000)
     if hi > 0 and lo > 0 and o > 0 and c > 0:
-        yang_zhang = (math.log(hi / o) * math.log(hi / c) + math.log(lo / o) * math.log(lo / c))
-        yang_zhang = max(yang_zhang, 0.0)
+        rogers_satchell = (math.log(hi / o) * math.log(hi / c) + math.log(lo / o) * math.log(lo / c))
+        rogers_satchell = max(rogers_satchell, 0.0)
     else:
-        yang_zhang = np.nan
+        rogers_satchell = np.nan
 
     # --- spreads (basis points) ---
     if M >= 3:
@@ -126,24 +122,24 @@ def _day_vars(g: pd.DataFrame) -> pd.Series:
     # --- liquidity ---
     dollar_volume = float(np.sum(close * vol))
     share_volume = float(np.sum(vol))
-    num_trades = int(g.shape[0])
-    amihud = (abs(math.log(c / o)) / dollar_volume) if (o > 0 and c > 0 and dollar_volume > 0) else np.nan
+    num_trades = int((vol > 0).sum())   # 1-minute bars with actual trading (Volume>0)
 
     # --- data quality (390-minute session grid) ---
     obs_bars, gap_rate, longest_gap, max_since = _quality(g)
 
     # --- returns (open-to-close, hl range; overnight added across days) ---
     o2c = math.log(c / o) if (o > 0 and c > 0) else np.nan
-    hl_range = math.log(hi / lo) if (hi > 0 and lo > 0 and hi > lo) else np.nan
+    hl_range = math.log(hi / lo) if (hi > 0 and lo > 0 and hi >= lo) else np.nan
     intraday_std = float(np.std(r1)) if M else np.nan
 
     return pd.Series({
         "rv_5min": rv_5min, "rv_1min": rv_1min, "bipower_variation": bipower,
-        "parkinson": parkinson, "yang_zhang": yang_zhang,
+        "parkinson": parkinson, "rogers_satchell": rogers_satchell,
         "roll_spread_bps": roll_bps, "corwin_schultz_bps": corwin_schultz_bps,
         "ac1": ac1, "vr5": vr5, "vr10": vr10,
         "bns_z": bns_z, "bns_jump_1pct": bns_1, "bns_jump_5pct": bns_5,
-        "amihud_illiquidity": amihud, "dollar_volume": dollar_volume,
+        "amihud_illiquidity": np.nan,  # overwritten in compute_ticker (needs prior close)
+        "dollar_volume": dollar_volume,
         "share_volume": share_volume, "num_trades": num_trades,
         "gap_rate": gap_rate, "observed_bars": obs_bars,
         "longest_gap": longest_gap, "max_bars_since_trade": max_since,
@@ -199,12 +195,16 @@ def _quality(g: pd.DataFrame):
     sess = mins[(mins >= 570) & (mins <= 959)]          # 9:30=570 .. 15:59=959
     idx = np.unique((sess - 570).to_numpy())            # minute-of-session 0..389
     obs = int(idx.size)
-    gap_rate = float(1.0 - obs / SESSION_MINUTES)
-    gap_rate = min(max(gap_rate, 0.0), 1.0)
     if obs == 0:
         return 0, 1.0, SESSION_MINUTES, SESSION_MINUTES
-    present = np.zeros(SESSION_MINUTES, dtype=bool)
-    present[idx[idx < SESSION_MINUTES]] = True
+    # Early-close-aware grid: a dense session ending by ~13:10 (minute 220) is an
+    # NYSE early-close half-day (1pm close -> 210 bars), not a gappy full day, so
+    # score it against the shorter session - else the full 390-grid.
+    last_ms = int(idx.max())
+    expected = (last_ms + 1) if (last_ms <= 220 and obs >= 100) else SESSION_MINUTES
+    gap_rate = float(min(max(1.0 - obs / expected, 0.0), 1.0))
+    present = np.zeros(expected, dtype=bool)
+    present[idx[idx < expected]] = True
     # longest run of consecutive missing minutes
     longest = cur = 0
     for v in present:
@@ -232,6 +232,10 @@ def compute_ticker(path, ticker: str) -> pd.DataFrame:
     last_close = df.groupby("trade_date")["Close"].last()
     overnight = np.log(first_open / last_close.shift(1))
     daily["overnight_return"] = daily["trade_date"].map(overnight).to_numpy()
+    # Amihud (#14): |close-to-close daily return| / dollar volume (Amihud 2002)
+    ctc = np.log(last_close / last_close.shift(1))
+    dv = daily.set_index("trade_date")["dollar_volume"]
+    daily["amihud_illiquidity"] = daily["trade_date"].map(ctc.abs() / dv).to_numpy()
     daily["ticker"] = ticker
     return daily
 
