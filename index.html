@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HF Data Library — Free High-Frequency U.S. Equity Data for Research</title>
-  <meta name="description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Raw and Clean versions, 25 pre-computed academic variables, full documentation. Updated daily.">
+  <title>Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV) - HF Data</title>
+  <meta name="description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (~1.5B bars). Raw &amp; Clean versions, 25 academic variables. Free TAQ/CRSP alternative.">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="canonical" href="https://hfdatalibrary.com/">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="HF Data Library — Free High-Frequency U.S. Equity Data">
-  <meta property="og:description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Raw and Clean versions, 25 pre-computed academic variables, full documentation. Updated daily.">
+  <meta property="og:title" content="Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV)">
+  <meta property="og:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (~1.5B bars). Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
   <meta property="og:url" content="https://hfdatalibrary.com/">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
@@ -21,67 +21,196 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="HF Data Library — Free High-Frequency U.S. Equity Data">
-  <meta name="twitter:description" content="Free, research-grade, 1-minute OHLCV data for 1,391 U.S. equities and ETFs. Updated daily.">
+  <meta name="twitter:title" content="Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV)">
+  <meta name="twitter:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present. Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
   <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
 
-  <!-- Google Dataset Search -->
+  <!-- Structured data: Dataset (Google Dataset Search) + Organization + WebSite + FAQPage -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Dataset",
-    "name": "HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)",
-    "description": "Free high-frequency (1-minute) OHLCV data for 1,391 U.S. equities and ETFs, 2002-present. Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, full methodology documentation.",
-    "identifier": "https://doi.org/10.5281/zenodo.19501605",
-    "sameAs": "https://zenodo.org/records/19501605",
-    "url": "https://hfdatalibrary.com/",
-    "license": "https://creativecommons.org/licenses/by/4.0/",
-    "creator": {
-      "@type": "Person",
-      "name": "Ahmed Elkassabgi",
-      "affiliation": {
+    "@graph": [
+      {
+        "@type": "Dataset",
+        "@id": "https://hfdatalibrary.com/#dataset",
+        "name": "HF Data Library: Free 1-Minute Intraday Stock Data (OHLCV)",
+        "description": "Free high-frequency, intraday (1-minute) OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to the present (~1.5 billion bars). Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, REST API, and full methodology documentation. A free, citable alternative to TAQ and CRSP for intraday equity research.",
+        "url": "https://hfdatalibrary.com/",
+        "identifier": "https://doi.org/10.5281/zenodo.19501605",
+        "sameAs": "https://zenodo.org/records/19501605",
+        "isAccessibleForFree": true,
+        "creativeWorkStatus": "Published",
+        "license": "https://creativecommons.org/licenses/by/4.0/",
+        "inLanguage": "en",
+        "dateModified": "2026-06-27",
+        "datePublished": "2026-04-09",
+        "version": "1.0",
+        "creator": {
+          "@type": "Person",
+          "name": "Ahmed Elkassabgi",
+          "identifier": "https://orcid.org/0000-0002-5926-7493",
+          "affiliation": {
+            "@type": "Organization",
+            "name": "University of Central Arkansas"
+          }
+        },
+        "publisher": { "@id": "https://hfdatalibrary.com/#org" },
+        "includedInDataCatalog": {
+          "@type": "DataCatalog",
+          "name": "Zenodo",
+          "url": "https://zenodo.org/"
+        },
+        "measurementTechnique": "Aggregation of trade-level U.S. equity data into 1-minute OHLCV bars, with a nine-step cleaning pipeline applied for the Clean version. See the Known Issues page for the March 2022 data-source change.",
+        "temporalCoverage": "2002-12-30/..",
+        "spatialCoverage": "United States",
+        "variableMeasured": [
+          "Open/High/Low/Close/Volume",
+          "Realized volatility",
+          "Bipower variation",
+          "Roll implied spread",
+          "Corwin-Schultz spread",
+          "Amihud illiquidity",
+          "BNS jump statistic",
+          "Variance ratios",
+          "Return autocorrelation"
+        ],
+        "distribution": [
+          {
+            "@type": "DataDownload",
+            "encodingFormat": "application/x-parquet",
+            "contentUrl": "https://hfdatalibrary.com/pages/download"
+          },
+          {
+            "@type": "DataDownload",
+            "encodingFormat": "text/csv",
+            "contentUrl": "https://hfdatalibrary.com/pages/download"
+          },
+          {
+            "@type": "DataDownload",
+            "encodingFormat": "application/zip",
+            "contentUrl": "https://zenodo.org/records/19501605"
+          }
+        ],
+        "keywords": [
+          "free intraday stock data",
+          "1-minute stock data",
+          "minute-by-minute stock data",
+          "historical stock data",
+          "high-frequency data",
+          "intraday",
+          "OHLCV",
+          "stock market data",
+          "equity",
+          "ETF",
+          "market microstructure",
+          "realized volatility",
+          "financial econometrics",
+          "TAQ alternative",
+          "CRSP alternative",
+          "backtesting data",
+          "CC BY 4.0"
+        ]
+      },
+      {
         "@type": "Organization",
-        "name": "University of Central Arkansas"
+        "@id": "https://hfdatalibrary.com/#org",
+        "name": "HF Data Library",
+        "url": "https://hfdatalibrary.com/",
+        "logo": "https://hfdatalibrary.com/assets/og-image.svg",
+        "founder": {
+          "@type": "Person",
+          "name": "Ahmed Elkassabgi",
+          "identifier": "https://orcid.org/0000-0002-5926-7493",
+          "affiliation": {
+            "@type": "Organization",
+            "name": "University of Central Arkansas"
+          }
+        },
+        "sameAs": [
+          "https://zenodo.org/records/19501605",
+          "https://orcid.org/0000-0002-5926-7493",
+          "https://github.com/elkassabgi/hfdatalibrary"
+        ]
       },
-      "identifier": "https://orcid.org/0000-0002-5926-7493"
-    },
-    "distribution": [
       {
-        "@type": "DataDownload",
-        "encodingFormat": "application/x-parquet",
-        "contentUrl": "https://hfdatalibrary.com/pages/download"
+        "@type": "WebSite",
+        "@id": "https://hfdatalibrary.com/#website",
+        "name": "HF Data Library",
+        "url": "https://hfdatalibrary.com/",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://hfdatalibrary.com/#org" }
       },
       {
-        "@type": "DataDownload",
-        "encodingFormat": "application/zip",
-        "contentUrl": "https://zenodo.org/records/19501605"
+        "@type": "FAQPage",
+        "@id": "https://hfdatalibrary.com/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is the data really free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The entire dataset is free under the Creative Commons CC BY 4.0 license - no subscription and no paywall. You only need to attribute the HF Data Library."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What does the dataset cover?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "1-minute OHLCV bars for 1,391 U.S. stocks and ETFs from December 2002 to the present (about 1.5 billion bars), in two cleaning versions (Raw and Clean), plus 25 pre-computed academic variables per ticker per day."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Which tickers are included?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "1,391 U.S. stocks and ETFs, including large caps and major index members such as AAPL, MSFT, TSLA, SPY, and QQQ. See the Tickers page for the full list."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What format is the data in?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Apache Parquet and CSV files for download, and a free REST API that returns JSON, CSV, or Parquet."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How far back does the 1-minute history go?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "December 30, 2002 to the present for most tickers. Coverage varies by ticker - newer listings start later, and a handful of series begin earlier."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is there an API?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. A free REST API is available with a free key and a 300 requests-per-minute limit, returning data in JSON, CSV, or Parquet."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is this a free alternative to TAQ or CRSP?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "It is a free, citable option for intraday U.S. equity research without WRDS - 1-minute bars plus 25 pre-computed measures. It is not a tick-level replacement for TAQ, since the bars are aggregated to one minute."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I cite the data?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Cite the dataset by its Zenodo DOI, 10.5281/zenodo.19501605. A formatted citation, BibTeX, and a CITATION.cff file are on the Cite page."
+            }
+          }
+        ]
       }
-    ],
-    "temporalCoverage": "2002-12-30/..",
-    "spatialCoverage": "United States",
-    "variableMeasured": [
-      "Open/High/Low/Close/Volume",
-      "Realized volatility",
-      "Bipower variation",
-      "Roll implied spread",
-      "Corwin-Schultz spread",
-      "Amihud illiquidity",
-      "BNS jump statistic",
-      "Variance ratios",
-      "Return autocorrelation"
-    ],
-    "keywords": [
-      "high-frequency data",
-      "intraday",
-      "OHLCV",
-      "equity",
-      "ETF",
-      "market microstructure",
-      "realized volatility",
-      "financial econometrics"
-    ],
-    "datePublished": "2026-04-09",
-    "version": "1.0"
+    ]
   }
   </script>
 
@@ -119,8 +248,8 @@
 <!-- ── Hero ── -->
 <section class="hero">
   <div class="container">
-    <h1>HF Data <span>Library</span></h1>
-    <p class="subtitle">Free, research-grade, high-frequency U.S. equity data for academics and researchers. Documented, version-controlled, and updated <span style="text-decoration:line-through; opacity:0.5;">weekly</span> <strong>daily</strong>.</p>
+    <h1>Free 1-Minute Intraday U.S. <span>Stock &amp; ETF</span> Data</h1>
+    <p class="subtitle">Free, research-grade, high-frequency intraday data — 1-minute OHLCV bars for 1,391 U.S. stocks and ETFs. Documented, version-controlled, and updated <strong>daily</strong>.</p>
 
     <div class="stats-bar">
       <div class="stat-item">
@@ -128,7 +257,7 @@
         <span class="stat-label">Tickers</span>
       </div>
       <div class="stat-item" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:1.25rem 1rem; box-shadow:0 4px 20px rgba(0,0,0,0.3); margin-top:-0.75rem;">
-        <span class="stat-number" id="bars-counter" data-meta="bars-counter">1,533,014,567</span>
+        <span class="stat-number" id="bars-counter" data-meta="bars-counter">1,551,364,273</span>
         <span class="stat-label">1-Minute Bars</span>
       </div>
       <div class="stat-item">
@@ -136,7 +265,7 @@
         <span class="stat-label">Years of Data</span>
       </div>
       <div class="stat-item">
-        <span class="stat-number" data-meta="variables">27</span>
+        <span class="stat-number" data-meta="variables">25</span>
         <span class="stat-label">Academic Variables</span>
       </div>
     </div>
@@ -162,9 +291,10 @@
     <div class="feature-row">
       <div class="feature-text">
         <h2>What is this?</h2>
-        <p>One-minute OHLCV bars for 1,391 U.S. equities and ETFs, from December 2002 through the present.</p>
+        <p>One-minute OHLCV bars for 1,391 U.S. stocks and ETFs (equities and exchange-traded funds), from December 2002 through the present.</p>
         <p>Two cleaning versions (Raw and Clean) so you can choose the level of processing appropriate for your research. Twenty-five pre-computed academic variables per ticker per day. Full methodology documentation.</p>
-        <p>Updated every week. No subscription. No paywall. Licensed under <a href="pages/license">CC BY 4.0</a>.</p>
+        <p>A free, citable alternative to TAQ and CRSP for intraday research — minute-by-minute history for backtesting, volatility estimation, and market-microstructure studies.</p>
+        <p>Updated daily. No subscription. No paywall. Licensed under <a href="pages/license">CC BY 4.0</a>.</p>
       </div>
       <div class="feature-visual">
         <pre><code># Python — load any ticker in seconds
@@ -200,7 +330,7 @@ print(df.head())
         <p><strong>Best for:</strong> Volatility estimation, spread measurement, jump detection — most empirical finance.</p>
       </div>
     </div>
-    <p style="text-align:center; margin-top:2rem; color:var(--gray-500); font-size:0.9rem; max-width:700px; margin-left:auto; margin-right:auto;">Note: A gap-filled version is not distributed. Gap-filling (LOCF) introduces biases documented in the accompanying paper — researchers who need a regular grid can apply LOCF to the Clean version themselves.</p>
+    <p style="text-align:center; margin-top:2rem; color:var(--gray-500); font-size:0.9rem; max-width:700px; margin-left:auto; margin-right:auto;">Note: A gap-filled version is not distributed. Gap-filling (LOCF) introduces biases documented in the <a href="pages/docs">methodology</a> — researchers who need a regular grid can apply LOCF to the Clean version themselves.</p>
   </div>
 </section>
 
@@ -253,7 +383,7 @@ print(df.head())
       <div class="card">
         <div class="card-icon">&#8681;</div>
         <h3>Browser Download</h3>
-        <p>Download individual tickers or pre-packaged bundles (S&amp;P 500, Nasdaq 100, by sector). Click and go — no account needed for basic downloads.</p>
+        <p>Download individual tickers or pre-packaged bundles (S&amp;P 500, Nasdaq 100, by sector) as Parquet or CSV. Click and go — no account needed for basic downloads.</p>
         <a href="pages/download" class="btn btn-primary" style="margin-top:1rem;">Browse Downloads</a>
       </div>
       <div class="card">
@@ -304,7 +434,7 @@ print(df.head())
           </tr>
           <tr>
             <td><strong>Cleaning versions</strong></td>
-            <td class="comparison-highlight"><span class="comparison-check">3 versions</span></td>
+            <td class="comparison-highlight"><span class="comparison-check">2 versions</span></td>
             <td>1 version</td>
             <td><span class="comparison-x">None</span></td>
             <td><span class="comparison-x">None</span></td>
@@ -353,13 +483,54 @@ print(df.head())
           </tr>
           <tr>
             <td><strong>Updated</strong></td>
-            <td class="comparison-highlight"><span style="text-decoration:line-through; opacity:0.5;">Weekly</span> <strong>Daily</strong></td>
+            <td class="comparison-highlight"><strong>Daily</strong></td>
             <td>Quarterly</td>
             <td>Daily</td>
             <td>Real-time</td>
           </tr>
         </tbody>
       </table>
+    </div>
+    <p style="text-align:center; margin-top:1.5rem; font-size:0.95rem;"><a href="pages/taq-crsp-alternative">Read more: a free TAQ &amp; CRSP alternative for intraday research →</a></p>
+  </div>
+</section>
+
+<!-- ── FAQ ── -->
+<section class="section section-alt">
+  <div class="container" style="max-width:820px;">
+    <h2 style="text-align:center; margin-bottom:2.5rem;">Frequently asked questions</h2>
+
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">Is the data really free?</h3>
+      <p>Yes. The entire dataset is free under the Creative Commons <a href="pages/license">CC BY 4.0</a> license — no subscription and no paywall. You only need to attribute the HF Data Library.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">What does the dataset cover?</h3>
+      <p>1-minute OHLCV bars for 1,391 U.S. stocks and ETFs from December 2002 to the present (about 1.5 billion bars), in two cleaning versions (Raw and Clean), plus 25 pre-computed academic variables per ticker per day.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">Which tickers are included?</h3>
+      <p>1,391 U.S. stocks and ETFs, including large caps and major index members such as AAPL, MSFT, TSLA, SPY, and QQQ. See the <a href="pages/tickers">Tickers page</a> for the full list.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">What format is the data in?</h3>
+      <p>Apache Parquet and CSV files for download, and a free <a href="pages/api">REST API</a> that returns JSON, CSV, or Parquet.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">How far back does the 1-minute history go?</h3>
+      <p>December 30, 2002 to the present for most tickers. Coverage varies by ticker — newer listings start later, and a handful of series begin earlier.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">Is there an API?</h3>
+      <p>Yes. A free <a href="pages/api">REST API</a> is available with a free key and a 300 requests-per-minute limit, returning data in JSON, CSV, or Parquet.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">Is this a free alternative to TAQ or CRSP?</h3>
+      <p>It is a free, citable option for intraday U.S. equity research without WRDS — 1-minute bars plus 25 pre-computed measures. It is not a tick-level replacement for TAQ, since the bars are aggregated to one minute. <a href="pages/taq-crsp-alternative">See the full comparison →</a></p>
+    </div>
+    <div class="faq-item">
+      <h3 style="margin-bottom:0.35rem;">How do I cite the data?</h3>
+      <p>Cite the dataset by its Zenodo DOI, <strong>10.5281/zenodo.19501605</strong>. A formatted citation, BibTeX, and a CITATION.cff file are on the <a href="pages/cite">Cite page</a>.</p>
     </div>
   </div>
 </section>
@@ -370,7 +541,7 @@ print(df.head())
     <div class="footer-grid">
       <div>
         <h4>HF Data Library</h4>
-        <p>Free, research-grade, high-frequency U.S. equity data. Built and maintained by Ahmed Elkassabgi at the University of Central Arkansas.</p>
+        <p>Free, research-grade, high-frequency 1-minute intraday U.S. stock &amp; ETF data. Built and maintained by Ahmed Elkassabgi at the University of Central Arkansas.</p>
         <p style="margin-top:0.75rem;">Licensed under <a href="pages/license">CC BY 4.0</a></p>
       </div>
       <div>
@@ -380,6 +551,7 @@ print(df.head())
           <li><a href="pages/download">Download</a></li>
           <li><a href="pages/versions">Data Versions</a></li>
           <li><a href="pages/dictionary">Data Dictionary</a></li>
+          <li><a href="pages/taq-crsp-alternative">TAQ/CRSP Alternative</a></li>
         </ul>
       </div>
       <div>

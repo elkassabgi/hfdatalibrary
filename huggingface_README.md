@@ -43,7 +43,7 @@ Free registration required (email, ORCID, or Google). Data is available as direc
 - **1,391 tickers** of U.S. equities and ETFs
 - **1.53 billion** 1-minute bars (clean version)
 - **December 2002 – present** (with 45 tickers extending to January 1991)
-- **Weekly automated updates**
+- **Daily automated updates**
 
 ### Cleaning versions
 
@@ -52,7 +52,7 @@ Two cleaning versions are provided:
 - **Raw:** as received from the source, no modifications
 - **Clean:** nine-step cleaning pipeline applied (outside-hours removal, OHLC violations, duplicates, Brownlees-Gallo outlier filter, splice-boundary adjustment)
 
-A gap-filled version is intentionally **not** distributed — see the accompanying paper for documented biases introduced by LOCF gap-filling. Researchers who need a regular grid can apply LOCF to the Clean version themselves.
+A gap-filled version is intentionally **not** distributed — see the methodology documentation for documented biases introduced by LOCF gap-filling. Researchers who need a regular grid can apply LOCF to the Clean version themselves.
 
 ### Available timeframes
 

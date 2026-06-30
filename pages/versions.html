@@ -3,9 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Data Versions — HF Data Library</title>
-  <meta name="description" content="Data cleaning versions for HF Data Library — Raw (as-received) vs Clean (9-step filtered) bars, with trade-offs and recommended use cases.">
+  <title>Raw vs Clean 1-Minute Stock Data - HF Data Library</title>
+  <meta name="description" content="Compare Raw vs Clean versions of free 1-minute OHLCV stock data: 9-step cleaning, outlier filtering, gaps - and which to use for volatility &amp; backtesting.">
   <link rel="canonical" href="https://hfdatalibrary.com/pages/versions">
+  <!-- Open Graph -->
+  <meta property="og:title" content="Raw vs Clean 1-Minute Stock Data - HF Data Library">
+  <meta property="og:description" content="Compare Raw vs Clean versions of free 1-minute OHLCV stock data: 9-step cleaning, outlier filtering, gaps - and which to use for volatility &amp; backtesting.">
+  <meta property="og:url" content="https://hfdatalibrary.com/pages/versions">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Raw vs Clean 1-Minute Stock Data - HF Data Library">
+  <meta name="twitter:description" content="Compare Raw vs Clean versions of free 1-minute OHLCV stock data: 9-step cleaning, outlier filtering, gaps - and which to use for volatility &amp; backtesting.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -37,14 +49,14 @@
 <section style="background: var(--navy); color: #fff; padding: 3rem 0;">
   <div class="container">
     <h1 style="color:#fff; margin-bottom:0.5rem;">Data Versions</h1>
-    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Three cleaning levels. Choose the one that matches your research design.</p>
+    <p style="color: rgba(255,255,255,0.7); font-size:1.1rem; margin:0;">Two cleaning levels. Choose the one that matches your research design.</p>
   </div>
 </section>
 
 <section class="section">
   <div class="container" style="max-width:900px;">
 
-    <p style="font-size:1.05rem; margin-bottom:2.5rem;">Every ticker is available in three versions. The same underlying trade data, processed to different levels. You choose what's appropriate for your research question.</p>
+    <p style="font-size:1.05rem; margin-bottom:2.5rem;">Every ticker is available in two versions. The same underlying trade data, processed to different levels. You choose what's appropriate for your research question.</p>
 
     <!-- Version 1: Raw -->
     <div class="card version-card raw" style="margin-bottom:2rem; padding:2.5rem;">
@@ -85,7 +97,7 @@
           <h4>What's in it</h4>
           <ul style="margin-left:1.25rem;">
             <li>One-minute OHLCV bars, cleaned</li>
-            <li>388,559 bars removed (0.025% of total)</li>
+            <li>47,533,401 bars removed (3.06% of raw)</li>
             <li>Gaps preserved as-is (irregular time series)</li>
             <li>1.5+B total bars</li>
           </ul>
@@ -110,7 +122,7 @@
     <div class="card" style="margin-bottom:2rem; padding:2rem; background: #fef9ee; border-color: #fde68a;">
       <h3 style="margin-top:0; color:#92600a;">A note on gap-filled data</h3>
       <p>Some researchers use LOCF (Last Observation Carried Forward) gap-filling to produce a regular 390-bar daily grid. <strong>This library does not distribute a gap-filled version.</strong></p>
-      <p>The accompanying paper shows that LOCF introduces systematic biases: it suppresses realized volatility, compresses bid-ask spreads, inflates return autocorrelation, and reduces jump detection power. These effects scale with the gap rate and are most severe for less liquid tickers.</p>
+      <p>Our methodology shows that LOCF introduces systematic biases: it suppresses realized volatility, compresses bid-ask spreads, inflates return autocorrelation, and reduces jump detection power. These effects scale with the gap rate and are most severe for less liquid tickers.</p>
       <p>Researchers who need a regular grid can apply LOCF to the Clean version in one line of pandas:</p>
       <pre><code>df = df.set_index('datetime').resample('1min').ffill()</code></pre>
       <p style="margin-bottom:0;"><strong>We recommend documenting this step and its implications in any paper that uses filled data.</strong></p>
@@ -124,8 +136,8 @@
           <tr><th>Property</th><th>Raw</th><th>Clean</th></tr>
         </thead>
         <tbody>
-          <tr><td>Total bars</td><td class="mono" data-meta="bars-raw">1,533,403,126</td><td class="mono" data-meta="bars-clean">1,533,014,567</td></tr>
-          <tr><td>Bars removed</td><td class="mono">0</td><td class="mono" data-meta="bars-removed">388,559</td></tr>
+          <tr><td>Total bars</td><td class="mono" data-meta="bars-raw">1,551,364,273</td><td class="mono" data-meta="bars-clean">1,503,830,872</td></tr>
+          <tr><td>Bars removed</td><td class="mono">0</td><td class="mono" data-meta="bars-removed">47,533,401</td></tr>
           <tr><td>Gaps preserved?</td><td>Yes</td><td>Yes</td></tr>
           <tr><td>Outliers removed?</td><td>No</td><td>Yes</td></tr>
           <tr><td>Ready for most research?</td><td>No</td><td>Yes</td></tr>

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Free TAQ &amp; CRSP Alternative - 1-Minute Stock Data</title>
+  <meta name="description" content="A free, citable alternative to TAQ and CRSP for intraday research: 1-minute OHLCV for 1,391 US stocks &amp; ETFs, 2002-present, 25 academic variables, no WRDS.">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/taq-crsp-alternative">
+  <meta name="author" content="Ahmed Elkassabgi">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="A Free TAQ &amp; CRSP Alternative for Intraday Research">
+  <meta property="og:description" content="Free, citable 1-minute OHLCV data for 1,391 US stocks &amp; ETFs (2002-present), 25 academic variables, no WRDS required. CC BY 4.0.">
+  <meta property="og:url" content="https://hfdatalibrary.com/pages/taq-crsp-alternative">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="A Free TAQ &amp; CRSP Alternative for Intraday Research">
+  <meta name="twitter:description" content="Free, citable 1-minute OHLCV data for 1,391 US stocks &amp; ETFs (2002-present), 25 academic variables, no WRDS required.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://hfdatalibrary.com/" },
+          { "@type": "ListItem", "position": 2, "name": "Free TAQ & CRSP Alternative", "item": "https://hfdatalibrary.com/pages/taq-crsp-alternative" }
+        ]
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://hfdatalibrary.com/#dataset",
+        "name": "HF Data Library: Free 1-Minute Intraday Stock Data (OHLCV)",
+        "description": "Free, citable 1-minute OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to present - a free alternative to TAQ and CRSP for intraday equity research, no WRDS required.",
+        "url": "https://hfdatalibrary.com/",
+        "identifier": "https://doi.org/10.5281/zenodo.19501605",
+        "sameAs": "https://zenodo.org/records/19501605",
+        "isAccessibleForFree": true,
+        "license": "https://creativecommons.org/licenses/by/4.0/",
+        "creator": {
+          "@type": "Person",
+          "name": "Ahmed Elkassabgi",
+          "identifier": "https://orcid.org/0000-0002-5926-7493"
+        }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data">Data</a></li>
+      <li><a href="tickers">Tickers</a></li>
+      <li><a href="docs">Documentation</a></li>
+      <li><a href="api">API</a></li>
+      <li><a href="download">Download</a></li>
+      <li><a href="code">Code</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
+      <li><a href="cite">Cite</a></li>
+      <li><a href="stats">Stats</a></li>
+      <li><a href="contact">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section class="hero" style="padding:3.5rem 0;">
+  <div class="container">
+    <h1>A Free <span>TAQ &amp; CRSP</span> Alternative</h1>
+    <p class="subtitle">Need intraday U.S. equity data but don't have WRDS, TAQ, or CRSP access? The HF Data Library gives you free, citable 1-minute OHLCV history for 1,391 stocks and ETFs — built for academic research, teaching, and backtesting.</p>
+    <div class="btn-group">
+      <a href="download" class="btn btn-primary">Download Data</a>
+      <a href="docs" class="btn btn-outline">Read the Methodology</a>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:820px;">
+    <h2>Why researchers use it as a TAQ/CRSP alternative</h2>
+    <p>Commercial intraday data for U.S. equities is expensive and usually reached through a WRDS subscription — NYSE Trade and Quote (TAQ) for tick-level trades and quotes, and CRSP for daily security prices and returns. Students, independent researchers, and anyone without an institutional subscription are often locked out.</p>
+    <p>The HF Data Library is a free, openly licensed option for the large share of intraday work that needs <strong>1-minute OHLCV bars</strong> rather than full tick data: realized-volatility estimation, spread and liquidity proxies, jump detection, intraday seasonality, event studies, and backtesting prototypes. Every series is downloadable directly or through a free REST API, and the dataset has a citable Zenodo DOI.</p>
+
+    <h2 style="margin-top:2.5rem;">How it compares</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="comparison-highlight">HF Data Library</th>
+            <th>NYSE TAQ</th>
+            <th>CRSP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Price</strong></td><td class="comparison-highlight"><strong>Free</strong></td><td>Institutional subscription</td><td>Institutional subscription</td></tr>
+          <tr><td><strong>Access</strong></td><td class="comparison-highlight">Direct download + free REST API</td><td>WRDS account</td><td>WRDS account</td></tr>
+          <tr><td><strong>Granularity</strong></td><td class="comparison-highlight">1-minute OHLCV bars</td><td>Tick-level trades &amp; quotes</td><td>Daily &amp; monthly</td></tr>
+          <tr><td><strong>Intraday</strong></td><td class="comparison-highlight"><span class="comparison-check">Yes (1-minute)</span></td><td><span class="comparison-check">Yes (tick)</span></td><td><span class="comparison-x">No</span></td></tr>
+          <tr><td><strong>Coverage</strong></td><td class="comparison-highlight">1,391 US stocks &amp; ETFs</td><td>Full consolidated tape</td><td>Full CRSP universe</td></tr>
+          <tr><td><strong>Pre-computed measures</strong></td><td class="comparison-highlight"><span class="comparison-check">25 variables</span></td><td><span class="comparison-x">None</span></td><td>Returns / factors</td></tr>
+          <tr><td><strong>Citable DOI</strong></td><td class="comparison-highlight"><span class="comparison-check">Zenodo DOI</span></td><td><span class="comparison-x">No</span></td><td><span class="comparison-x">No</span></td></tr>
+          <tr><td><strong>License</strong></td><td class="comparison-highlight">CC BY 4.0</td><td>Restrictive</td><td>Restrictive</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="margin-top:2.5rem;">What it is — and what it isn't</h2>
+    <p>To set expectations honestly:</p>
+    <ul>
+      <li><strong>Not tick-level.</strong> Data is aggregated to 1-minute OHLCV bars, so it does not replace TAQ for quote-level or sub-second microstructure work.</li>
+      <li><strong>Source change in March 2022.</strong> From March 2022 onward the underlying feed is IEX Exchange, which represents roughly 2–3% of consolidated U.S. volume; earlier data is broader. See <a href="issues">Known Issues</a> for details.</li>
+      <li><strong>Universe is a recent snapshot.</strong> The 1,391-ticker universe is fixed, so the pre-2022 history carries survivorship considerations — document this in any study that uses the long sample.</li>
+    </ul>
+    <p>For the many research and teaching tasks where free, citable, well-documented 1-minute data is enough, it is a practical substitute for paid TAQ/CRSP access.</p>
+
+    <h2 style="margin-top:2.5rem;">Who it's for</h2>
+    <ul>
+      <li>Students and instructors who need intraday data for coursework without a WRDS login.</li>
+      <li>Independent and early-career researchers prototyping empirical finance and market-microstructure studies.</li>
+      <li>Quants who want free historical 1-minute bars for backtesting before committing to a paid vendor.</li>
+    </ul>
+
+    <div style="margin-top:2.5rem; text-align:center;">
+      <a href="download" class="btn btn-primary">Download the Data</a>
+      <a href="cite" class="btn btn-outline">How to Cite</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas. Licensed under <a href="license">CC BY 4.0</a>.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

@@ -3,9 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sample Code — HF Data Library</title>
-  <meta name="description" content="Python, R, and Stata sample code for loading and analyzing HF Data Library 1-minute OHLCV bars and pre-computed academic variables.">
+  <title>Python, R &amp; Stata Code - 1-Minute Stock Data</title>
+  <meta name="description" content="Free Python, R, and Stata sample code to load and analyze 1-minute OHLCV intraday US stock data - realized volatility, jump tests, and backtesting.">
   <link rel="canonical" href="https://hfdatalibrary.com/pages/code">
+  <!-- Open Graph -->
+  <meta property="og:title" content="Python, R &amp; Stata Code - 1-Minute Stock Data">
+  <meta property="og:description" content="Free Python, R, and Stata sample code to load and analyze 1-minute OHLCV intraday US stock data - realized volatility, jump tests, and backtesting.">
+  <meta property="og:url" content="https://hfdatalibrary.com/pages/code">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Python, R &amp; Stata Code - 1-Minute Stock Data">
+  <meta name="twitter:description" content="Free Python, R, and Stata sample code to load and analyze 1-minute OHLCV intraday US stock data - realized volatility, jump tests, and backtesting.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -208,8 +220,8 @@ gen date = dofc(datetime)
 format date %td
 
 * Daily realized variance
-collapse (sum) rv = log_return_sq, by(date)
 gen log_return_sq = log_return^2
+collapse (sum) rv = log_return_sq, by(date)
 list in 1/10</code></pre>
 
       <p style="margin-top:1.5rem; color: var(--gray-500); font-size: 0.9rem;">

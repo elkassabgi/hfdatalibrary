@@ -38,13 +38,13 @@
   <text x="600" y="230" font-family="Georgia, serif" font-size="72" font-weight="700" text-anchor="middle" fill="#ffffff">HF Data <tspan fill="#d4a843">Library</tspan></text>
 
   <!-- Subtitle -->
-  <text x="600" y="290" font-family="Inter, sans-serif" font-size="28" text-anchor="middle" fill="rgba(255,255,255,0.7)">Free, research-grade, high-frequency U.S. equity data</text>
+  <text x="600" y="290" font-family="Inter, sans-serif" font-size="28" text-anchor="middle" fill="rgba(255,255,255,0.7)">Free 1-minute intraday U.S. stock &amp; ETF data</text>
 
   <!-- Stats -->
   <g font-family="JetBrains Mono, monospace" fill="#d4a843">
     <text x="380" y="420" font-size="52" font-weight="700" text-anchor="middle">1,391</text>
-    <text x="600" y="420" font-size="52" font-weight="700" text-anchor="middle">1.53B</text>
-    <text x="820" y="420" font-size="52" font-weight="700" text-anchor="middle">27</text>
+    <text x="600" y="420" font-size="52" font-weight="700" text-anchor="middle">1.55B</text>
+    <text x="820" y="420" font-size="52" font-weight="700" text-anchor="middle">25</text>
   </g>
   <g font-family="Inter, sans-serif" fill="rgba(255,255,255,0.6)" font-size="18" text-anchor="middle">
     <text x="380" y="455">TICKERS</text>

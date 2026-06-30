@@ -3,9 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Documentation — HF Data Library</title>
+  <title>1-Minute Stock Data: Cleaning Methodology - HF Data</title>
   <link rel="canonical" href="https://hfdatalibrary.com/pages/docs">
-  <meta name="description" content="Full methodology documentation for the HF Data Library. Nine-step cleaning pipeline, data sources, adjustment methods, and quality metrics.">
+  <!-- Open Graph -->
+  <meta property="og:title" content="1-Minute Stock Data: Cleaning Methodology - HF Data">
+  <meta property="og:description" content="Methodology for free 1-minute OHLCV stock &amp; ETF data: data sources, the 9-step cleaning pipeline, outlier filters, split/dividend adjustment, survivorship.">
+  <meta property="og:url" content="https://hfdatalibrary.com/pages/docs">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="1-Minute Stock Data: Cleaning Methodology - HF Data">
+  <meta name="twitter:description" content="Methodology for free 1-minute OHLCV stock &amp; ETF data: data sources, the 9-step cleaning pipeline, outlier filters, split/dividend adjustment, survivorship.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta name="description" content="Methodology for free 1-minute OHLCV stock &amp; ETF data: data sources, the 9-step cleaning pipeline, outlier filters, split/dividend adjustment, survivorship.">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -151,13 +163,13 @@
         </tbody>
       </table>
     </div>
-    <p><strong>Bars removed:</strong> 388,559 (0.025% of total). The cleaning is conservative by design.</p>
+    <p><strong>Bars removed:</strong> 47,533,401 (3.06% of raw). The cleaning is conservative by design.</p>
 
     <h3 style="margin-top:2.5rem;">Coverage</h3>
     <ul style="margin-left:1.5rem;">
       <li><strong>1,391 tickers</strong> — U.S. equities and ETFs</li>
       <li><strong>Majority begin December 30, 2002</strong> — 45 tickers have history back to January 1991</li>
-      <li><strong>Updated <span style="text-decoration:line-through; opacity:0.5;">weekly</span> daily</strong> — new bars added each trading day via automated pipeline</li>
+      <li><strong>Updated daily</strong> — new bars added each trading day via automated pipeline</li>
       <li><strong>Trading hours only</strong> — 09:30–16:00 Eastern Time</li>
       <li><strong>Split/dividend adjusted</strong> — all prices adjusted for corporate actions</li>
     </ul>
