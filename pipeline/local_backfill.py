@@ -12,13 +12,17 @@ import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# R2 credentials
+# R2 credentials — read from the ENVIRONMENT, never hardcoded.
+# (The keys that used to live here were exposed in git history and have been
+#  rotated; set the new pair as env vars / .env before running.)
+_missing = [k for k in ('R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT')
+            if not os.environ.get(k)]
+if _missing:
+    raise SystemExit("Missing R2 env vars: " + ", ".join(_missing) +
+                     ". Set R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT first.")
 ENV = {
     **os.environ,
-    'R2_ACCESS_KEY_ID': '9be00ae01f4b11dfa9a546cf5663bced',
-    'R2_SECRET_ACCESS_KEY': '8e94bb2b310467dee03f710c90f629087c5a2d5f3551278f01d83fe8c245a4f6',
-    'R2_ENDPOINT': 'https://ce51d5c7fe3859098751b89bbebeab7a.r2.cloudflarestorage.com',
-    'R2_BUCKET': 'hfdatalibrary-data',
+    'R2_BUCKET': os.environ.get('R2_BUCKET', 'hfdatalibrary-data'),
 }
 
 MISSING_DATES = [
