@@ -27,5 +27,15 @@ from .client import (
 __version__ = "0.1.0"
 __all__ = [
     "Client", "set_key", "symbols", "get",
-    "VERSIONS", "TIMEFRAMES", "HFDLError", "__version__",
+    "VERSIONS", "TIMEFRAMES", "HFDLError", "lab", "__version__",
 ]
+
+
+def __getattr__(name):
+    # Lazy access to the recipe layer so `import hfdatalibrary` stays light and
+    # never pulls optional analysis deps at package load. `hfdl.lab` / `from
+    # hfdatalibrary import lab` both work.
+    if name == "lab":
+        import importlib
+        return importlib.import_module("hfdatalibrary.lab")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
