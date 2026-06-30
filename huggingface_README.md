@@ -24,7 +24,7 @@ task_categories:
 
 [![Website](https://img.shields.io/badge/Website-hfdatalibrary.com-2563eb)](https://hfdatalibrary.com) [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.19501605-blue)](https://doi.org/10.5281/zenodo.19501605) [![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 
-Free, research-grade collection of OHLCV (Open-High-Low-Close-Volume) data for **1,391 U.S. equities and ETFs**, covering December 2002 through the present (45 tickers extending to January 1991). Data is available in multiple timeframes from 1-minute up to monthly. Updated weekly via automated pipeline.
+Free, research-grade collection of OHLCV (Open-High-Low-Close-Volume) data for **1,391 U.S. equities and ETFs**, covering December 2002 through the present (45 tickers extending to January 1991). Data is available in multiple timeframes from 1-minute up to monthly. Updated daily via automated pipeline.
 
 **Maintainer:** Ahmed Elkassabgi, University of Central Arkansas
 **ORCID:** [0000-0002-5926-7493](https://orcid.org/0000-0002-5926-7493)

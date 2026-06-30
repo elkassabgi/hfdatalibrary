@@ -17,7 +17,7 @@ The HF Data Library is a free, research-grade collection of 1-minute OHLCV (Open
 **Coverage:**
 - 1,391 U.S. equities and ETFs
 - December 30, 2002 through the present (45 tickers extending back to January 1991)
-- Updated weekly via automated pipeline
+- Updated daily via automated pipeline
 
 **Data sources:**
 - Pre-March 2022: PiTrading, derived from the consolidated tape (CTA/UTP)
