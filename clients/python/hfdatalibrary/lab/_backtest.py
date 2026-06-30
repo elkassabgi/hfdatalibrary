@@ -124,7 +124,7 @@ def backtest_momentum(prices, lookback=126, skip=21, top_n=50, rebalance="M",
     bench_prices = prices[benchmark] if benchmark in prices.columns else None
     tradable = prices.drop(columns=[benchmark]) if benchmark in prices.columns else prices
 
-    rets = tradable.pct_change()
+    rets = tradable.pct_change(fill_method=None)
     # momentum score = price[t-skip] / price[t-skip-lookback] - 1  (past-only)
     mom = tradable.shift(skip) / tradable.shift(skip + lookback) - 1.0
 
@@ -172,7 +172,7 @@ def backtest_momentum(prices, lookback=126, skip=21, top_n=50, rebalance="M",
 
     bench_equity = None
     if bench_prices is not None:
-        b = bench_prices.pct_change().reindex(port_ret.index)
+        b = bench_prices.pct_change(fill_method=None).reindex(port_ret.index)
         bench_equity = (1 + b.fillna(0)).cumprod()
         stats["benchmark_total_return"] = float(bench_equity.iloc[-1] - 1) if len(bench_equity) else float("nan")
 
