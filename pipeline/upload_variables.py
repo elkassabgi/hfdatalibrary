@@ -32,6 +32,10 @@ QUALITY_COLS = ["trade_date", "ticker", "gap_rate", "observed_bars",
 
 
 def _client():
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from r2_client import _load_local_env
+    _load_local_env()   # pick up repo-root .env locally (no-op in CI where env is set)
     ak = os.environ.get("R2_ACCESS_KEY_ID")
     sk = os.environ.get("R2_SECRET_ACCESS_KEY")
     ep = os.environ.get("R2_ENDPOINT")
