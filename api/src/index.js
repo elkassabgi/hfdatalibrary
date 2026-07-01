@@ -2466,7 +2466,8 @@ async function handleAdmin(path, request, env, cors, ip) {
 
 async function handlePublicStats(env, cors) {
   // Public stats — no auth required. All data is aggregated, no PII exposed.
-  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_active = 1').first();
+  // Total registered accounts (all rows, incl. deactivated) — matches the admin "Total Users" count.
+  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
   const totalDownloads = await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
   const totalBytes = await env.DB.prepare('SELECT COALESCE(SUM(bytes_served),0) as s FROM download_log').first();
   const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
