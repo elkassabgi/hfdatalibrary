@@ -61,6 +61,7 @@ from aggregate import aggregate_all, TIMEFRAMES
 from r2_client import (
     get_client, get_bucket, download_parquet, upload_parquet, upload_csv,
 )
+from variables_sync import sync_ticker_variables
 
 PIPELINE_DIR = Path(__file__).parent
 GO_EXTRACTOR = PIPELINE_DIR / "pcap_extract" / ("pcap_extract.exe" if os.name == "nt" else "pcap_extract")
@@ -328,6 +329,17 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     with ThreadPoolExecutor(max_workers=N_IO_THREADS) as upload_pool:
         upload_futures = upload_pool.map(_do_upload, upload_tasks)
         stats["uploaded_bytes"] += sum(upload_futures)
+
+    # 6. Academic variables (best-effort, fully isolated). OHLCV is already on R2
+    #    by the line above; a failure here only logs and continues, so it can NEVER
+    #    fail the OHLCV update, the metadata commit, or the Pages deploy. Computed
+    #    from the bars already in memory and merged per-ticker into R2.
+    for _vver, _vbars in (("raw", merged_raw), ("clean", merged_clean)):
+        try:
+            _vs = sync_ticker_variables(client, _vver, ticker, _vbars)
+            stats[f"{_vver}_var_rows"] = _vs.get("new_rows", 0)
+        except Exception as _ve:  # noqa: BLE001 - variables must never break OHLCV
+            print(f"[variables] WARN {ticker} ({_vver}): {_ve}", flush=True)
 
     return stats
 

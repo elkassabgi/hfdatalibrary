@@ -89,7 +89,7 @@
           <tr><td class="mono">2</td><td>Realized variance (1-min)</td><td>RV = &Sigma; r<sub>t,i</sub>&sup2; using all 1-minute returns</td></tr>
           <tr><td class="mono">3</td><td>Bipower variation</td><td>BV = (&pi;/2) &Sigma; |r<sub>t,i</sub>| |r<sub>t,i-1</sub>| (Barndorff-Nielsen and Shephard 2004)</td></tr>
           <tr><td class="mono">4</td><td>Parkinson range volatility</td><td>&sigma;&sup2; = (1/4 ln 2) (ln H/L)&sup2; (Parkinson 1980)</td></tr>
-          <tr><td class="mono">5</td><td>Yang-Zhang volatility</td><td>OHLC-based estimator (Yang and Zhang 2000)</td></tr>
+          <tr><td class="mono">5</td><td>Rogers-Satchell volatility</td><td>RS = ln(H/O)&middot;ln(H/C) + ln(L/O)&middot;ln(L/C) &mdash; the drift-independent per-day core of Yang-Zhang (Rogers &amp; Satchell 1991; Yang and Zhang 2000)</td></tr>
         </tbody>
       </table>
     </div>
@@ -122,7 +122,7 @@
       <table>
         <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
         <tbody>
-          <tr><td class="mono">11</td><td>BNS z-statistic</td><td>z = (RV &minus; BV) / &radic;(&theta; &times; max(1, QV/BV&sup2;)) (Barndorff-Nielsen and Shephard 2006)</td></tr>
+          <tr><td class="mono">11</td><td>BNS z-statistic</td><td>z = &radic;M &middot; (1 &minus; BV/RV) / &radic;(&theta; &times; max(1, TQ/BV&sup2;)), with &theta; = &pi;&sup2;/4 + &pi; &minus; 5 and TQ the tri-power quarticity, computed on 5-minute returns (Barndorff-Nielsen and Shephard 2006; Huang and Tauchen 2005)</td></tr>
           <tr><td class="mono">12</td><td>BNS jump (1%)</td><td>Indicator: 1 if z &gt; 2.326</td></tr>
           <tr><td class="mono">13</td><td>BNS jump (5%)</td><td>Indicator: 1 if z &gt; 1.645</td></tr>
         </tbody>
@@ -137,7 +137,7 @@
           <tr><td class="mono">14</td><td>Amihud illiquidity</td><td>|r<sub>daily</sub>| / dollar volume (Amihud 2002)</td></tr>
           <tr><td class="mono">15</td><td>Daily dollar volume</td><td>&Sigma; (Close<sub>i</sub> &times; Volume<sub>i</sub>)</td></tr>
           <tr><td class="mono">16</td><td>Daily share volume</td><td>&Sigma; Volume<sub>i</sub></td></tr>
-          <tr><td class="mono">17</td><td>Number of trades</td><td>Count of observed bars</td></tr>
+          <tr><td class="mono">17</td><td>Traded bars</td><td>Number of 1-minute bars with actual trading (Volume &gt; 0)</td></tr>
         </tbody>
       </table>
     </div>
@@ -147,7 +147,7 @@
       <table>
         <thead><tr><th>#</th><th>Variable</th><th>Formula / Reference</th></tr></thead>
         <tbody>
-          <tr><td class="mono">18</td><td>Gap rate</td><td>Fraction of the 390-bar daily grid with no trade</td></tr>
+          <tr><td class="mono">18</td><td>Gap rate</td><td>Fraction of the daily session grid (390 bars, or fewer on early-close half-days) with no trade</td></tr>
           <tr><td class="mono">19</td><td>Observed bars</td><td>Number of bars with actual trades</td></tr>
           <tr><td class="mono">20</td><td>Longest gap</td><td>Maximum consecutive missing bars in the day</td></tr>
           <tr><td class="mono">21</td><td>Max bars since last trade</td><td>Largest gap between consecutive observed bars</td></tr>

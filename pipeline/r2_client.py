@@ -16,8 +16,31 @@ from datetime import datetime
 DEFAULT_BUCKET = "hfdatalibrary-data"
 
 
+def _load_local_env() -> None:
+    """Local convenience: if the R2_* vars aren't already in the environment, read
+    them from the repo-root .env (gitignored). In CI they're real env vars from
+    GitHub secrets, so this is a no-op there. Never overwrites an existing env var."""
+    if os.environ.get("R2_ACCESS_KEY_ID") and os.environ.get("R2_SECRET_ACCESS_KEY") \
+            and os.environ.get("R2_ENDPOINT"):
+        return
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.exists(env_path):
+        return
+    try:
+        for ln in open(env_path, encoding="utf-8"):
+            ln = ln.strip()
+            if "=" in ln and not ln.startswith("#"):
+                k, v = ln.split("=", 1)
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
+
+
 def get_client():
     """Return a boto3 S3 client configured for Cloudflare R2."""
+    _load_local_env()
     try:
         import boto3
         from botocore.config import Config

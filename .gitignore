@@ -16,3 +16,5 @@ WEBSITE_PLAN.md
 # Secrets and large files
 .env*
 data/cleaning_detail.csv
+data/variables/
+expansion-plan/

@@ -312,6 +312,15 @@ export default {
       if (barsMatch)
         return await handleBars(barsMatch[1].toUpperCase(), request, env, cors, ip);
 
+      // Pre-computed academic variables (25 measures) and data-quality metrics
+      const varsMatch = path.match(/^\/v1\/variables\/([A-Z0-9.]+)$/i);
+      if (varsMatch)
+        return await handleDerived(varsMatch[1].toUpperCase(), 'variables', request, env, cors, ip);
+
+      const qualMatch = path.match(/^\/v1\/quality\/([A-Z0-9.]+)$/i);
+      if (qualMatch)
+        return await handleDerived(qualMatch[1].toUpperCase(), 'quality', request, env, cors, ip);
+
       // Request a signed download URL (short-lived token)
       const dlRequestMatch = path.match(/^\/v1\/download-token\/([A-Z0-9.]+)$/i);
       if (dlRequestMatch)
@@ -2096,6 +2105,34 @@ async function handleBars(ticker, request, env, cors, ip) {
   });
 }
 
+// Serve a derived per-ticker dataset: kind ∈ {'variables','quality'}.
+// R2 key {version}/{kind}/{ticker}.parquet. Same auth/rate-limit/logging as /v1/bars.
+async function handleDerived(ticker, kind, request, env, cors, ip) {
+  const user = await requireAuth(request, env);
+  if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
+  if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
+  if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
+
+  const rl = await checkRateLimit(env, String(user.id), 'api:download');
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
+
+  const version = new URL(request.url).searchParams.get('version') || 'clean';
+  if (!['raw', 'clean'].includes(version)) return jsonRes({ error: 'Invalid version. Use: raw or clean' }, 400, cors);
+
+  const obj = await env.DATA_BUCKET.get(`${version}/${kind}/${ticker}.parquet`);
+  if (!obj) return jsonRes({ error: `${kind} for '${ticker}' (${version}) not available yet` }, 404, cors);
+
+  const userId = user.user_id || user.id;
+  await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
+    .bind(obj.size, userId).run();
+  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, ip, obj.size).run();
+
+  return new Response(obj.body, {
+    headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}_${kind}.parquet"`, 'Content-Length': obj.size }
+  });
+}
+
 const VALID_TIMEFRAMES = ['1min', '5min', '15min', '30min', 'hourly', 'daily', 'weekly', 'monthly'];
 
 async function handleDownloadToken(ticker, request, env, cors) {
@@ -2429,7 +2466,8 @@ async function handleAdmin(path, request, env, cors, ip) {
 
 async function handlePublicStats(env, cors) {
   // Public stats — no auth required. All data is aggregated, no PII exposed.
-  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_active = 1').first();
+  // Total registered accounts (all rows, incl. deactivated) — matches the admin "Total Users" count.
+  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
   const totalDownloads = await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
   const totalBytes = await env.DB.prepare('SELECT COALESCE(SUM(bytes_served),0) as s FROM download_log').first();
   const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
