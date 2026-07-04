@@ -366,6 +366,37 @@
       </table>
     </div>
 
+    <h2 id="mcp">MCP server — use this data inside Claude, Cursor &amp; other AI tools</h2>
+    <p>The <strong>ElkassabgiData MCP server</strong> exposes both of our libraries (this one and
+    <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>) to any AI assistant that
+    speaks the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> —
+    search series, fetch data with citations, and run guided analyses directly in a conversation.</p>
+    <p><strong>Connect</strong> (e.g. Claude &rarr; Settings &rarr; Connectors &rarr; Add custom connector):</p>
+    <pre><code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=YOUR_API_KEY</code></pre>
+    <p>Use the same free API key as this site (browse/search tools work without one; data downloads
+    require it). The key stays server-side — it is never echoed into your AI conversation.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Key?</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">search_econ_series</td><td>Search 7.7B+ economic series across 309 sources</td><td>—</td></tr>
+          <tr><td class="mono">get_econ_series</td><td>Fetch a series as rows, with citation + license inline</td><td>required</td></tr>
+          <tr><td class="mono">get_econ_series_metadata</td><td>Full metadata: license, attribution, coverage</td><td>—</td></tr>
+          <tr><td class="mono">list_econ_sources</td><td>The 309 sources with their licenses</td><td>—</td></tr>
+          <tr><td class="mono">get_data_freshness</td><td>Live per-source update board (honest staleness flags)</td><td>—</td></tr>
+          <tr><td class="mono">get_hf_download_link</td><td>Authenticated links for 1-min bars / 25 academic variables</td><td>for use</td></tr>
+          <tr><td class="mono">get_hf_variables_dictionary</td><td>The 25 variables' exact definitions</td><td>—</td></tr>
+          <tr><td class="mono">get_family_status</td><td>Live stats + data currency for both libraries</td><td>—</td></tr>
+          <tr><td class="mono">get_auth_status</td><td>Is a key configured on this connection (masked)</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The server also ships MCP <em>resources</em> (a data-honesty charter — survivorship, source-break and
+    licensing caveats your AI relays with analyses — plus the variables dictionary) and guided
+    <em>prompts</em> (<span class="mono">analyze_econ_series</span>, <span class="mono">compare_countries</span>,
+    <span class="mono">hf_event_study</span>). Try: <em>&ldquo;Search ElkassabgiData for German inflation and
+    plot it against US CPI since 2015.&rdquo;</em></p>
+
   </div>
 </section>
 
