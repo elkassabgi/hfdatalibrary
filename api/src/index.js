@@ -43,6 +43,14 @@ function isDisposableEmail(email) {
 const ALLOWED_ORIGINS = [
   'https://hfdatalibrary.com',
   'https://www.hfdatalibrary.com',
+  // ElkassabgiData family (owner directive 2026-07-03): ONE account system for
+  // every Elkassabgi data library. Sibling sites register/log in against THIS
+  // worker, so their origins are allowed for the auth endpoints. Add each
+  // future database's domain here when it launches.
+  'https://econdatalibrary.com',
+  'https://www.econdatalibrary.com',
+  'https://elkassabgidata.com',
+  'https://www.elkassabgidata.com',
   'http://localhost:8080', // for local dev
 ];
 
