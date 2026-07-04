@@ -84,7 +84,10 @@
     speaks the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> —
     search series, fetch data with citations, and run guided analyses directly in a conversation.</p>
     <p><strong>Connect</strong> (e.g. Claude &rarr; Settings &rarr; Connectors &rarr; Add custom connector):</p>
-    <pre><code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=YOUR_API_KEY</code></pre>
+    <div id="mcp-connect">
+      <pre><code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=YOUR_API_KEY</code></pre>
+      <p style="font-size:0.85rem; color:#6b7280;">Signed in? Your <strong>personal connect URL</strong> — with your key already inside, nothing to edit — appears here automatically. <a href="download#register">Sign in / register</a>.</p>
+    </div>
     <p>Use the same free API key as this site (browse/search tools work without one; data downloads
     require it). The key stays server-side — it is never echoed into your AI conversation.</p>
     <div class="table-wrap">
@@ -150,6 +153,44 @@
           '<button onclick="regenerateKey()" class="btn btn-sm btn-outline" style="color:#d97706; border-color:#d97706; padding:0.3rem 0.75rem; font-size:0.8rem;">Regenerate</button>' +
         '</div>' +
         '<p style="font-size:0.8rem; color:#6b7280; margin-top:0.5rem;">API keys expire every 30 days for security. Regenerate at any time — the old key will stop working immediately.</p>';
+      renderMcpUrl();
+    }
+
+    const MCP_BASE = 'https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp';
+    let mcpVisible = false;
+
+    function mcpUrl(masked) {
+      return MCP_BASE + '?api_key=' + (masked ? maskKey(currentApiKey) : currentApiKey);
+    }
+
+    function renderMcpUrl() {
+      if (!currentApiKey) return;
+      const el = document.getElementById('mcp-connect');
+      if (!el) return;
+      mcpVisible = false;
+      el.innerHTML =
+        '<p style="margin-bottom:0.5rem;"><strong>Your personal connect URL</strong> — key included, paste straight into Claude or Cursor:</p>' +
+        '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; background:#fef9ee; border:1px solid #fde68a; padding:0.75rem; border-radius:6px;">' +
+          '<code id="mcp-url-display" style="flex:1; min-width:250px; font-size:0.9rem; word-break:break-all;">' + mcpUrl(true) + '</code>' +
+          '<button onclick="toggleMcpUrl()" id="mcp-toggle-btn" class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;">Show</button>' +
+          '<button onclick="copyMcpUrl(event)" class="btn btn-sm btn-primary" style="padding:0.3rem 0.75rem; font-size:0.8rem;">Copy</button>' +
+        '</div>' +
+        '<p style="font-size:0.8rem; color:#6b7280; margin-top:0.5rem;">Copy always copies the FULL URL (real key) even while masked. Treat it like a password — and if you regenerate your key, come back for a fresh URL.</p>';
+    }
+
+    function toggleMcpUrl() {
+      mcpVisible = !mcpVisible;
+      document.getElementById('mcp-url-display').textContent = mcpUrl(!mcpVisible);
+      document.getElementById('mcp-toggle-btn').textContent = mcpVisible ? 'Hide' : 'Show';
+    }
+
+    function copyMcpUrl(ev) {
+      navigator.clipboard.writeText(mcpUrl(false)).then(() => {
+        const btn = ev.target;
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 2000);
+      });
     }
 
     function toggleKey() {
