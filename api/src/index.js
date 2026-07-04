@@ -2641,11 +2641,16 @@ async function handlePublicStats(env, cors) {
 async function handleStatus(env, cors) {
   const list = await env.DATA_BUCKET.list({ prefix: 'clean/', limit: 1 });
   const userCount = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
+  const r2ok = list.objects.length > 0;
   return jsonRes({
-    status: 'operational',
+    // Computed, never hardcoded: this endpoint reports OUR service (API+storage)
+    // only. Data currency is a separate signal — pages/status reads the daily
+    // pipeline's metadata.json for that, so an upstream feed outage shows as
+    // stale DATA even while the service is honestly 'operational'.
+    status: r2ok ? 'operational' : 'degraded',
     api_version: '2.0',
     author: 'Ahmed Elkassabgi',
-    r2_connected: list.objects.length > 0,
+    r2_connected: r2ok,
     registered_users: userCount?.c || 0,
     rate_limit: '300 requests per minute (downloads), 5 login attempts per 5 min',
     timestamp: new Date().toISOString()

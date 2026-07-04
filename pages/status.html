@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System &amp; Data Status - HF Data Library</title>
+  <meta name="description" content="Live status of HF Data Library: API health, storage, and — separately — whether the 1-minute stock data itself is current through the last trading day.">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/status">
+  <meta name="robots" content="noindex">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin:1.5rem 0}
+    .st-card{border:1px solid var(--gray-200,#e5e7eb);border-radius:12px;padding:1.2rem 1.3rem;background:#fff}
+    .st-light{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:.55rem;vertical-align:-1px}
+    .st-green{background:#16a34a;box-shadow:0 0 6px #16a34a88}
+    .st-amber{background:#d97706;box-shadow:0 0 6px #d9770688}
+    .st-red{background:#dc2626;box-shadow:0 0 6px #dc262688}
+    .st-grey{background:#9ca3af}
+    .st-title{font-weight:600;font-size:1.02rem}
+    .st-detail{color:var(--gray-600,#4b5563);font-size:.92rem;margin-top:.5rem;line-height:1.5}
+    .st-value{font-weight:600}
+    .st-note{font-size:.85rem;color:var(--gray-500,#6b7280);margin-top:1.2rem;line-height:1.55}
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data">Data</a></li>
+      <li><a href="tickers">Tickers</a></li>
+      <li><a href="docs">Documentation</a></li>
+      <li><a href="api">API</a></li>
+      <li><a href="download">Download</a></li>
+      <li><a href="code">Code</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
+      <li><a href="cite">Cite</a></li>
+      <li><a href="stats">Stats</a></li>
+      <li><a href="status" class="active">Status</a></li>
+      <li><a href="contact">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main class="container" style="max-width:900px;padding:2.5rem 1rem 4rem">
+  <h1>System &amp; Data Status</h1>
+  <p style="color:var(--gray-600,#4b5563)">Two different things can go wrong, so we report them separately:
+    the <strong>service</strong> (API + storage — our side) and the <strong>data itself</strong>
+    (whether bars are current through the last completed trading day — which also depends on the
+    upstream exchange feed).</p>
+
+  <div class="st-grid">
+    <div class="st-card">
+      <div class="st-title"><span id="light-data" class="st-light st-grey"></span>Data currency</div>
+      <div class="st-detail" id="detail-data">Checking…</div>
+    </div>
+    <div class="st-card">
+      <div class="st-title"><span id="light-api" class="st-light st-grey"></span>API &amp; storage</div>
+      <div class="st-detail" id="detail-api">Checking…</div>
+    </div>
+    <div class="st-card">
+      <div class="st-title"><span id="light-vars" class="st-light st-grey"></span>Academic variables</div>
+      <div class="st-detail" id="detail-vars">Checking…</div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:2rem">Last pipeline run</h2>
+  <div class="st-card" style="margin-top:.8rem">
+    <div class="st-detail" id="detail-run">Checking…</div>
+  </div>
+
+  <p class="st-note"><strong>How to read this page.</strong>
+    <span class="st-light st-green" style="width:10px;height:10px"></span> current &nbsp;
+    <span class="st-light st-amber" style="width:10px;height:10px"></span> one trading day behind (usually an upstream
+    exchange-feed delay — the service is fine, and the pipeline self-heals the gap on its next run) &nbsp;
+    <span class="st-light st-red" style="width:10px;height:10px"></span> two or more trading days behind, or the API is down.
+    Data for a trading day is published the following morning (~08:00 UTC), so "current" means
+    <em>through the last completed trading day as of the most recent pipeline run</em>.</p>
+</main>
+
+<script>
+(function () {
+  function light(id, cls) {
+    var el = document.getElementById(id);
+    el.classList.remove('st-grey', 'st-green', 'st-amber', 'st-red');
+    el.classList.add(cls);
+  }
+  function fmt(n) { return (n || 0).toLocaleString(); }
+
+  // Trading-day arithmetic (holiday-agnostic: a market holiday can make us report
+  // one day "behind" for one morning; the amber wording covers that honestly).
+  function lastExpectedTradingDay() {
+    var d = new Date();
+    // data for day X publishes the morning after; before 09:00 UTC expect X-2
+    d.setUTCDate(d.getUTCDate() - (d.getUTCHours() < 9 ? 2 : 1));
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+    return d;
+  }
+  function tradingDaysBehind(endDateStr) {
+    var end = new Date(endDateStr + 'T00:00:00Z'), exp = lastExpectedTradingDay(), n = 0;
+    var cur = new Date(exp);
+    while (cur > end && n < 30) {
+      cur.setUTCDate(cur.getUTCDate() - 1);
+      if (cur.getUTCDay() !== 0 && cur.getUTCDay() !== 6) n++;
+    }
+    return n;
+  }
+
+  // 1) Data currency + last run — from the pipeline's own ledger (same origin).
+  fetch('../data/metadata.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(function (m) {
+      var behind = tradingDaysBehind(m.end_date);
+      var cls = behind === 0 ? 'st-green' : (behind === 1 ? 'st-amber' : 'st-red');
+      light('light-data', cls);
+      document.getElementById('detail-data').innerHTML =
+        'Bars current through <span class="st-value">' + m.end_date + '</span>' +
+        (behind === 0 ? ' — up to date.' :
+         behind === 1 ? ' — <strong>1 trading day behind</strong> (usually an upstream feed delay; self-heals next run).' :
+         ' — <strong>' + behind + ' trading days behind.</strong>') +
+        '<br>' + fmt(m.bars_clean) + ' clean bars · ' + fmt(m.tickers) + ' tickers';
+      document.getElementById('detail-run').innerHTML =
+        '<span class="st-value">' + (m.data_updated || '—') + '</span><br>' + (m.update_summary || '');
+      var vcls = behind <= 1 ? cls : 'st-red';
+      light('light-vars', vcls);
+      document.getElementById('detail-vars').innerHTML =
+        (m.academic_variables || 25) + ' pre-computed variables per ticker/day, refreshed in the same daily run ' +
+        '(<a href="dictionary">dictionary</a> · served via /v1/variables).';
+    })
+    .catch(function () {
+      light('light-data', 'st-red');
+      document.getElementById('detail-data').textContent = 'Could not load the data ledger (metadata.json).';
+    });
+
+  // 2) API & storage — our side only, and honest about that.
+  fetch('https://api.hfdatalibrary.com/v1/status', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      var ok = s && s.status === 'operational' && s.r2_connected;
+      light('light-api', ok ? 'st-green' : 'st-red');
+      document.getElementById('detail-api').innerHTML = ok
+        ? 'API and data storage responding normally. <span class="st-value">' + fmt(s.registered_users) + '</span> registered users.'
+        : 'API responded but reports a storage problem.';
+    })
+    .catch(function () {
+      light('light-api', 'st-red');
+      document.getElementById('detail-api').textContent = 'API unreachable.';
+    });
+})();
+</script>
+</body>
+</html>
