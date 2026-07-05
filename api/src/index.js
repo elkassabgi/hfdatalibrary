@@ -2678,7 +2678,7 @@ async function handleStatus(env, cors) {
     author: 'Ahmed Elkassabgi',
     r2_connected: r2ok,
     registered_users: userCount?.c || 0,
-    rate_limit: '300 requests per minute (downloads), 5 login attempts per 5 min',
+    rate_limit: '100 downloads per minute per user, 5 login attempts per 5 min',
     timestamp: new Date().toISOString()
   }, 200, cors);
 }
