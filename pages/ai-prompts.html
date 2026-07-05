@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChatGPT &amp; Claude Prompts for Stock Data - HF Data</title>
+  <title>AI Tools: MCP Server &amp; AI Prompts for Stock Data - HF Data</title>
   <meta name="description" content="Free, ready-made ChatGPT and Claude prompts to download 1-minute OHLCV intraday US stock data, build datasets, and run analyses - copy, paste, and go.">
   <link rel="canonical" href="https://hfdatalibrary.com/pages/ai-prompts">
   <!-- Open Graph -->
@@ -111,7 +111,7 @@
       <li><a href="api">API</a></li>
       <li><a href="download">Download</a></li>
       <li><a href="code">Code</a></li>
-      <li><a href="ai-prompts" class="active">AI Prompts</a></li>
+      <li><a href="ai-prompts" class="active">AI Tools</a></li>
       <li><a href="cite">Cite</a></li>
       <li><a href="stats">Stats</a></li>
       <li><a href="status">Status</a></li>
@@ -122,15 +122,93 @@
 
 <section style="background: var(--navy); color: #fff; padding: 3rem 0;">
   <div class="container">
-    <h1 style="color:#fff; margin-bottom:0.5rem;">AI Prompts</h1>
+    <h1 style="color:#fff; margin-bottom:0.5rem;">AI Tools</h1>
     <p style="color:rgba(255,255,255,0.8); font-size:1.1rem; margin:0; max-width:680px;">
-      Copy-paste prompts for ChatGPT, Claude, and other AI assistants. Hand one to the AI, swap in your API key and tickers, and let it do the download and analysis for you.
+      Two ways to use this data with AI: connect the <strong>MCP server</strong> so Claude, Cursor &amp; other
+      assistants access the libraries natively — or copy-paste a ready-made <strong>prompt</strong> below.
     </p>
   </div>
 </section>
 
 <section class="section">
   <div class="container">
+
+    <h2 id="mcp">MCP server — use this data inside Claude, Cursor &amp; other AI tools</h2>
+    <p>The <strong>ElkassabgiData MCP server</strong> exposes both of our libraries (this one and
+    <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>) to any AI assistant that
+    speaks the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> —
+    search series, fetch data with citations, and run guided analyses directly in a conversation.</p>
+    <p><strong>Connect</strong> (e.g. Claude &rarr; Settings &rarr; Connectors &rarr; Add custom connector):</p>
+    <div id="mcp-connect">
+      <pre><code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=YOUR_API_KEY</code></pre>
+      <p style="font-size:0.85rem; color:#6b7280;">Signed in? Your <strong>personal connect URL</strong> — with your key already inside, nothing to edit — appears here automatically. <a href="download#register">Sign in / register</a>.</p>
+    </div>
+    <p>Use the same free API key as this site (browse/search tools work without one; data downloads
+    require it). The key stays server-side — it is never echoed into your AI conversation.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Key?</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">search_econ_series</td><td>Search billions of economic series across 300+ sources</td><td>—</td></tr>
+          <tr><td class="mono">get_econ_series</td><td>Fetch a series as rows, with citation + license inline</td><td>required</td></tr>
+          <tr><td class="mono">get_econ_series_metadata</td><td>Full metadata: license, attribution, coverage</td><td>—</td></tr>
+          <tr><td class="mono">list_econ_sources</td><td>The 309 sources with their licenses</td><td>—</td></tr>
+          <tr><td class="mono">get_data_freshness</td><td>Live per-source update board (honest staleness flags)</td><td>—</td></tr>
+          <tr><td class="mono">get_hf_download_link</td><td>Authenticated links for 1-min bars / 25 academic variables</td><td>for use</td></tr>
+          <tr><td class="mono">get_hf_variables_dictionary</td><td>The 25 variables' exact definitions</td><td>—</td></tr>
+          <tr><td class="mono">get_family_status</td><td>Live stats + data currency for both libraries</td><td>—</td></tr>
+          <tr><td class="mono">get_auth_status</td><td>Is a key configured on this connection (masked)</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The server also ships MCP <em>resources</em> (a data-honesty charter — survivorship, source-break and
+    licensing caveats your AI relays with analyses — plus the variables dictionary) and guided
+    <em>prompts</em> (<span class="mono">analyze_econ_series</span>, <span class="mono">compare_countries</span>,
+    <span class="mono">hf_event_study</span>). Try: <em>&ldquo;Search ElkassabgiData for German inflation and
+    plot it against US CPI since 2015.&rdquo;</em></p>
+
+    <script>
+    // Personalized MCP connect URL (same session flow as the API page's key widget).
+    (function () {
+      const MCP_BASE = 'https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp';
+      let mcpKey = '', mcpVisible = false;
+      function maskK(k) { return k ? k.slice(0, 4) + '•'.repeat(Math.max(0, k.length - 8)) + k.slice(-4) : ''; }
+      function mUrl(masked) { return MCP_BASE + '?api_key=' + (masked ? maskK(mcpKey) : mcpKey); }
+      window.toggleMcpUrl = function () {
+        mcpVisible = !mcpVisible;
+        document.getElementById('mcp-url-display').textContent = mUrl(!mcpVisible);
+        document.getElementById('mcp-toggle-btn').textContent = mcpVisible ? 'Hide' : 'Show';
+      };
+      window.copyMcpUrl = function (ev) {
+        navigator.clipboard.writeText(mUrl(false)).then(() => {
+          const b = ev.target, o = b.textContent; b.textContent = 'Copied!';
+          setTimeout(() => { b.textContent = o; }, 2000);
+        });
+      };
+      (async function () {
+        const token = localStorage.getItem('hfd_session');
+        if (!token) return;
+        try {
+          const r = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+          if (!r.ok) return;
+          const u = await r.json();
+          if (!u.api_key) return;
+          mcpKey = u.api_key;
+          const el = document.getElementById('mcp-connect');
+          el.innerHTML =
+            '<p style="margin-bottom:0.5rem;"><strong>Your personal connect URL</strong> — key included, paste straight into Claude or Cursor:</p>' +
+            '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; background:#fef9ee; border:1px solid #fde68a; padding:0.75rem; border-radius:6px;">' +
+              '<code id="mcp-url-display" style="flex:1; min-width:250px; font-size:0.9rem; word-break:break-all;">' + mUrl(true) + '</code>' +
+              '<button onclick="toggleMcpUrl()" id="mcp-toggle-btn" class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;">Show</button>' +
+              '<button onclick="copyMcpUrl(event)" class="btn btn-sm btn-primary" style="padding:0.3rem 0.75rem; font-size:0.8rem;">Copy</button>' +
+            '</div>' +
+            '<p style="font-size:0.8rem; color:#6b7280; margin-top:0.5rem;">Copy always copies the FULL URL (real key) even while masked. Treat it like a password.</p>';
+        } catch (e) {}
+      })();
+    })();
+    </script>
+
+    <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <h2>How to use this page</h2>
     <div class="step-grid">
