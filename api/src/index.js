@@ -2625,7 +2625,25 @@ async function handlePublicStats(env, cors) {
     // Analytics fetch failed — return stats without visitor data
   }
 
+  // Live dataset stats from the pipeline's own ledger (metadata.json on the
+  // site, bot-committed every daily run) — served here so sibling sites and
+  // the MCP server read ONE cross-origin endpoint. Never hardcoded (owner
+  // rule: counts must not go stale in code).
+  let dataset = null;
+  try {
+    const mr = await fetch('https://hfdatalibrary.com/data/metadata.json', { cf: { cacheTtl: 900 } });
+    if (mr.ok) {
+      const m = await mr.json();
+      dataset = {
+        tickers: m.tickers, bars_clean: m.bars_clean, bars_raw: m.bars_raw,
+        end_date: m.end_date, data_updated: m.data_updated,
+        academic_variables: m.academic_variables,
+      };
+    }
+  } catch (e) { /* stats stay null rather than stale */ }
+
   return jsonRes({
+    dataset,
     total_users: totalUsers?.c || 0,
     total_downloads: totalDownloads?.c || 0,
     total_bytes_served: totalBytes?.s || 0,
