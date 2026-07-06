@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect an AI to the Data (MCP Guide) - HF Data Library</title>
+  <meta name="description" content="Step-by-step guide to connect Claude, Claude Code, Cursor, Gemini CLI, or ChatGPT to the ElkassabgiData libraries with the MCP server. Ask in plain English; your AI finds the exact series and downloads it with a citation.">
+  <link rel="canonical" href="https://hfdatalibrary.com/pages/mcp">
+  <meta property="og:title" content="Connect an AI to the Data - ElkassabgiData MCP Guide">
+  <meta property="og:description" content="Ask your AI in plain English - 'how many people live below the poverty line in Poland?' - and it finds the exact series and downloads it with a citation. Setup for Claude, Cursor, Gemini CLI &amp; ChatGPT.">
+  <meta property="og:url" content="https://hfdatalibrary.com/pages/mcp">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta property="og:site_name" content="HF Data Library">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Connect an AI to the Data - ElkassabgiData MCP Guide">
+  <meta name="twitter:description" content="Ask your AI in plain English and it finds the exact economic or equity series and downloads it with a citation. Setup for Claude, Cursor, Gemini CLI &amp; ChatGPT.">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
+  <meta name="author" content="Ahmed Elkassabgi">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .lead-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:1rem; margin:1.5rem 0 0; }
+    .why-card { background:var(--gray-50); border:1px solid var(--gray-200); border-radius:10px; padding:1.25rem; }
+    .why-card h3 { margin:0 0 0.4rem; color:var(--navy); font-size:1rem; }
+    .why-card p { margin:0; font-size:0.9rem; color:var(--gray-600); line-height:1.55; }
+
+    /* plain-English "what is MCP" */
+    .explain { background:#eff6ff; border-left:4px solid var(--blue); border-radius:0 8px 8px 0; padding:1.25rem 1.5rem; margin:1.5rem 0; }
+    .explain p { margin:0.5rem 0 0; color:var(--gray-700); line-height:1.65; }
+    .explain p:first-child { margin-top:0; }
+
+    /* conversation / worked-example mockup */
+    .demo { border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; margin:1.5rem 0; background:#fff; }
+    .demo-head { background:var(--navy); color:#fff; padding:0.85rem 1.25rem; font-weight:600; font-size:0.95rem; display:flex; align-items:center; gap:0.5rem; }
+    .demo-head .tag { margin-left:auto; font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; background:rgba(201,169,97,0.2); color:var(--gold); padding:0.2rem 0.55rem; border-radius:20px; }
+    .demo-body { padding:1.25rem; }
+    .bubble { border-radius:10px; padding:0.75rem 1rem; margin:0.6rem 0; font-size:0.92rem; line-height:1.55; max-width:92%; }
+    .bubble.you { background:var(--navy); color:#fff; margin-left:auto; border-bottom-right-radius:2px; }
+    .bubble.ai { background:var(--gray-50); border:1px solid var(--gray-200); color:var(--gray-800); border-bottom-left-radius:2px; }
+    .bubble.ai code { font-family:var(--font-mono); font-size:0.85em; background:#fff; border:1px solid var(--gray-200); padding:0.05em 0.35em; border-radius:4px; }
+    .step-call { font-family:var(--font-mono); font-size:0.82rem; color:var(--gray-500); margin:0.5rem 0 0.2rem; padding-left:0.2rem; }
+    .series-hit { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:baseline; padding:0.5rem 0.7rem; margin:0.35rem 0; background:#fff; border:1px solid var(--gray-200); border-radius:7px; font-size:0.85rem; }
+    .series-hit .sid { font-family:var(--font-mono); font-size:0.8rem; color:var(--blue); font-weight:600; }
+    .series-hit .sttl { color:var(--gray-700); }
+
+    /* installer tabs */
+    .tabs { display:flex; flex-wrap:wrap; gap:0.5rem; margin:1.5rem 0 0; border-bottom:2px solid var(--gray-200); }
+    .tab-btn { appearance:none; border:none; background:none; font-family:var(--font-sans); font-weight:600; font-size:0.92rem; color:var(--gray-500); padding:0.7rem 1rem; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; transition:color .15s, border-color .15s; }
+    .tab-btn:hover { color:var(--navy); }
+    .tab-btn.active { color:var(--navy); border-bottom-color:var(--gold); }
+    .tab-panel { display:none; padding:1.5rem 0 0; }
+    .tab-panel.active { display:block; animation:fade .2s ease; }
+    @keyframes fade { from { opacity:0; transform:translateY(4px);} to {opacity:1; transform:none;} }
+    .tab-panel h3 { color:var(--navy); margin:0 0 0.25rem; }
+    .tab-panel .req { font-size:0.82rem; color:var(--gray-500); margin:0 0 1rem; }
+    .tab-panel ol { padding-left:1.3rem; line-height:1.7; color:var(--gray-700); }
+    .tab-panel ol li { margin-bottom:0.55rem; }
+
+    .codeblock { position:relative; margin:0.8rem 0; }
+    .codeblock pre { margin:0; padding:1rem 1.1rem; background:#0b1220; color:#e5e7eb; border-radius:9px; overflow-x:auto; font-family:var(--font-mono); font-size:0.83rem; line-height:1.6; }
+    .codeblock pre .ekey { color:#fbbf24; font-weight:600; }
+    .codeblock pre .cmt { color:#6b7280; }
+    .cfg-copy { position:absolute; top:0.55rem; right:0.55rem; appearance:none; border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.08); color:#e5e7eb; font-family:var(--font-sans); font-weight:600; font-size:0.72rem; padding:0.3rem 0.6rem; border-radius:6px; cursor:pointer; }
+    .cfg-copy:hover { background:rgba(255,255,255,0.18); }
+    .cfg-copy.done { background:#059669; border-color:#059669; color:#fff; }
+
+    .keybar { background:#fef9ee; border:1px solid #fde68a; border-radius:10px; padding:1rem 1.25rem; margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55; }
+    .keybar.signed { background:#ecfdf5; border-color:#a7f3d0; }
+    .keybar strong { color:var(--navy); }
+
+    .toolbar-note { font-size:0.85rem; color:var(--gray-600); line-height:1.6; }
+    .warning-box { background:#fef2f2; border-left:4px solid #dc2626; padding:1rem 1.25rem; border-radius:0 6px 6px 0; margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55; }
+    .info-box { background:#eff6ff; border-left:4px solid var(--blue); padding:1rem 1.25rem; border-radius:0 6px 6px 0; margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55; }
+    .faq dt { font-weight:600; color:var(--navy); margin-top:1.1rem; }
+    .faq dd { margin:0.3rem 0 0; color:var(--gray-700); line-height:1.6; }
+    .faq dd code { font-family:var(--font-mono); font-size:0.85em; background:var(--gray-100); padding:0.05em 0.35em; border-radius:3px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="container">
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="data">Data</a></li>
+      <li><a href="tickers">Tickers</a></li>
+      <li><a href="docs">Documentation</a></li>
+      <li><a href="api">API</a></li>
+      <li><a href="download">Download</a></li>
+      <li><a href="code">Code</a></li>
+      <li><a href="ai-prompts" class="active">AI Tools</a></li>
+      <li><a href="cite">Cite</a></li>
+      <li><a href="stats">Stats</a></li>
+      <li><a href="status">Status</a></li>
+      <li><a href="contact">Contact</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section style="background: var(--navy); color: #fff; padding: 3rem 0;">
+  <div class="container">
+    <p style="color:var(--gold); font-weight:600; letter-spacing:0.05em; text-transform:uppercase; font-size:0.8rem; margin:0 0 0.5rem;">MCP Guide</p>
+    <h1 style="color:#fff; margin-bottom:0.5rem;">Talk to the data. Your AI does the rest.</h1>
+    <p style="color:rgba(255,255,255,0.85); font-size:1.12rem; margin:0; max-width:720px; line-height:1.6;">
+      Connect Claude, Cursor, Gemini, or ChatGPT to the ElkassabgiData libraries once, then just ask in plain English.
+      Your assistant finds the exact series, downloads it, and hands it back <strong>with the citation and license attached</strong> &mdash;
+      across 1-minute US equities and billions of global economic series.
+    </p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:900px;">
+
+    <!-- ─────────────── WHAT IS MCP ─────────────── -->
+    <h2>New to MCP? Read this first.</h2>
+    <div class="explain">
+      <p><strong>MCP (Model Context Protocol)</strong> is a small, open standard that lets an AI assistant plug into an
+      outside service &mdash; the same way a USB-C port lets any device plug into any charger. You connect the
+      <strong>ElkassabgiData MCP server</strong> to your AI once, and from then on the AI can <em>search our catalog,
+      pull data, and read the licensing rules</em> on its own, right inside your conversation.</p>
+      <p>You don't write code to set it up. You paste one URL (or a short config) into your AI tool. After that you
+      type questions like a normal chat &mdash; <em>"how many people live below the poverty line in Poland?"</em> &mdash;
+      and the assistant does the librarian work: it figures out which dataset answers that, downloads it, and cites it.</p>
+    </div>
+
+    <div class="lead-grid">
+      <div class="why-card">
+        <h3>Plain English in</h3>
+        <p>No series codes to memorize. Ask the way you'd ask a research assistant. The AI translates your question into the right dataset.</p>
+      </div>
+      <div class="why-card">
+        <h3>Citations out</h3>
+        <p>Every series comes back with its source, license, and attribution line already attached &mdash; ready to drop into a paper.</p>
+      </div>
+      <div class="why-card">
+        <h3>One key, every library</h3>
+        <p>Your free ElkassabgiData key unlocks both the HF equity data and the economic data through the same connection.</p>
+      </div>
+    </div>
+
+    <!-- ─────────────── WORKED EXAMPLES ─────────────── -->
+    <hr style="margin:2.5rem 0; border:none; border-top:1px solid var(--gray-200);">
+    <h2>What it actually looks like</h2>
+    <p>These are <strong>real</strong> series the connected assistant finds live &mdash; not mock-ups. The AI runs a
+    search, reads the titles, and picks the one that fits (asking you to disambiguate when a question has more than one
+    correct answer). Then it downloads and cites it.</p>
+
+    <!-- Example 1: Poland poverty -->
+    <div class="demo">
+      <div class="demo-head">Poverty in Poland <span class="tag">Econ Data Library</span></div>
+      <div class="demo-body">
+        <div class="bubble you">How many people live below the poverty line in Poland?</div>
+        <div class="step-call">&rarr; the AI calls <code>search_econ_series("poverty Poland")</code></div>
+        <div class="bubble ai">
+          I found several official measures &mdash; "below the poverty line" can mean different thresholds, so here are the main ones:
+          <div class="series-hit"><span class="sid">worldbank_wdi:SI.POV.NAHC</span> <span class="sttl">Poverty headcount ratio at <strong>national</strong> poverty lines (% of population)</span></div>
+          <div class="series-hit"><span class="sid">pip:PIP:headcount:POL:215</span> <span class="sttl">Poverty headcount ratio at <strong>$2.15/day</strong> (2017 PPP) &mdash; Poland</span></div>
+          <div class="series-hit"><span class="sid">pip:PIP:headcount:POL:1000</span> <span class="sttl">Poverty headcount ratio at <strong>$10.00/day</strong> (2017 PPP) &mdash; Poland</span></div>
+          Which line do you want &mdash; Poland's national definition, or an international benchmark?
+        </div>
+        <div class="bubble you">The national one.</div>
+        <div class="step-call">&rarr; <code>get_econ_series("worldbank_wdi:SI.POV.NAHC")</code>, filtered to Poland</div>
+        <div class="bubble ai">Here's the series as a table, plus the World Bank citation and license to include if you publish. Want it charted?</div>
+      </div>
+    </div>
+
+    <!-- Example 2: Australia trade -->
+    <div class="demo">
+      <div class="demo-head">Trade into Australia <span class="tag">Econ Data Library</span></div>
+      <div class="demo-body">
+        <div class="bubble you">How much does Australia import each year?</div>
+        <div class="step-call">&rarr; <code>search_econ_series("Australia imports total trade")</code></div>
+        <div class="bubble ai">
+          The headline annual import value:
+          <div class="series-hit"><span class="sid">unctad_gasbtoia:&hellip;imports&hellip;total-trade-in-goods-and-services.australia</span> <span class="sttl">Imports &mdash; Total trade in goods and services &mdash; Australia (US$ at current prices, millions)</span></div>
+          Want goods-only instead of goods + services, or the trade balance alongside it?
+        </div>
+        <div class="bubble you">Goods and services is fine. Download it.</div>
+        <div class="step-call">&rarr; <code>get_econ_series(&hellip;)</code> &mdash; returns rows + UNCTAD citation</div>
+        <div class="bubble ai">Done &mdash; annual series delivered with its UNCTAD attribution line attached.</div>
+      </div>
+    </div>
+
+    <!-- Example 3: HF event study -->
+    <div class="demo">
+      <div class="demo-head">Intraday event study <span class="tag">HF Data Library</span></div>
+      <div class="demo-body">
+        <div class="bubble you">Pull AAPL 1-minute bars and show me what happened intraday around 2024-08-05.</div>
+        <div class="step-call">&rarr; <code>get_hf_download_link("AAPL")</code>, then the AI runs the analysis in code</div>
+        <div class="bubble ai">Downloaded the clean 1-minute file, sliced to that week, and computed minute-by-minute returns and realized volatility around the drop. Here's the chart and the numbers &mdash; with the dataset DOI to cite.</div>
+      </div>
+    </div>
+
+    <p class="toolbar-note">The intelligence is your AI plus honest metadata working together: it searches, reads real
+    titles and units, and never invents a number &mdash; a wrong guess returns an honest "not found," never fake data.
+    See the full worked prompts on the <a href="ai-prompts">AI Tools page</a>.</p>
+
+    <!-- ─────────────── SETUP ─────────────── -->
+    <hr style="margin:2.5rem 0; border:none; border-top:1px solid var(--gray-200);">
+    <h2 id="setup">Set it up &mdash; pick your AI tool</h2>
+    <p>You need a free <a href="download#register">ElkassabgiData API key</a> (looks like <code style="font-family:var(--font-mono);">hfd_&hellip;</code>).
+    Browsing and searching work without one; downloading data needs it. Sign in and every command below fills your real key in automatically.</p>
+
+    <div class="keybar" id="keybar">
+      <strong>Not signed in.</strong> The snippets below show <code style="font-family:var(--font-mono);">YOUR_KEY</code> as a placeholder.
+      <a href="download#register">Sign in or get a free key</a> and this page will drop your real key into every command.
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="claude">Claude (app)</button>
+      <button class="tab-btn" data-tab="claudecode">Claude Code</button>
+      <button class="tab-btn" data-tab="cursor">Cursor</button>
+      <button class="tab-btn" data-tab="gemini">Gemini CLI</button>
+      <button class="tab-btn" data-tab="chatgpt">ChatGPT</button>
+    </div>
+
+    <!-- Claude app -->
+    <div class="tab-panel active" id="tab-claude">
+      <h3>Claude &mdash; web, desktop &amp; mobile</h3>
+      <p class="req">Works on Free, Pro, Max, Team &amp; Enterprise. (Free plans allow one custom connector.) No install &mdash; it's all in Settings.</p>
+      <ol>
+        <li>Open <strong>Settings &rarr; Connectors</strong> (in the Claude app or on claude.ai).</li>
+        <li>Click <strong>Add custom connector</strong>.</li>
+        <li>Name it <em>ElkassabgiData</em> and paste this URL (your key is embedded, so there's nothing else to configure):
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span></pre></div>
+        </li>
+        <li>Click <strong>Add</strong>, then start a chat and ask a data question. Claude will show the ElkassabgiData tools it's using.</li>
+      </ol>
+      <p class="toolbar-note">Claude connects to the server from Anthropic's cloud (not your laptop), which is why a hosted URL like ours works with no local setup.</p>
+    </div>
+
+    <!-- Claude Code -->
+    <div class="tab-panel" id="tab-claudecode">
+      <h3>Claude Code (terminal)</h3>
+      <p class="req">One command in your shell. Free to install: <code style="font-family:var(--font-mono);">npm i -g @anthropic-ai/claude-code</code>.</p>
+      <ol>
+        <li>Add the server over HTTP transport:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>claude mcp add --transport http elkassabgidata \
+  "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span>"</pre></div>
+        </li>
+        <li>Prefer a header to keep the key out of the URL? Use this form instead:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>claude mcp add --transport http elkassabgidata \
+  https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp \
+  --header "Authorization: Bearer <span class="ekey">YOUR_KEY</span>"</pre></div>
+        </li>
+        <li>Run <code style="font-family:var(--font-mono);">claude</code> and type <code style="font-family:var(--font-mono);">/mcp</code> to confirm <em>elkassabgidata</em> is connected, then ask away.</li>
+      </ol>
+    </div>
+
+    <!-- Cursor -->
+    <div class="tab-panel" id="tab-cursor">
+      <h3>Cursor</h3>
+      <p class="req">Add a global server in <code style="font-family:var(--font-mono);">~/.cursor/mcp.json</code> (or use <strong>Settings &rarr; Tools &amp; MCP &rarr; New MCP Server</strong>).</p>
+      <ol>
+        <li>Open (or create) <code style="font-family:var(--font-mono);">~/.cursor/mcp.json</code> and add:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>{
+  "mcpServers": {
+    "elkassabgidata": {
+      "url": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
+      "headers": { "Authorization": "Bearer <span class="ekey">YOUR_KEY</span>" }
+    }
+  }
+}</pre></div>
+        </li>
+        <li>Save, then open <strong>Settings &rarr; Tools &amp; MCP</strong> and confirm <em>elkassabgidata</em> shows a green dot.</li>
+        <li>In chat (Agent mode), ask a data question &mdash; Cursor will call the tools.</li>
+      </ol>
+    </div>
+
+    <!-- Gemini CLI -->
+    <div class="tab-panel" id="tab-gemini">
+      <h3>Gemini CLI</h3>
+      <p class="req">Configure in <code style="font-family:var(--font-mono);">~/.gemini/settings.json</code>. Note Gemini uses <code style="font-family:var(--font-mono);">httpUrl</code> (not <code style="font-family:var(--font-mono);">url</code>) for remote servers.</p>
+      <ol>
+        <li>Add the server to <code style="font-family:var(--font-mono);">~/.gemini/settings.json</code>:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>{
+  "mcpServers": {
+    "elkassabgidata": {
+      "httpUrl": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
+      "headers": { "Authorization": "Bearer <span class="ekey">YOUR_KEY</span>" }
+    }
+  }
+}</pre></div>
+        </li>
+        <li>Start <code style="font-family:var(--font-mono);">gemini</code> and run <code style="font-family:var(--font-mono);">/mcp</code> to verify the server and its tools loaded.</li>
+        <li>Ask your question in the CLI.</li>
+      </ol>
+    </div>
+
+    <!-- ChatGPT -->
+    <div class="tab-panel" id="tab-chatgpt">
+      <h3>ChatGPT</h3>
+      <p class="req">Custom MCP connectors live in <strong>Developer Mode</strong> (web). Available on Plus, Pro, Business, Enterprise &amp; Edu; ChatGPT supports remote HTTPS servers like ours.</p>
+      <ol>
+        <li>Go to <strong>Settings &rarr; Connectors &rarr; Advanced</strong> and turn on <strong>Developer Mode</strong>.</li>
+        <li>Back in <strong>Connectors</strong>, add a new remote MCP server / app with this URL:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span></pre></div>
+        </li>
+        <li>Save and refresh the connector so it pulls in the tools. In a chat, enable it from the Developer Mode / tools menu and ask your question.</li>
+      </ol>
+      <p class="toolbar-note">A quick correction on a common mix-up: ChatGPT is OpenAI's product (not built on Claude), but it speaks the same open MCP standard, so this one server works for Claude, ChatGPT, Gemini, and Cursor alike.</p>
+    </div>
+
+    <div class="warning-box" style="margin-top:2rem;">
+      <strong>Your connect URL and configs contain your real key &mdash; treat them like a password.</strong>
+      Don't paste them into shared or public chats or commit them to a public repo. If a key leaks, regenerate it from
+      <a href="account">your account page</a>; the old one revokes instantly.
+    </div>
+
+    <!-- ─────────────── TOOLS ─────────────── -->
+    <hr style="margin:2.5rem 0; border:none; border-top:1px solid var(--gray-200);">
+    <h2>The tools your AI gets</h2>
+    <p>Once connected, the assistant can call any of these. Search and metadata are open; only actual data downloads use your key.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Key?</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">search_econ_series</td><td>Search billions of economic series across 300+ sources</td><td>&mdash;</td></tr>
+          <tr><td class="mono">get_econ_series</td><td>Fetch a series as rows, with citation + license inline</td><td>required</td></tr>
+          <tr><td class="mono">get_econ_series_metadata</td><td>Full metadata: license, attribution, coverage</td><td>&mdash;</td></tr>
+          <tr><td class="mono">list_econ_sources</td><td>Every source with its license</td><td>&mdash;</td></tr>
+          <tr><td class="mono">get_data_freshness</td><td>Live per-source update board (honest staleness flags)</td><td>&mdash;</td></tr>
+          <tr><td class="mono">get_hf_download_link</td><td>Authenticated links for 1-min bars / 25 academic variables</td><td>for use</td></tr>
+          <tr><td class="mono">get_hf_variables_dictionary</td><td>The 25 variables' exact definitions</td><td>&mdash;</td></tr>
+          <tr><td class="mono">get_family_status</td><td>Live stats + data currency for both libraries</td><td>&mdash;</td></tr>
+          <tr><td class="mono">get_auth_status</td><td>Whether a key is configured on this connection (masked)</td><td>&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The server also publishes MCP <em>resources</em> &mdash; a <strong>data-honesty charter</strong> (survivorship,
+    the 2022 HF source break, per-source licensing, freshness semantics) plus the variables dictionary &mdash; and guided
+    <em>prompts</em> (<span class="mono">analyze_econ_series</span>, <span class="mono">compare_countries</span>,
+    <span class="mono">hf_event_study</span>) that bake the honesty rules into each workflow.</p>
+
+    <!-- ─────────────── FAIR USE ─────────────── -->
+    <div class="info-box">
+      <strong>Fair use &amp; licenses.</strong> MCP traffic uses the same free account, the same
+      <strong>100 downloads/minute</strong> limit, and the same per-series licenses as the website. Each response carries
+      its own license &mdash; please honor them (especially non-commercial sources) and keep the attribution lines in
+      published work. Your key is used server-side only; it is never echoed into the AI conversation.
+    </div>
+
+    <!-- ─────────────── TROUBLESHOOTING ─────────────── -->
+    <hr style="margin:2.5rem 0; border:none; border-top:1px solid var(--gray-200);">
+    <h2>Troubleshooting</h2>
+    <dl class="faq">
+      <dt>The AI says it can't reach the server.</dt>
+      <dd>Confirm the URL is exactly <code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp</code>. In Claude Code and Gemini CLI, run <code>/mcp</code> to see the connection status.</dd>
+      <dt>Search works, but downloads fail with an auth error.</dt>
+      <dd>Your key is missing or wrong. Sign in above so the snippets fill your real key, or copy it from <a href="account">your account page</a>. Search and metadata are keyless by design; only <code>get_econ_series</code> and HF downloads need the key.</dd>
+      <dt>It found the wrong series.</dt>
+      <dd>Add detail to your question (units, country, time period, "national vs international poverty line"). The assistant re-searches with better terms &mdash; that's the normal loop, not a failure.</dd>
+      <dt>Which key do I use &mdash; HF or Econ?</dt>
+      <dd>There's only one. Your HF Data Library key <em>is</em> your ElkassabgiData key; it works across every library through this one server.</dd>
+      <dt>Can I use it with no key at all?</dt>
+      <dd>Yes, partially. Searching the catalog, reading metadata, listing sources, and checking freshness all work keyless. Only pulling the actual data requires the free key.</dd>
+    </dl>
+
+    <p style="margin-top:2rem;">Prefer copy-paste prompts over connecting a server? The <a href="ai-prompts">AI Tools page</a> has ready-made prompts for downloading and analyzing the data. Questions or a setup that won't cooperate? <a href="contact">Email me</a>.</p>
+
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>&copy; 2026 Ahmed Elkassabgi. Licensed under <a href="license" style="color:var(--gold);">CC BY 4.0</a>.</p>
+      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ── Tabs ──
+document.querySelectorAll('.tab-btn').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.tab-btn').forEach(function (x) { x.classList.remove('active'); });
+    document.querySelectorAll('.tab-panel').forEach(function (x) { x.classList.remove('active'); });
+    b.classList.add('active');
+    document.getElementById('tab-' + b.getAttribute('data-tab')).classList.add('active');
+  });
+});
+
+// ── Copy config blocks (copies the REAL key when signed in) ──
+document.querySelectorAll('.cfg-copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var pre = btn.parentElement.querySelector('pre');
+    if (!pre) return;
+    var text = pre.textContent;
+    var done = function () {
+      btn.classList.add('done'); var o = btn.textContent; btn.textContent = 'Copied';
+      setTimeout(function () { btn.classList.remove('done'); btn.textContent = o; }, 1600);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(function () {});
+    } else {
+      var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  });
+});
+
+// ── Fill the user's real key into every snippet when signed in ──
+(function () {
+  var token = localStorage.getItem('hfd_session');
+  if (!token) return;
+  fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (u) {
+      if (!u || !u.api_key) return;
+      document.querySelectorAll('.ekey').forEach(function (el) { el.textContent = u.api_key; });
+      var kb = document.getElementById('keybar');
+      kb.classList.add('signed');
+      kb.innerHTML = '<strong>Signed in.</strong> Every command below now contains your real key &mdash; ' +
+        'just copy and paste. Treat these like a password: don\'t share or commit them.';
+    })
+    .catch(function () {});
+})();
+</script>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

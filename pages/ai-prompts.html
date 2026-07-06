@@ -133,80 +133,35 @@
 <section class="section">
   <div class="container">
 
-    <h2 id="mcp">MCP server — use this data inside Claude, Cursor &amp; other AI tools</h2>
-    <p>The <strong>ElkassabgiData MCP server</strong> exposes both of our libraries (this one and
-    <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>) to any AI assistant that
-    speaks the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> —
-    search series, fetch data with citations, and run guided analyses directly in a conversation.</p>
-    <p><strong>Connect</strong> (e.g. Claude &rarr; Settings &rarr; Connectors &rarr; Add custom connector):</p>
-    <div id="mcp-connect">
-      <pre><code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=YOUR_API_KEY</code></pre>
-      <p style="font-size:0.85rem; color:#6b7280;">Signed in? Your <strong>personal connect URL</strong> — with your key already inside, nothing to edit — appears here automatically. <a href="download#register">Sign in / register</a>.</p>
-    </div>
-    <p>Use the same free API key as this site (browse/search tools work without one; data downloads
-    require it). The key stays server-side — it is never echoed into your AI conversation.</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Tool</th><th>What it does</th><th>Key?</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">search_econ_series</td><td>Search billions of economic series across 300+ sources</td><td>—</td></tr>
-          <tr><td class="mono">get_econ_series</td><td>Fetch a series as rows, with citation + license inline</td><td>required</td></tr>
-          <tr><td class="mono">get_econ_series_metadata</td><td>Full metadata: license, attribution, coverage</td><td>—</td></tr>
-          <tr><td class="mono">list_econ_sources</td><td>The 309 sources with their licenses</td><td>—</td></tr>
-          <tr><td class="mono">get_data_freshness</td><td>Live per-source update board (honest staleness flags)</td><td>—</td></tr>
-          <tr><td class="mono">get_hf_download_link</td><td>Authenticated links for 1-min bars / 25 academic variables</td><td>for use</td></tr>
-          <tr><td class="mono">get_hf_variables_dictionary</td><td>The 25 variables' exact definitions</td><td>—</td></tr>
-          <tr><td class="mono">get_family_status</td><td>Live stats + data currency for both libraries</td><td>—</td></tr>
-          <tr><td class="mono">get_auth_status</td><td>Is a key configured on this connection (masked)</td><td>—</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>The server also ships MCP <em>resources</em> (a data-honesty charter — survivorship, source-break and
-    licensing caveats your AI relays with analyses — plus the variables dictionary) and guided
-    <em>prompts</em> (<span class="mono">analyze_econ_series</span>, <span class="mono">compare_countries</span>,
-    <span class="mono">hf_event_study</span>). Try: <em>&ldquo;Search ElkassabgiData for German inflation and
-    plot it against US CPI since 2015.&rdquo;</em></p>
+    <h2 id="mcp">Skip the code — just ask your AI</h2>
+    <p>Don't want to write curl commands at all? Connect the <strong>ElkassabgiData MCP server</strong> to
+    Claude, Cursor, Gemini, or ChatGPT once, and then ask for data in plain English. Your assistant finds the
+    exact series, downloads it, and hands it back <strong>with the citation and license attached</strong> —
+    across this library and the <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>.</p>
 
-    <script>
-    // Personalized MCP connect URL (same session flow as the API page's key widget).
-    (function () {
-      const MCP_BASE = 'https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp';
-      let mcpKey = '', mcpVisible = false;
-      function maskK(k) { return k ? k.slice(0, 4) + '•'.repeat(Math.max(0, k.length - 8)) + k.slice(-4) : ''; }
-      function mUrl(masked) { return MCP_BASE + '?api_key=' + (masked ? maskK(mcpKey) : mcpKey); }
-      window.toggleMcpUrl = function () {
-        mcpVisible = !mcpVisible;
-        document.getElementById('mcp-url-display').textContent = mUrl(!mcpVisible);
-        document.getElementById('mcp-toggle-btn').textContent = mcpVisible ? 'Hide' : 'Show';
-      };
-      window.copyMcpUrl = function (ev) {
-        navigator.clipboard.writeText(mUrl(false)).then(() => {
-          const b = ev.target, o = b.textContent; b.textContent = 'Copied!';
-          setTimeout(() => { b.textContent = o; }, 2000);
-        });
-      };
-      (async function () {
-        const token = localStorage.getItem('hfd_session');
-        if (!token) return;
-        try {
-          const r = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
-          if (!r.ok) return;
-          const u = await r.json();
-          if (!u.api_key) return;
-          mcpKey = u.api_key;
-          const el = document.getElementById('mcp-connect');
-          el.innerHTML =
-            '<p style="margin-bottom:0.5rem;"><strong>Your personal connect URL</strong> — key included, paste straight into Claude or Cursor:</p>' +
-            '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; background:#fef9ee; border:1px solid #fde68a; padding:0.75rem; border-radius:6px;">' +
-              '<code id="mcp-url-display" style="flex:1; min-width:250px; font-size:0.9rem; word-break:break-all;">' + mUrl(true) + '</code>' +
-              '<button onclick="toggleMcpUrl()" id="mcp-toggle-btn" class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue); padding:0.3rem 0.75rem; font-size:0.8rem;">Show</button>' +
-              '<button onclick="copyMcpUrl(event)" class="btn btn-sm btn-primary" style="padding:0.3rem 0.75rem; font-size:0.8rem;">Copy</button>' +
-            '</div>' +
-            '<p style="font-size:0.8rem; color:#6b7280; margin-top:0.5rem;">Copy always copies the FULL URL (real key) even while masked. Treat it like a password.</p>';
-        } catch (e) {}
-      })();
-    })();
-    </script>
+    <div style="border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; margin:1.5rem 0; background:#fff;">
+      <div style="background:var(--navy); color:#fff; padding:0.85rem 1.25rem; font-weight:600; font-size:0.95rem;">
+        For example, you could just ask&hellip;
+      </div>
+      <div style="padding:1.25rem;">
+        <div style="background:var(--navy); color:#fff; border-radius:10px; border-bottom-right-radius:2px; padding:0.7rem 1rem; margin:0 0 0.6rem auto; max-width:88%; font-size:0.95rem; line-height:1.5;">
+          &ldquo;How many people live below the poverty line in Poland?&rdquo;
+        </div>
+        <div style="background:var(--gray-50); border:1px solid var(--gray-200); color:var(--gray-800); border-radius:10px; border-bottom-left-radius:2px; padding:0.7rem 1rem; max-width:88%; font-size:0.92rem; line-height:1.55;">
+          &hellip;and the AI searches the catalog, finds the World Bank and PIP poverty series, asks whether you
+          mean Poland's national line or an international benchmark, then downloads it — cited and ready.
+        </div>
+        <p style="margin:1rem 0 0; font-size:0.9rem; color:var(--gray-600);">
+          Same idea for &ldquo;how much does Australia import each year?&rdquo;, &ldquo;pull AAPL 1-minute bars and
+          run an event study,&rdquo; or anything else in the libraries.
+        </p>
+        <a href="mcp" class="btn btn-primary" style="margin-top:1.25rem;">See the full MCP setup guide &rarr;</a>
+        <p style="margin:0.75rem 0 0; font-size:0.85rem; color:var(--gray-500);">
+          Step-by-step setup for Claude, Claude Code, Cursor, Gemini CLI &amp; ChatGPT — with your personal
+          connect key filled in automatically once you're signed in.
+        </p>
+      </div>
+    </div>
 
     <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
