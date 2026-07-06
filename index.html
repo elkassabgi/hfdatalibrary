@@ -35,7 +35,7 @@
         "@id": "https://hfdatalibrary.com/#dataset",
         "name": "HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)",
         "alternateName": ["Free 1-Minute Intraday Stock Data (OHLCV)", "HF Data Library"],
-        "description": "Free high-frequency, intraday (1-minute) OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to the present (~1.5 billion bars). Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, REST API, and full methodology documentation. A free, citable alternative to TAQ and CRSP for intraday equity research.",
+        "description": "Free high-frequency, intraday (1-minute) OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to the present (~1.5 billion bars). Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, a REST API, an MCP server for AI assistants, and full methodology documentation. A free, citable alternative to TAQ and CRSP for intraday equity research.",
         "url": "https://hfdatalibrary.com/",
         "identifier": "https://doi.org/10.5281/zenodo.19501605",
         "sameAs": "https://zenodo.org/records/19501605",
@@ -195,6 +195,14 @@
           },
           {
             "@type": "Question",
+            "name": "Can I use it with Claude, ChatGPT, or other AI assistants?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Connect the free ElkassabgiData MCP server to Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English - it finds the series, downloads it, and cites it. The MCP guide has step-by-step setup for each client."
+            }
+          },
+          {
+            "@type": "Question",
             "name": "Is this a free alternative to TAQ or CRSP?",
             "acceptedAnswer": {
               "@type": "Answer",
@@ -276,6 +284,7 @@
       <a href="pages/download" class="btn btn-primary">Download Data</a>
       <a href="pages/docs" class="btn btn-outline">Read the Docs</a>
       <a href="pages/api" class="btn btn-outline">API Access</a>
+      <a href="pages/mcp" class="btn btn-outline">AI &amp; MCP</a>
     </div>
   </div>
 </section>
@@ -374,7 +383,7 @@ print(df.head())
 <section class="section section-alt">
   <div class="container">
     <h2 style="text-align:center; margin-bottom:2.5rem;">Multiple ways to access the data</h2>
-    <div class="grid-3">
+    <div class="grid-4">
       <div class="card">
         <div class="card-icon">&#8681;</div>
         <h3>Browser Download</h3>
@@ -386,6 +395,12 @@ print(df.head())
         <h3>REST API</h3>
         <p>Programmatic access to any ticker, date range, and version. JSON, CSV, or parquet. Free API key with 100 downloads/minute. Python, R, and Stata examples provided.</p>
         <a href="pages/api" class="btn btn-primary" style="margin-top:1rem;">API Docs</a>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#129302;</div>
+        <h3>AI &amp; MCP</h3>
+        <p>Connect Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English — the MCP server finds the series, downloads it, and cites it. No code required.</p>
+        <a href="pages/mcp" class="btn btn-primary" style="margin-top:1rem;">MCP Guide</a>
       </div>
       <div class="card">
         <div class="card-icon">&#128230;</div>
@@ -463,6 +478,13 @@ print(df.head())
             <td>Paid</td>
           </tr>
           <tr>
+            <td><strong>AI access (MCP)</strong></td>
+            <td class="comparison-highlight"><span class="comparison-check">Free</span></td>
+            <td><span class="comparison-x">No</span></td>
+            <td>Unofficial</td>
+            <td>Paid</td>
+          </tr>
+          <tr>
             <td><strong>DOI / Citable</strong></td>
             <td class="comparison-highlight"><span class="comparison-check">Zenodo DOI</span></td>
             <td><span class="comparison-x">No</span></td>
@@ -520,6 +542,10 @@ print(df.head())
       <p>Yes. A free <a href="pages/api">REST API</a> is available with a free key and a 100 downloads-per-minute limit, returning data in JSON, CSV, or Parquet.</p>
     </div>
     <div class="faq-item" style="margin-bottom:1.5rem;">
+      <h3 style="margin-bottom:0.35rem;">Can I use it with Claude, ChatGPT, or other AI assistants?</h3>
+      <p>Yes. Connect the free <a href="pages/mcp">ElkassabgiData MCP server</a> to Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English — it finds the series, downloads it, and cites it. The <a href="pages/mcp">MCP guide</a> has step-by-step setup for each client.</p>
+    </div>
+    <div class="faq-item" style="margin-bottom:1.5rem;">
       <h3 style="margin-bottom:0.35rem;">Is this a free alternative to TAQ or CRSP?</h3>
       <p>It is a free, citable option for intraday U.S. equity research without WRDS — 1-minute bars plus 25 pre-computed measures. It is not a tick-level replacement for TAQ, since the bars are aggregated to one minute. <a href="pages/taq-crsp-alternative">See the full comparison →</a></p>
     </div>
@@ -554,6 +580,7 @@ print(df.head())
         <ul>
           <li><a href="pages/docs">Methodology</a></li>
           <li><a href="pages/api">API Reference</a></li>
+          <li><a href="pages/mcp">MCP Server (AI)</a></li>
           <li><a href="pages/code">Sample Code</a></li>
           <li><a href="pages/changelog">Changelog</a></li>
         </ul>
