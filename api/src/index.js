@@ -375,6 +375,23 @@ export default {
 // ── Rate Limiting ──
 // ══════════════════════════════════════
 
+// ── Download channel attribution (mcp / web / api) ──
+// mcp: relayed by the ElkassabgiData MCP server (client header or UA), or a
+//      download link the MCP handed out (?via=mcp) that the user's own code fetches.
+// web: the browser download page (Referer from our own site).
+// api: everything else (scripts, curl, clients).
+function downloadChannel(request) {
+  try {
+    const url = new URL(request.url);
+    const client = (request.headers.get('x-elkassabgi-client') || '').toLowerCase();
+    const ua = (request.headers.get('user-agent') || '').toLowerCase();
+    if (client === 'mcp' || ua.includes('elkassabgidata-mcp') || url.searchParams.get('via') === 'mcp') return 'mcp';
+    const ref = request.headers.get('referer') || '';
+    if (ref.includes('hfdatalibrary.com')) return 'web';
+    return 'api';
+  } catch (e) { return 'api'; }
+}
+
 async function checkRateLimit(env, key, ruleName) {
   const rule = RATE_LIMITS[ruleName];
   if (!rule) return { ok: true };
@@ -2106,8 +2123,8 @@ async function handleBars(ticker, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, '/v1/bars', ip, obj.size).run();
+  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(userId, user.api_key, ticker, version, '/v1/bars', ip, obj.size, downloadChannel(request)).run();
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}.parquet"`, 'Content-Length': obj.size }
@@ -2134,8 +2151,8 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, ip, obj.size).run();
+  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, ip, obj.size, downloadChannel(request)).run();
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}_${kind}.parquet"`, 'Content-Length': obj.size }
@@ -2254,8 +2271,8 @@ async function handleDownload(ticker, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, '/v1/download', ip, obj.size).run();
+  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(userId, user.api_key, ticker, version, '/v1/download', ip, obj.size, downloadChannel(request)).run();
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${filename}"`, 'Content-Length': obj.size }
