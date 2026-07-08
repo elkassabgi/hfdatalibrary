@@ -64,6 +64,7 @@
     }
     .copy-btn:hover { background:var(--navy); color:var(--gold); }
     .copy-btn.copied { background:#059669; border-color:#059669; color:#fff; }
+    .prompt-body pre .ekey { color:#b45309; font-weight:700; }
     .prompt-body pre {
       margin:0; padding:1.25rem;
       background:var(--gray-50);
@@ -157,7 +158,7 @@
         </p>
         <a href="mcp" class="btn btn-primary" style="margin-top:1.25rem;">See the full MCP setup guide &rarr;</a>
         <p style="margin:0.75rem 0 0; font-size:0.85rem; color:var(--gray-500);">
-          Step-by-step setup for Claude, Claude Code, Cursor, Gemini CLI &amp; ChatGPT — with your personal
+          Step-by-step setup for Claude, Claude Code, Cursor, Antigravity CLI &amp; ChatGPT — with your personal
           connect key filled in automatically once you're signed in.
         </p>
       </div>
@@ -180,7 +181,7 @@
       <div class="step-card">
         <div class="step-num">3</div>
         <div class="step-title">Replace the placeholders</div>
-        <div class="step-body">Yellow-pill tokens like <span class="placeholder">YOUR_API_KEY</span> and <span class="placeholder">AAPL</span> are meant to be edited. Swap in your real values.</div>
+        <div class="step-body" id="key-note">Yellow-pill tokens like <span class="placeholder">YOUR_API_KEY</span> and <span class="placeholder">AAPL</span> are meant to be edited. Swap in your real values &mdash; or <a href="download">sign in</a> and your real API key is filled into every prompt automatically.</div>
       </div>
       <div class="step-card">
         <div class="step-num">4</div>
@@ -214,11 +215,11 @@
 Configuration:
   ticker     = AAPL
   version    = clean        # "clean" = filtered, "raw" = as-received
-  api_key    = YOUR_API_KEY
+  api_key    = <span class="ekey">YOUR_API_KEY</span>
 
 Step 1 — Download the parquet file (entire history, ~24 years, single request):
 
-  curl -H "X-API-Key: YOUR_API_KEY" \
+  curl -H "X-API-Key: <span class="ekey">YOUR_API_KEY</span>" \
        "https://api.hfdatalibrary.com/v1/bars/AAPL?version=clean" \
        -o AAPL.parquet
 
@@ -258,11 +259,11 @@ Step 3 — Report:
 Configuration:
   tickers    = AAPL, MSFT, GOOG, NVDA, AMZN, META, TSLA
   version    = clean
-  api_key    = YOUR_API_KEY
+  api_key    = <span class="ekey">YOUR_API_KEY</span>
 
 For each ticker, fetch the parquet:
 
-  curl -H "X-API-Key: YOUR_API_KEY" \
+  curl -H "X-API-Key: <span class="ekey">YOUR_API_KEY</span>" \
        "https://api.hfdatalibrary.com/v1/bars/${TICKER}?version=clean" \
        -o "${TICKER}.parquet"
 
@@ -306,11 +307,11 @@ Configuration:
   version    = clean
   start_date = 2024-10-01
   end_date   = 2024-12-31
-  api_key    = YOUR_API_KEY
+  api_key    = <span class="ekey">YOUR_API_KEY</span>
 
 Step 1 — Download (the API ships entire-ticker files; slice client-side):
 
-  curl -H "X-API-Key: YOUR_API_KEY" \
+  curl -H "X-API-Key: <span class="ekey">YOUR_API_KEY</span>" \
        "https://api.hfdatalibrary.com/v1/bars/NVDA?version=clean" \
        -o NVDA.parquet
 
@@ -351,11 +352,11 @@ Report:
 Configuration:
   ticker  = AAPL
   version = clean
-  api_key = YOUR_API_KEY
+  api_key = <span class="ekey">YOUR_API_KEY</span>
 
 The endpoint is:
   GET https://api.hfdatalibrary.com/v1/bars/{TICKER}?version={VERSION}
-  Header: X-API-Key: YOUR_API_KEY
+  Header: X-API-Key: <span class="ekey">YOUR_API_KEY</span>
 
 Give me a single curl command that:
   1. authenticates with X-API-Key
@@ -391,7 +392,7 @@ Configuration:
   bundle     = Magnificent 7        # or: S&P 500, Dow 30, sector-tech, sector-financials
   tickers    = AAPL, MSFT, GOOG, NVDA, AMZN, META, TSLA
   version    = clean
-  api_key    = YOUR_API_KEY
+  api_key    = <span class="ekey">YOUR_API_KEY</span>
   out_dir    = mag7_data/
 
 If the bundle name is recognized but no tickers are supplied, look up the constituents (you can use https://hfdatalibrary.com/pages/tickers as a reference or a public source for index membership).
@@ -400,7 +401,7 @@ Download each ticker, throttled to ~1 request/second to stay under the 100/min r
 
   mkdir -p mag7_data
   for T in AAPL MSFT GOOG NVDA AMZN META TSLA; do
-    curl -H "X-API-Key: YOUR_API_KEY" \
+    curl -H "X-API-Key: <span class="ekey">YOUR_API_KEY</span>" \
          "https://api.hfdatalibrary.com/v1/bars/${T}?version=clean" \
          -o "mag7_data/${T}.parquet"
     sleep 1
@@ -440,11 +441,11 @@ Configuration:
   version    = clean
   timeframe  = 5min          # allowed: 1min, 5min, 15min, 30min, hourly, daily, weekly, monthly
   format     = parquet       # or csv
-  api_key    = YOUR_API_KEY
+  api_key    = <span class="ekey">YOUR_API_KEY</span>
 
 Step 1 — Request a signed download URL (the token is valid 10 minutes):
 
-  curl -H "Authorization: Bearer YOUR_API_KEY" \
+  curl -H "Authorization: Bearer <span class="ekey">YOUR_API_KEY</span>" \
        "https://api.hfdatalibrary.com/v1/download-token/SPY?version=clean&timeframe=5min&format=parquet"
 
 Response (JSON):
@@ -531,6 +532,24 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
 });
 </script>
 
+<script>
+// Fill the signed-in user's real API key into every prompt (same as the MCP guide).
+(function () {
+  var token = localStorage.getItem('hfd_session');
+  if (!token) return;
+  fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (u) {
+      if (!u || !u.api_key) return;
+      document.querySelectorAll('.prompt-body pre .ekey').forEach(function (el) { el.textContent = u.api_key; });
+      var note = document.getElementById('key-note');
+      if (note) note.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every prompt below &mdash; ' +
+        'just copy and paste. Treat these like a password: don't share prompts containing your key. ' +
+        'Tokens like <span class="placeholder">AAPL</span> are still meant to be edited.';
+    })
+    .catch(function () {});
+})();
+</script>
 <script src="../js/site.js"></script>
 </body>
 </html>

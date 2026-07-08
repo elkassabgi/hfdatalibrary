@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connect an AI to the Data (MCP Guide) - HF Data Library</title>
-  <meta name="description" content="Step-by-step guide to connect Claude, Claude Code, Cursor, Gemini CLI, or ChatGPT to the ElkassabgiData libraries with the MCP server. Ask in plain English; your AI finds the exact series and downloads it with a citation.">
+  <meta name="description" content="Step-by-step guide to connect Claude, Claude Code, Cursor, Antigravity CLI, or ChatGPT to the ElkassabgiData libraries with the MCP server. Ask in plain English; your AI finds the exact series and downloads it with a citation.">
   <link rel="canonical" href="https://hfdatalibrary.com/pages/mcp">
   <meta property="og:title" content="Connect an AI to the Data - ElkassabgiData MCP Guide">
-  <meta property="og:description" content="Ask your AI in plain English - 'how many people live below the poverty line in Poland?' - and it finds the exact series and downloads it with a citation. Setup for Claude, Cursor, Gemini CLI &amp; ChatGPT.">
+  <meta property="og:description" content="Ask your AI in plain English - 'how many people live below the poverty line in Poland?' - and it finds the exact series and downloads it with a citation. Setup for Claude, Cursor, Antigravity CLI &amp; ChatGPT.">
   <meta property="og:url" content="https://hfdatalibrary.com/pages/mcp">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
@@ -15,7 +15,7 @@
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Connect an AI to the Data - ElkassabgiData MCP Guide">
-  <meta name="twitter:description" content="Ask your AI in plain English and it finds the exact economic or equity series and downloads it with a citation. Setup for Claude, Cursor, Gemini CLI &amp; ChatGPT.">
+  <meta name="twitter:description" content="Ask your AI in plain English and it finds the exact economic or equity series and downloads it with a citation. Setup for Claude, Cursor, Antigravity CLI &amp; ChatGPT.">
   <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
@@ -217,7 +217,7 @@
       <button class="tab-btn active" data-tab="claude">Claude (app)</button>
       <button class="tab-btn" data-tab="claudecode">Claude Code</button>
       <button class="tab-btn" data-tab="cursor">Cursor</button>
-      <button class="tab-btn" data-tab="gemini">Gemini CLI</button>
+      <button class="tab-btn" data-tab="gemini">Antigravity CLI</button>
       <button class="tab-btn" data-tab="chatgpt">ChatGPT</button>
     </div>
 
@@ -274,22 +274,22 @@
       </ol>
     </div>
 
-    <!-- Gemini CLI -->
+    <!-- Antigravity CLI (replaced Gemini CLI, retired June 18, 2026) -->
     <div class="tab-panel" id="tab-gemini">
-      <h3>Gemini CLI</h3>
-      <p class="req">Configure in <code style="font-family:var(--font-mono);">~/.gemini/settings.json</code>. Note Gemini uses <code style="font-family:var(--font-mono);">httpUrl</code> (not <code style="font-family:var(--font-mono);">url</code>) for remote servers.</p>
+      <h3>Antigravity CLI</h3>
+      <p class="req">Google retired Gemini CLI on June 18, 2026 &mdash; its replacement is <strong>Antigravity CLI</strong> (the binary is <code style="font-family:var(--font-mono);">agy</code>). MCP servers now live in a dedicated <code style="font-family:var(--font-mono);">mcp_config.json</code>, and remote servers use <code style="font-family:var(--font-mono);">serverUrl</code> &mdash; the old <code style="font-family:var(--font-mono);">httpUrl</code>/<code style="font-family:var(--font-mono);">url</code> keys are silently ignored.</p>
       <ol>
-        <li>Add the server to <code style="font-family:var(--font-mono);">~/.gemini/settings.json</code>:
+        <li>Add the server to <code style="font-family:var(--font-mono);">~/.gemini/antigravity-cli/mcp_config.json</code> (or <code style="font-family:var(--font-mono);">.agents/mcp_config.json</code> inside one project):
           <div class="codeblock"><button class="cfg-copy">Copy</button><pre>{
   "mcpServers": {
     "elkassabgidata": {
-      "httpUrl": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
+      "serverUrl": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
       "headers": { "Authorization": "Bearer <span class="ekey">YOUR_KEY</span>" }
     }
   }
 }</pre></div>
         </li>
-        <li>Start <code style="font-family:var(--font-mono);">gemini</code> and run <code style="font-family:var(--font-mono);">/mcp</code> to verify the server and its tools loaded.</li>
+        <li>Start <code style="font-family:var(--font-mono);">agy</code> and ask it to list its tools &mdash; the nine <code style="font-family:var(--font-mono);">elkassabgidata</code> tools should appear.</li>
         <li>Ask your question in the CLI.</li>
       </ol>
     </div>
@@ -352,7 +352,7 @@
     <h2>Troubleshooting</h2>
     <dl class="faq">
       <dt>The AI says it can't reach the server.</dt>
-      <dd>Confirm the URL is exactly <code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp</code>. In Claude Code and Gemini CLI, run <code>/mcp</code> to see the connection status.</dd>
+      <dd>Confirm the URL is exactly <code>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp</code>. In Claude Code, run <code>/mcp</code> to see the connection status.</dd>
       <dt>Search works, but downloads fail with an auth error.</dt>
       <dd>Your key is missing or wrong. Sign in above so the snippets fill your real key, or copy it from <a href="account">your account page</a>. Search and metadata are keyless by design; only <code>get_econ_series</code> and HF downloads need the key.</dd>
       <dt>It found the wrong series.</dt>
