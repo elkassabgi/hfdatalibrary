@@ -204,6 +204,7 @@ const RATE_LIMITS = {
   'api:register': { max: 3, window: 3600 },     // 3 registrations per hour per IP
   'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
+  'api:download-vip': { max: 500, window: 60 }, // VIP: 5x (bounded, never unlimited; unadvertised)
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
 };
 
@@ -2093,7 +2094,7 @@ async function handleBars(ticker, request, env, cors, ip) {
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
   // Per-user rate limit
-  const rl = await checkRateLimit(env, String(user.id), 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   const version = new URL(request.url).searchParams.get('version') || 'clean';
@@ -2121,7 +2122,7 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
-  const rl = await checkRateLimit(env, String(user.id), 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   const version = new URL(request.url).searchParams.get('version') || 'clean';
@@ -2199,7 +2200,7 @@ async function handleDownload(ticker, request, env, cors, ip) {
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
   // Per-user download rate limit
-  const rl = await checkRateLimit(env, String(user.id), 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   // Use token's version/format if provided, otherwise query params
