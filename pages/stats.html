@@ -380,7 +380,7 @@ async function loadStats() {
       'University of Toronto': 'utoronto.ca',
       'National University of Singapore': 'nus.edu.sg',
       'Peking University': 'pku.edu.cn',
-      'Tsinghua University': 'tsinghua.edu.cn',
+      'Tsinghua University': 'www.tsinghua.edu.cn',
       'University of Hong Kong': 'hku.hk',
       'ETH Zurich': 'ethz.ch',
       'University of Texas at Austin': 'utexas.edu',
@@ -412,25 +412,38 @@ async function loadStats() {
       'IIITG': 'iiitg.ac.in',
       'Amazon': 'amazon.com',
       'NVIDIA': 'nvidia.com',
-      'MBBANK': 'mbbank.com.vn',
+      'MBBANK': 'www.mbbank.com.vn',
+      // added 2026-07-08: verified favicons for currently-registered institutions
+      // that were falling through to the (now-removed) .edu-guess fallback and
+      // therefore showing a WRONG or missing icon (e.g. "Heidelberg University"
+      // guessed heidelberg.edu = Heidelberg, Ohio — the wrong school).
+      'Heidelberg University': 'uni-heidelberg.de',
+      'Hanyang': 'hanyang.ac.kr',
+      'National Chengchi University': 'www.nccu.edu.tw',
+      'Abertay': 'abertay.ac.uk',
+      'CMU': 'cmu.edu',
     };
 
+    // Only show an icon we can VERIFY: an explicit, checked entry in INST_DOMAINS.
+    // The old code guessed "<name>.edu" for anything unmapped, which showed the
+    // WRONG school's logo whenever that guess happened to resolve (e.g.
+    // "Heidelberg University" -> heidelberg.edu = Heidelberg, Ohio) — so any
+    // institution not in the map now renders no icon rather than an unverified
+    // one. A fixed-width slot keeps every name aligned whether the icon is
+    // present, absent, or fails to load.
     function instIcon(name) {
       var val = INST_DOMAINS[name];
-      var url;
-      if (val && val.startsWith('CUSTOM:')) {
-        url = val.substring(7);
-      } else {
-        var domain = val;
-        if (!domain) {
-          var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
-          domain = words.join('') + '.edu';
-        }
-        url = 'https://www.google.com/s2/favicons?sz=32&domain=' + domain;
+      var inner = '';
+      if (val) {
+        var url = val.indexOf('CUSTOM:') === 0
+          ? val.substring(7)
+          : 'https://www.google.com/s2/favicons?sz=32&domain=' + val;
+        inner = '<img src="' + url + '" width="20" height="20" ' +
+          'style="vertical-align:middle; border-radius:3px; object-fit:contain;" ' +
+          'onerror="this.style.display=\'none\'" alt="">';
       }
-      return '<img src="' + url + '" width="20" height="20" ' +
-        'style="vertical-align:middle; margin-right:8px; border-radius:3px; object-fit:contain;" ' +
-        'onerror="this.style.display=\'none\'" alt="">';
+      return '<span style="display:inline-block; width:20px; margin-right:8px; ' +
+        'text-align:center; vertical-align:middle;">' + inner + '</span>';
     }
 
     // Prestige ordering for the institutions panel. Lower rank = higher
