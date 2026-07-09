@@ -544,7 +544,7 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
       document.querySelectorAll('.prompt-body pre .ekey').forEach(function (el) { el.textContent = u.api_key; });
       var note = document.getElementById('key-note');
       if (note) note.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every prompt below &mdash; ' +
-        'just copy and paste. Treat these like a password: don't share prompts containing your key. ' +
+        'just copy and paste. Treat these like a password — do not share prompts that contain your key. ' +
         'Tokens like <span class="placeholder">AAPL</span> are still meant to be edited.';
     })
     .catch(function () {});
