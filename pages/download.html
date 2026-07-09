@@ -552,10 +552,62 @@
   </div>
 </footer>
 
+<!-- Citation-agreement gate: shown once (per version) before the first download. -->
+<div id="cite-modal" style="display:none; position:fixed; inset:0; background:rgba(11,18,32,0.6); z-index:2000; align-items:center; justify-content:center; padding:1rem;">
+  <div style="background:#fff; max-width:560px; width:100%; border-radius:12px; padding:1.75rem 1.85rem; box-shadow:0 12px 44px rgba(0,0,0,0.35);">
+    <h3 style="margin:0 0 0.75rem; color:var(--navy); font-family:var(--font-sans);">Please cite this data</h3>
+    <p style="margin:0 0 0.85rem; color:var(--gray-700); font-size:0.93rem; line-height:1.6;">
+      This dataset is <strong>free</strong> under <a href="license">CC BY&nbsp;4.0</a>. In return, you agree to
+      <strong>credit it</strong> in any publication, redistribution, or derivative work. Every file you download
+      also carries its citation. Please cite:
+    </p>
+    <div style="background:var(--gray-50); border:1px solid var(--gray-200); border-radius:8px; padding:0.85rem 1rem; font-size:0.85rem; color:var(--gray-800); line-height:1.5; margin-bottom:1.1rem;">
+      Elkassabgi, A. (2026). <em>HF Data Library: Free 1-Minute Intraday U.S. Equity Data.</em> Zenodo. https://doi.org/10.5281/zenodo.19501605
+      <div style="margin-top:0.5rem;"><a href="cite">Full citation, BibTeX &amp; APA &rarr;</a></div>
+    </div>
+    <label style="display:flex; align-items:flex-start; gap:0.55rem; font-size:0.9rem; color:var(--gray-700); margin-bottom:1.2rem; cursor:pointer;">
+      <input type="checkbox" id="cite-agree-chk" style="margin-top:0.2rem; flex:0 0 auto;">
+      <span>I agree to cite the HF Data Library — and the original data sources where noted — in any use of this data.</span>
+    </label>
+    <div style="display:flex; gap:0.6rem; justify-content:flex-end;">
+      <button id="cite-agree-cancel" style="padding:0.5rem 1.1rem; border:1px solid var(--gray-300); background:#fff; color:var(--gray-700); border-radius:6px; cursor:pointer;">Cancel</button>
+      <button id="cite-agree-ok" style="padding:0.5rem 1.3rem; border:none; background:var(--gray-300); color:#fff; border-radius:6px; cursor:not-allowed;" disabled>Agree &amp; Download</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = 'https://api.hfdatalibrary.com';
 let currentUser = null;
 let sessionToken = localStorage.getItem('hfd_session');
+
+// ── Citation-agreement gate ──────────────────────────────────────────────
+// Bump the version to re-prompt everyone if the citation terms change.
+const CITE_AGREE_VERSION = '2026-07';
+function requireCitationAgreement() {
+  return new Promise(function (resolve) {
+    if (localStorage.getItem('hfd_cite_agreed') === CITE_AGREE_VERSION) { resolve(true); return; }
+    const m = document.getElementById('cite-modal');
+    const chk = document.getElementById('cite-agree-chk');
+    const ok = document.getElementById('cite-agree-ok');
+    const cancel = document.getElementById('cite-agree-cancel');
+    chk.checked = false;
+    ok.disabled = true; ok.style.background = 'var(--gray-300)'; ok.style.cursor = 'not-allowed';
+    chk.onchange = function () {
+      ok.disabled = !chk.checked;
+      ok.style.background = chk.checked ? 'var(--blue)' : 'var(--gray-300)';
+      ok.style.cursor = chk.checked ? 'pointer' : 'not-allowed';
+    };
+    ok.onclick = function () {
+      if (!chk.checked) return;
+      localStorage.setItem('hfd_cite_agreed', CITE_AGREE_VERSION);
+      m.style.display = 'none';
+      resolve(true);
+    };
+    cancel.onclick = function () { m.style.display = 'none'; resolve(false); };
+    m.style.display = 'flex';
+  });
+}
 
 // Handle OAuth callback redirects
 let oauthPendingProvider = null;
@@ -722,6 +774,7 @@ function renderBundle() {
 async function downloadBundle(format) {
   if (!sessionToken) { alert('Please log in first.'); return; }
   if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
+  if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('bundle-version').value;
   const timeframe = document.getElementById('bundle-timeframe').value;
   const tickers = [...selectedTickers].sort();
@@ -857,6 +910,7 @@ function handleRoleChange() {
 // ── Signed download — request a short-lived token and open it ──
 async function downloadViaToken(ticker, format) {
   if (!sessionToken) { alert('Please log in first.'); return; }
+  if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('version-select').value;
   const timeframe = document.getElementById('timeframe-select').value;
   try {
