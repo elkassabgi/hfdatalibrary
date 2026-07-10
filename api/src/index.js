@@ -43,14 +43,6 @@ function isDisposableEmail(email) {
 const ALLOWED_ORIGINS = [
   'https://hfdatalibrary.com',
   'https://www.hfdatalibrary.com',
-  // ElkassabgiData family (owner directive 2026-07-03): ONE account system for
-  // every Elkassabgi data library. Sibling sites register/log in against THIS
-  // worker, so their origins are allowed for the auth endpoints. Add each
-  // future database's domain here when it launches.
-  'https://econdatalibrary.com',
-  'https://www.econdatalibrary.com',
-  'https://elkassabgidata.com',
-  'https://www.elkassabgidata.com',
   'http://localhost:8080', // for local dev
 ];
 
@@ -204,7 +196,6 @@ const RATE_LIMITS = {
   'api:register': { max: 3, window: 3600 },     // 3 registrations per hour per IP
   'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
-  'api:download-vip': { max: 500, window: 60 }, // VIP: 5x (bounded, never unlimited; unadvertised)
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
 };
 
@@ -374,23 +365,6 @@ export default {
 // ══════════════════════════════════════
 // ── Rate Limiting ──
 // ══════════════════════════════════════
-
-// ── Download channel attribution (mcp / web / api) ──
-// mcp: relayed by the ElkassabgiData MCP server (client header or UA), or a
-//      download link the MCP handed out (?via=mcp) that the user's own code fetches.
-// web: the browser download page (Referer from our own site).
-// api: everything else (scripts, curl, clients).
-function downloadChannel(request) {
-  try {
-    const url = new URL(request.url);
-    const client = (request.headers.get('x-elkassabgi-client') || '').toLowerCase();
-    const ua = (request.headers.get('user-agent') || '').toLowerCase();
-    if (client === 'mcp' || ua.includes('elkassabgidata-mcp') || url.searchParams.get('via') === 'mcp') return 'mcp';
-    const ref = request.headers.get('referer') || '';
-    if (ref.includes('hfdatalibrary.com')) return 'web';
-    return 'api';
-  } catch (e) { return 'api'; }
-}
 
 async function checkRateLimit(env, key, ruleName) {
   const rule = RATE_LIMITS[ruleName];
@@ -2111,7 +2085,7 @@ async function handleBars(ticker, request, env, cors, ip) {
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
   // Per-user rate limit
-  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   const version = new URL(request.url).searchParams.get('version') || 'clean';
@@ -2123,8 +2097,12 @@ async function handleBars(ticker, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, '/v1/bars', ip, obj.size, downloadChannel(request)).run();
+  // Best-effort logging — must never block the download itself.
+  const channel = new URL(request.url).searchParams.get('via') === 'mcp' ? 'mcp' : 'api';
+  try {
+    await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(userId, user.api_key, ticker, version, '/v1/bars', channel, ip, obj.size).run();
+  } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}.parquet"`, 'Content-Length': obj.size }
@@ -2139,7 +2117,7 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
-  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   const version = new URL(request.url).searchParams.get('version') || 'clean';
@@ -2151,8 +2129,12 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, ip, obj.size, downloadChannel(request)).run();
+  // Best-effort logging — must never block the download itself.
+  const channel = new URL(request.url).searchParams.get('via') === 'mcp' ? 'mcp' : 'api';
+  try {
+    await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, channel, ip, obj.size).run();
+  } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}_${kind}.parquet"`, 'Content-Length': obj.size }
@@ -2162,12 +2144,19 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
 const VALID_TIMEFRAMES = ['1min', '5min', '15min', '30min', 'hourly', 'daily', 'weekly', 'monthly'];
 
 async function handleDownloadToken(ticker, request, env, cors) {
-  const user = await requireAuth(request, env);
+  // Auth two-step (instead of requireAuth) so the CHANNEL the token was issued
+  // through is known: a browser session -> 'web', an X-API-Key -> 'api'. The
+  // signed-token flow is also the documented API path for non-1min timeframes
+  // and CSV, so token presence alone does NOT imply a website download.
+  let user = await getSessionUser(request, env);
+  let issuedVia = 'web';
+  if (!user) { user = await getUserByApiKey(request, env); issuedVia = 'api'; }
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
   const url = new URL(request.url);
+  if (url.searchParams.get('via') === 'mcp') issuedVia = 'mcp';
   const version = url.searchParams.get('version') || 'clean';
   const format = (url.searchParams.get('format') || 'parquet').toLowerCase();
   const timeframe = url.searchParams.get('timeframe') || '1min';
@@ -2183,8 +2172,8 @@ async function handleDownloadToken(ticker, request, env, cors) {
   // Encode timeframe in version field (e.g. "clean|5min")
   const versionTf = `${version}|${timeframe}`;
   await env.DB.prepare(
-    'INSERT INTO download_tokens (token, user_id, ticker, version, format, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(token, userId, ticker, versionTf, format, expires).run();
+    'INSERT INTO download_tokens (token, user_id, ticker, version, format, channel, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(token, userId, ticker, versionTf, format, issuedVia, expires).run();
 
   return jsonRes({
     url: `https://api.hfdatalibrary.com/v1/download/${ticker}?token=${token}`,
@@ -2217,7 +2206,7 @@ async function handleDownload(ticker, request, env, cors, ip) {
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
 
   // Per-user download rate limit
-  const rl = await checkRateLimit(env, String(user.id), user.is_vip ? 'api:download-vip' : 'api:download');
+  const rl = await checkRateLimit(env, String(user.id), 'api:download');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   // Use token's version/format if provided, otherwise query params
@@ -2271,8 +2260,17 @@ async function handleDownload(ticker, request, env, cors, ip) {
   const userId = user.user_id || user.id;
   await env.DB.prepare('UPDATE users SET download_count = download_count + 1, total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?')
     .bind(obj.size, userId).run();
-  await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, ip_address, bytes_served, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(userId, user.api_key, ticker, version, '/v1/download', ip, obj.size, downloadChannel(request)).run();
+  // Channel: explicit via=mcp wins; otherwise the channel the token was ISSUED
+  // through (web session vs API key — see handleDownloadToken); tokenless
+  // authenticated calls are direct API. Legacy tokens (pre-channel column)
+  // fall back to 'web'. Logging is best-effort: a schema/logging failure must
+  // never block a download the user already earned (bytes are in hand).
+  const channel = url.searchParams.get('via') === 'mcp' ? 'mcp'
+    : (tokenRecord ? (tokenRecord.channel || 'web') : 'api');
+  try {
+    await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(userId, user.api_key, ticker, version, '/v1/download', channel, ip, obj.size).run();
+  } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
     headers: { ...cors, 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${filename}"`, 'Content-Length': obj.size }
@@ -2295,28 +2293,24 @@ async function handleAdmin(path, request, env, cors, ip) {
     return jsonRes({ audit_log: logs.results }, 200, cors);
   }
 
-  // GET /v1/admin/users — list all users
+  // GET /v1/admin/users — list users (server-side search / sort / filter / paginate)
   if (path === '/v1/admin/users' && request.method === 'GET') {
     const url = new URL(request.url);
-    const limit = parseInt(url.searchParams.get('limit') || '100');
-    const offset = parseInt(url.searchParams.get('offset') || '0');
+    const limit = Math.max(1, Math.min(parseInt(url.searchParams.get('limit') || '50') || 50, 500));
+    const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
+    const q = (url.searchParams.get('q') || '').trim();
+    const filter = url.searchParams.get('filter') || '';   // vip|admin|revoked|active|flagged
+    // Sort whitelist — never interpolate raw input into SQL.
+    const SORT_COLS = {
+      created_at: 'created_at', name: 'name COLLATE NOCASE', email: 'email COLLATE NOCASE',
+      institution: 'institution COLLATE NOCASE', country: 'country COLLATE NOCASE',
+      downloads: 'download_count', logins: 'login_count', last_login: 'last_login_at',
+    };
+    const sortCol = SORT_COLS[url.searchParams.get('sort')] || SORT_COLS.created_at;
+    const dir = (url.searchParams.get('dir') || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    // ip_country: geolocation (Cloudflare cf-ipcountry) of the user's last-login
-    // IP, resolved from login_history. This is the IP's actual country — distinct
-    // from users.country (self-declared) — so mismatches are visible to admins.
-    const users = await env.DB.prepare(
-      'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes, ' +
-      '(SELECT lh.country FROM login_history lh WHERE lh.ip_address = users.last_login_ip ' +
-      'AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
-      'ORDER BY lh.id DESC LIMIT 1) AS ip_country ' +
-      'FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?'
-    ).bind(limit, offset).all();
-
-    const total = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
-
-    // Abuse detection: flag accounts that share a last-login IP with other
-    // accounts (signal of temp-email account farming / API reselling). Computed
-    // across ALL users, not just this page.
+    // Abuse signals computed across ALL users (needed for row enrichment, the
+    // 'flagged' filter, and the global alert-bar counts) — not just this page.
     const sharedRows = await env.DB.prepare(
       "SELECT last_login_ip AS ip, COUNT(*) AS c FROM users " +
       "WHERE last_login_ip IS NOT NULL AND last_login_ip != '' " +
@@ -2324,20 +2318,64 @@ async function handleAdmin(path, request, env, cors, ip) {
     ).all();
     const sharedMap = {};
     for (const r of sharedRows.results) sharedMap[r.ip] = r.c;
+    const allFlags = await env.DB.prepare('SELECT id, email, last_login_ip FROM users').all();
+    const disposableIds = new Set(allFlags.results.filter(u => isDisposableEmail(u.email)).map(u => u.id));
+    const sharedIds = new Set(allFlags.results.filter(u => u.last_login_ip && sharedMap[u.last_login_ip]).map(u => u.id));
+
+    const where = [];
+    const args = [];
+    if (q) {
+      where.push('(name LIKE ? OR email LIKE ? OR institution LIKE ? OR country LIKE ? OR role LIKE ?)');
+      const like = '%' + q + '%';
+      args.push(like, like, like, like, like);
+    }
+    if (filter === 'vip') where.push('is_vip = 1');
+    else if (filter === 'admin') where.push('is_admin = 1');
+    else if (filter === 'revoked') where.push('is_active = 0');
+    else if (filter === 'active') where.push('is_active = 1');
+    else if (filter === 'flagged') {
+      // Inline the ids rather than binding them: D1 caps bound parameters at
+      // ~100 per query, and the flagged set (shared university/VPN IPs +
+      // disposable domains) can easily exceed that. Safe to inline — these are
+      // DB-generated integer primary keys, coerced through Number().
+      const ids = [...new Set([...disposableIds, ...sharedIds])]
+        .map(Number).filter(Number.isInteger);
+      where.push('id IN (' + (ids.length ? ids.join(',') : '-1') + ')');
+    }
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    // ip_country: geolocation (Cloudflare cf-ipcountry) of the user's last-login
+    // IP, resolved from login_history — distinct from self-declared users.country.
+    const users = await env.DB.prepare(
+      'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes, ' +
+      '(SELECT lh.country FROM login_history lh WHERE lh.ip_address = users.last_login_ip ' +
+      'AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
+      'ORDER BY lh.id DESC LIMIT 1) AS ip_country ' +
+      'FROM users ' + whereSql + ` ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`
+    ).bind(...args, limit, offset).all();
+
+    const totalAll = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
+    const totalMatch = whereSql
+      ? await env.DB.prepare('SELECT COUNT(*) as count FROM users ' + whereSql).bind(...args).first()
+      : totalAll;
 
     const usersOut = users.results.map(u => ({
       ...u,
-      shared_ip: !!(u.last_login_ip && sharedMap[u.last_login_ip]),
+      shared_ip: sharedIds.has(u.id),
       shared_ip_count: u.last_login_ip ? (sharedMap[u.last_login_ip] || 1) : 0,
-      disposable_email: isDisposableEmail(u.email),
+      disposable_email: disposableIds.has(u.id),
     }));
 
     return jsonRes({
-      total: total.count,
+      total: totalAll.count,
+      total_matching: totalMatch.count,
+      limit, offset,
       users: usersOut,
       shared_ip_clusters: sharedRows.results.length,
-      flagged_users: usersOut.filter(u => u.shared_ip).length,
-      disposable_users: usersOut.filter(u => u.disposable_email).length,
+      flagged_users: sharedIds.size,
+      disposable_users: disposableIds.size,
+      // Union of shared-IP + disposable — matches what the 'flagged' filter returns.
+      flagged_total: new Set([...sharedIds, ...disposableIds]).size,
     }, 200, cors);
   }
 
@@ -2439,6 +2477,26 @@ async function handleAdmin(path, request, env, cors, ip) {
     const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 10').all();
     const recentUsers = await env.DB.prepare('SELECT name, email, institution, country, role, created_at FROM users ORDER BY created_at DESC LIMIT 10').all();
 
+    // Download channel breakdown (api / web / mcp). `channel` is captured at
+    // download time going forward; NULL (pre-tracking) rows are classified by
+    // endpoint — the API-only endpoints resolve exactly, legacy /v1/download rows
+    // fall back to 'web' (see migrate_download_channel.sql).
+    const CHANNEL_EXPR =
+      "COALESCE(channel, CASE WHEN endpoint IN ('/v1/bars','/v1/variables','/v1/quality') THEN 'api' ELSE 'web' END)";
+    const chanAll = await env.DB.prepare(
+      `SELECT ${CHANNEL_EXPR} AS channel, COUNT(*) AS downloads, COALESCE(SUM(bytes_served),0) AS bytes FROM download_log GROUP BY 1`
+    ).all();
+    const chan7d = await env.DB.prepare(
+      `SELECT ${CHANNEL_EXPR} AS channel, COUNT(*) AS downloads FROM download_log WHERE timestamp > datetime('now','-7 days') GROUP BY 1`
+    ).all();
+    // Tracked-since must reflect when live capture began, NOT the migration
+    // backfill (which stamps 'api' onto old rows with their original
+    // timestamps). /v1/download rows are left NULL by the migration, so the
+    // earliest non-NULL one marks the first genuinely-tracked download.
+    const trackedSince = await env.DB.prepare(
+      "SELECT MIN(timestamp) AS t FROM download_log WHERE endpoint = '/v1/download' AND channel IS NOT NULL"
+    ).first();
+
     return jsonRes({
       total_users: totalUsers.c,
       active_users: activeUsers.c,
@@ -2447,17 +2505,28 @@ async function handleAdmin(path, request, env, cors, ip) {
       today_logins: todayLogins.c,
       today_downloads: todayDownloads.c,
       top_tickers: topTickers.results,
-      recent_registrations: recentUsers.results
+      recent_registrations: recentUsers.results,
+      channels: chanAll.results,
+      channels_7d: chan7d.results,
+      channel_tracked_since: trackedSince ? trackedSince.t : null
     }, 200, cors);
   }
 
-  // GET /v1/admin/downloads — download log
+  // GET /v1/admin/downloads — download log (optional ?channel=api|web|mcp filter)
   if (path === '/v1/admin/downloads') {
     const url = new URL(request.url);
-    const limit = parseInt(url.searchParams.get('limit') || '100');
-    const logs = await env.DB.prepare(
-      'SELECT dl.*, u.name, u.email, u.institution FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id ORDER BY dl.timestamp DESC LIMIT ?'
-    ).bind(limit).all();
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100') || 100, 500);
+    const channel = url.searchParams.get('channel');
+    const CHANNEL_EXPR =
+      "COALESCE(dl.channel, CASE WHEN dl.endpoint IN ('/v1/bars','/v1/variables','/v1/quality') THEN 'api' ELSE 'web' END)";
+    const filtered = channel && ['api', 'web', 'mcp'].includes(channel);
+    const stmt = env.DB.prepare(
+      `SELECT dl.*, ${CHANNEL_EXPR} AS channel_display, u.name, u.email, u.institution ` +
+      `FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id ` +
+      (filtered ? `WHERE ${CHANNEL_EXPR} = ? ` : '') +
+      `ORDER BY dl.timestamp DESC LIMIT ?`
+    );
+    const logs = filtered ? await stmt.bind(channel, limit).all() : await stmt.bind(limit).all();
     return jsonRes({ downloads: logs.results }, 200, cors);
   }
 
@@ -2643,25 +2712,7 @@ async function handlePublicStats(env, cors) {
     // Analytics fetch failed — return stats without visitor data
   }
 
-  // Live dataset stats from the pipeline's own ledger (metadata.json on the
-  // site, bot-committed every daily run) — served here so sibling sites and
-  // the MCP server read ONE cross-origin endpoint. Never hardcoded (owner
-  // rule: counts must not go stale in code).
-  let dataset = null;
-  try {
-    const mr = await fetch('https://hfdatalibrary.com/data/metadata.json', { cf: { cacheTtl: 900 } });
-    if (mr.ok) {
-      const m = await mr.json();
-      dataset = {
-        tickers: m.tickers, bars_clean: m.bars_clean, bars_raw: m.bars_raw,
-        end_date: m.end_date, data_updated: m.data_updated,
-        academic_variables: m.academic_variables,
-      };
-    }
-  } catch (e) { /* stats stay null rather than stale */ }
-
   return jsonRes({
-    dataset,
     total_users: totalUsers?.c || 0,
     total_downloads: totalDownloads?.c || 0,
     total_bytes_served: totalBytes?.s || 0,
@@ -2685,18 +2736,13 @@ async function handlePublicStats(env, cors) {
 async function handleStatus(env, cors) {
   const list = await env.DATA_BUCKET.list({ prefix: 'clean/', limit: 1 });
   const userCount = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
-  const r2ok = list.objects.length > 0;
   return jsonRes({
-    // Computed, never hardcoded: this endpoint reports OUR service (API+storage)
-    // only. Data currency is a separate signal — pages/status reads the daily
-    // pipeline's metadata.json for that, so an upstream feed outage shows as
-    // stale DATA even while the service is honestly 'operational'.
-    status: r2ok ? 'operational' : 'degraded',
+    status: 'operational',
     api_version: '2.0',
     author: 'Ahmed Elkassabgi',
-    r2_connected: r2ok,
+    r2_connected: list.objects.length > 0,
     registered_users: userCount?.c || 0,
-    rate_limit: '100 downloads per minute per user, 5 login attempts per 5 min',
+    rate_limit: '300 requests per minute (downloads), 5 login attempts per 5 min',
     timestamp: new Date().toISOString()
   }, 200, cors);
 }

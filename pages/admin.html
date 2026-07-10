@@ -13,26 +13,69 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/style.css">
   <style>
-    .admin-stat { text-align:center; padding:1.5rem; }
-    .admin-stat .num { font-family: var(--font-mono); font-size:2rem; font-weight:700; color:var(--navy); }
-    .admin-stat .label { font-size:0.8rem; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.05em; }
-    .user-row { display:grid; grid-template-columns: 1.7fr 2fr 1.4fr 0.9fr 0.9fr 0.8fr 1.3fr 0.9fr 0.75fr; gap:0.5rem; align-items:center; padding:0.75rem 1rem; border-bottom:1px solid var(--gray-200); font-size:0.85rem; }
-    .user-row:hover { background:var(--gray-50); }
-    .user-header { font-weight:600; color:var(--gray-600); background:var(--gray-50); border-radius:var(--radius) var(--radius) 0 0; }
-    .badge { display:inline-block; padding:0.15em 0.5em; border-radius:4px; font-size:0.75rem; font-weight:600; }
+    /* ── Tabs ── */
+    .admin-tabs { display:flex; gap:0.25rem; flex-wrap:wrap; border-bottom:1px solid var(--gray-200); margin-bottom:1.5rem; }
+    .tab-btn { background:none; border:none; padding:0.7rem 1.1rem; font-size:0.92rem; font-weight:600; color:var(--gray-500);
+               cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; font-family:var(--font-sans); }
+    .tab-btn:hover { color:var(--navy); }
+    .tab-btn.active { color:var(--navy); border-bottom-color:var(--gold); }
+    .tab-btn .cnt { font-size:0.72rem; color:var(--gray-400); font-weight:500; margin-left:0.25rem; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; animation:fade 0.15s ease; }
+    @keyframes fade { from { opacity:0; } to { opacity:1; } }
+
+    /* ── Stat + channel cards ── */
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:1rem; }
+    .admin-stat { text-align:center; padding:1.35rem 1rem; }
+    .admin-stat .num { font-family:var(--font-mono); font-size:1.9rem; font-weight:700; color:var(--navy); line-height:1.1; }
+    .admin-stat .label { font-size:0.75rem; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.35rem; }
+    .admin-stat .sub { font-size:0.78rem; color:var(--gray-400); margin-top:0.2rem; }
+    .chan-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:1rem; }
+    .chan-card { padding:1.1rem 1.2rem; border-radius:var(--radius-lg); border:1px solid var(--gray-200); }
+    .chan-card .chan-name { font-size:0.8rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; }
+    .chan-card .chan-num { font-family:var(--font-mono); font-size:1.6rem; font-weight:700; color:var(--navy); margin-top:0.3rem; }
+    .chan-card .chan-sub { font-size:0.78rem; color:var(--gray-500); margin-top:0.15rem; }
+    .chan-bar { height:6px; border-radius:3px; background:var(--gray-100); margin-top:0.7rem; overflow:hidden; }
+    .chan-bar > span { display:block; height:100%; }
+
+    /* ── Tables ── */
+    table.admin-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+    table.admin-table th { text-align:left; padding:0.6rem 0.7rem; background:var(--gray-50); color:var(--gray-600);
+                           font-weight:600; font-size:0.78rem; border-bottom:1px solid var(--gray-200); white-space:nowrap; }
+    table.admin-table th.sortable { cursor:pointer; user-select:none; }
+    table.admin-table th.sortable:hover { color:var(--navy); }
+    table.admin-table th .arr { color:var(--gold); margin-left:0.2rem; }
+    table.admin-table td { padding:0.55rem 0.7rem; border-bottom:1px solid var(--gray-100); vertical-align:middle; }
+    table.admin-table tr.clickable { cursor:pointer; }
+    table.admin-table tr.clickable:hover td { background:var(--gray-50); }
+    .muted { color:var(--gray-400); }
+
+    /* ── Toolbar (search + filters) ── */
+    .toolbar { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:1rem; }
+    .toolbar input.search { flex:1; min-width:220px; padding:0.55rem 0.8rem; border:1px solid var(--gray-300);
+                            border-radius:8px; font-size:0.9rem; font-family:var(--font-sans); }
+    .chips { display:flex; gap:0.35rem; flex-wrap:wrap; }
+    .chip { padding:0.35rem 0.75rem; border:1px solid var(--gray-300); border-radius:999px; background:#fff;
+            font-size:0.8rem; font-weight:600; color:var(--gray-600); cursor:pointer; }
+    .chip:hover { border-color:var(--gray-400); }
+    .chip.active { background:var(--navy); border-color:var(--navy); color:#fff; }
+    .chip.danger.active { background:#dc2626; border-color:#dc2626; }
+    .pager { display:flex; align-items:center; gap:0.75rem; justify-content:flex-end; margin-top:0.9rem; font-size:0.85rem; color:var(--gray-500); }
+
+    .badge { display:inline-block; padding:0.15em 0.5em; border-radius:4px; font-size:0.72rem; font-weight:600; }
     .badge-active { background:#ecfdf5; color:#059669; }
     .badge-inactive { background:#fef2f2; color:#dc2626; }
     .badge-admin { background:#eff6ff; color:#2563eb; }
     .btn-sm { padding:0.3rem 0.6rem; font-size:0.8rem; }
-    .btn-danger { background:#dc2626; color:#fff; }
-    .btn-danger:hover { background:#b91c1c; color:#fff; }
-    .btn-success { background:#059669; color:#fff; }
-    .btn-success:hover { background:#047857; color:#fff; }
-    .detail-modal { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center; }
+    .btn-danger { background:#dc2626; color:#fff; } .btn-danger:hover { background:#b91c1c; color:#fff; }
+    .btn-success { background:#059669; color:#fff; } .btn-success:hover { background:#047857; color:#fff; }
+    .detail-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center; }
     .detail-modal.open { display:flex; }
-    .detail-content { background:#fff; border-radius:var(--radius-lg); padding:2rem; max-width:800px; width:90%; max-height:80vh; overflow-y:auto; }
+    .detail-content { background:#fff; border-radius:var(--radius-lg); padding:2rem; max-width:820px; width:92%; max-height:85vh; overflow-y:auto; }
     .login-box { max-width:400px; margin:4rem auto; }
     #admin-content { display:none; }
+    .section-card { border:1px solid var(--gray-200); border-radius:var(--radius-lg); overflow:hidden; }
+    h3.sec { margin:0 0 1rem; }
   </style>
 </head>
 <body>
@@ -67,112 +110,156 @@
 
 <!-- Admin content -->
 <div id="admin-content">
-
-  <!-- Stats -->
-  <section class="section" style="padding:2rem 0;">
+  <section class="section" style="padding:1.5rem 0 3rem;">
     <div class="container">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Dashboard</h2>
+
+      <!-- Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
+        <h2 style="margin:0;">Admin Dashboard</h2>
         <div>
           <span id="admin-name" style="color:var(--gray-500); margin-right:1rem;"></span>
           <button class="btn btn-sm btn-outline" style="color:var(--gray-600); border-color:var(--gray-300);" onclick="adminLogout()">Logout</button>
         </div>
       </div>
-      <div class="grid-4" id="stats-grid">
-        <div class="card admin-stat"><div class="num" id="stat-users">-</div><div class="label">Total Users</div></div>
-        <div class="card admin-stat"><div class="num" id="stat-downloads">-</div><div class="label">Total Downloads</div></div>
-        <div class="card admin-stat"><div class="num" id="stat-today-logins">-</div><div class="label">Logins (24h)</div></div>
-        <div class="card admin-stat"><div class="num" id="stat-bytes">-</div><div class="label">Data Served</div></div>
-      </div>
-    </div>
-  </section>
 
-  <!-- Recent registrations -->
-  <section style="padding:1rem 0;">
-    <div class="container">
-      <h3 style="margin-bottom:1rem;">Recent Registrations</h3>
-      <div id="recent-users"></div>
-    </div>
-  </section>
-
-  <!-- All users -->
-  <section class="section" style="padding:2rem 0;">
-    <div class="container">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-        <h3>All Users</h3>
-        <button class="btn btn-sm btn-primary" onclick="loadUsers()">Refresh</button>
+      <!-- Tabs -->
+      <div class="admin-tabs">
+        <button class="tab-btn active" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
+        <button class="tab-btn" data-tab="users" onclick="showTab('users')">Users<span class="cnt" id="tab-users-cnt"></span></button>
+        <button class="tab-btn" data-tab="downloads" onclick="showTab('downloads')">Downloads</button>
+        <button class="tab-btn" data-tab="comms" onclick="showTab('comms')">Communications</button>
+        <button class="tab-btn" data-tab="security" onclick="showTab('security')">Security</button>
       </div>
-      <div style="border:1px solid var(--gray-200); border-radius:var(--radius-lg); overflow:hidden;">
-        <div class="user-row user-header">
-          <div>Name</div><div>Email</div><div>Institution</div><div>Country</div><div>Role</div><div>Downloads</div><div>Last IP</div><div>IP Loc.</div><div>Status</div>
+
+      <!-- ══ DASHBOARD ══ -->
+      <div class="tab-panel active" id="panel-dashboard">
+        <div class="stat-grid" style="margin-bottom:1.75rem;">
+          <div class="card admin-stat"><div class="num" id="stat-users">-</div><div class="label">Total Users</div><div class="sub" id="stat-users-sub"></div></div>
+          <div class="card admin-stat"><div class="num" id="stat-downloads">-</div><div class="label">Total Downloads</div><div class="sub" id="stat-downloads-sub"></div></div>
+          <div class="card admin-stat"><div class="num" id="stat-bytes">-</div><div class="label">Data Served</div></div>
+          <div class="card admin-stat"><div class="num" id="stat-today-logins">-</div><div class="label">Logins (24h)</div></div>
         </div>
-        <div id="users-list"></div>
-      </div>
-    </div>
-  </section>
 
-  <!-- 2FA Setup -->
-  <section style="padding:1rem 0;">
-    <div class="container">
-      <h3 style="margin-bottom:1rem;">Two-Factor Authentication</h3>
-      <div class="card" style="padding:1.5rem;">
-        <div id="twofa-status">
-          <p style="color:var(--gray-500);">Loading status...</p>
+        <h3 class="sec">Downloads by channel</h3>
+        <div class="chan-grid" id="channel-cards" style="margin-bottom:0.5rem;">
+          <p class="muted">Loading…</p>
+        </div>
+        <p id="channel-note" style="font-size:0.8rem; color:var(--gray-400); margin:0 0 1.75rem;"></p>
+
+        <div class="grid-2" style="gap:1.5rem; align-items:start;">
+          <div>
+            <h3 class="sec">Top tickers</h3>
+            <div class="section-card"><table class="admin-table"><tbody id="top-tickers"></tbody></table></div>
+          </div>
+          <div>
+            <h3 class="sec">Recent registrations</h3>
+            <div class="section-card"><table class="admin-table"><tbody id="recent-users"></tbody></table></div>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
 
-  <!-- Daily digest (preview) -->
-  <section style="padding:1rem 0;">
-    <div class="container">
-      <h3 style="margin-bottom:1rem;">Daily Activity Digest</h3>
-      <div class="card" style="padding:1.25rem;">
-        <p style="margin:0 0 0.75rem; color:var(--gray-600); font-size:0.9rem;">
-          An activity digest is sent to <strong>elkassabgi@gmail.com</strong> every evening at 02:00 UTC (~9 PM Central). Click below to preview now with data from the last 24 hours.
-        </p>
-        <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="previewDigest()">Send me the digest now</button>
-        <div id="digest-result" style="margin-top:0.75rem; font-size:0.9rem;"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Newsletter -->
-  <section style="padding:2rem 0;">
-    <div class="container">
-      <h3 style="margin-bottom:1rem;">Newsletter</h3>
-      <div class="card" style="padding:1.5rem;">
-        <p style="margin-bottom:1rem; color:var(--gray-600);">Subscribers: <strong id="newsletter-count">-</strong></p>
-        <div class="form-group">
-          <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Subject</label>
-          <input type="text" id="news-subject" placeholder="e.g., Daily data update — April 10, 2026" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.95rem; font-family:var(--font-sans); margin-bottom:1rem;">
+      <!-- ══ USERS ══ -->
+      <div class="tab-panel" id="panel-users">
+        <div class="toolbar">
+          <input class="search" id="user-search" type="text" placeholder="Search name, email, institution, country, role…">
+          <button class="btn btn-sm btn-primary" onclick="usersReset()">Refresh</button>
         </div>
-        <div class="form-group">
-          <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Body (HTML allowed)</label>
-          <textarea id="news-body" rows="8" placeholder="<p>Hello researchers,</p><p>Today we added new data for...</p>" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.9rem; font-family:var(--font-mono); resize:vertical; margin-bottom:1rem;"></textarea>
+        <div class="chips" style="margin-bottom:1rem;">
+          <span class="chip active" data-filter="" onclick="setUserFilter('')">All</span>
+          <span class="chip" data-filter="active" onclick="setUserFilter('active')">Active</span>
+          <span class="chip" data-filter="revoked" onclick="setUserFilter('revoked')">Revoked</span>
+          <span class="chip" data-filter="vip" onclick="setUserFilter('vip')">VIP</span>
+          <span class="chip" data-filter="admin" onclick="setUserFilter('admin')">Admin</span>
+          <span class="chip danger" data-filter="flagged" onclick="setUserFilter('flagged')">&#9888; Flagged</span>
         </div>
-        <div style="display:flex; gap:0.5rem;">
-          <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="sendNewsletter(true)">Send Test (to me only)</button>
-          <button class="btn btn-primary" onclick="sendNewsletter(false)">Send to All Subscribers</button>
+        <div id="users-flag-bar"></div>
+        <div class="section-card" style="overflow-x:auto;">
+          <table class="admin-table" id="users-table">
+            <thead><tr>
+              <th class="sortable" data-sort="name" onclick="setUserSort('name')">Name</th>
+              <th class="sortable" data-sort="email" onclick="setUserSort('email')">Email</th>
+              <th class="sortable" data-sort="institution" onclick="setUserSort('institution')">Institution</th>
+              <th class="sortable" data-sort="country" onclick="setUserSort('country')">Country</th>
+              <th>Role</th>
+              <th class="sortable" data-sort="downloads" onclick="setUserSort('downloads')">DL</th>
+              <th class="sortable" data-sort="last_login" onclick="setUserSort('last_login')">Last login</th>
+              <th>IP / Loc.</th>
+              <th>Status</th>
+            </tr></thead>
+            <tbody id="users-list"></tbody>
+          </table>
         </div>
-        <div id="news-result" style="margin-top:1rem; display:none;"></div>
-
-        <h4 style="margin-top:2rem;">Campaign history</h4>
-        <div id="campaign-history" style="font-size:0.85rem;"></div>
+        <div class="pager">
+          <span id="users-range"></span>
+          <button class="btn btn-sm btn-outline" id="users-prev" onclick="usersPage(-1)" style="color:var(--gray-600); border-color:var(--gray-300);">&#8592; Prev</button>
+          <button class="btn btn-sm btn-outline" id="users-next" onclick="usersPage(1)" style="color:var(--gray-600); border-color:var(--gray-300);">Next &#8594;</button>
+        </div>
       </div>
-    </div>
-  </section>
 
-  <!-- Download log -->
-  <section style="padding:1rem 0 3rem;">
-    <div class="container">
-      <h3 style="margin-bottom:1rem;">Recent Downloads</h3>
-      <div class="table-wrap">
-        <table id="download-table">
-          <thead><tr><th>Time</th><th>User</th><th>Email</th><th>Ticker</th><th>Version</th><th>Size</th><th>IP</th></tr></thead>
-          <tbody id="download-log"></tbody>
-        </table>
+      <!-- ══ DOWNLOADS ══ -->
+      <div class="tab-panel" id="panel-downloads">
+        <div class="toolbar">
+          <div class="chips">
+            <span class="chip active" data-dchan="" onclick="setDownloadChannel('')">All channels</span>
+            <span class="chip" data-dchan="api" onclick="setDownloadChannel('api')">API</span>
+            <span class="chip" data-dchan="web" onclick="setDownloadChannel('web')">Website</span>
+            <span class="chip" data-dchan="mcp" onclick="setDownloadChannel('mcp')">MCP</span>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="loadDownloads()">Refresh</button>
+        </div>
+        <div class="section-card" style="overflow-x:auto;">
+          <table class="admin-table">
+            <thead><tr><th>Time</th><th>User</th><th>Email</th><th>Ticker</th><th>Version</th><th>Channel</th><th>Size</th><th>IP</th></tr></thead>
+            <tbody id="download-log"></tbody>
+          </table>
+        </div>
       </div>
+
+      <!-- ══ COMMUNICATIONS ══ -->
+      <div class="tab-panel" id="panel-comms">
+        <h3 class="sec">Daily activity digest</h3>
+        <div class="card" style="padding:1.25rem; margin-bottom:2rem;">
+          <p style="margin:0 0 0.75rem; color:var(--gray-600); font-size:0.9rem;">
+            An activity digest is sent to <strong>elkassabgi@gmail.com</strong> every evening at 02:00 UTC (~9 PM Central). Preview now with the last 24 hours.
+          </p>
+          <button class="btn btn-sm btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="previewDigest()">Send me the digest now</button>
+          <div id="digest-result" style="margin-top:0.75rem; font-size:0.9rem;"></div>
+        </div>
+
+        <h3 class="sec">Newsletter</h3>
+        <div class="card" style="padding:1.5rem;">
+          <p style="margin-bottom:1rem; color:var(--gray-600);">Subscribers: <strong id="newsletter-count">-</strong></p>
+          <div class="form-group">
+            <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Subject</label>
+            <input type="text" id="news-subject" placeholder="e.g., Daily data update — April 10, 2026" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.95rem; font-family:var(--font-sans); margin-bottom:1rem;">
+          </div>
+          <div class="form-group">
+            <label style="display:block; font-weight:500; margin-bottom:0.35rem; font-size:0.9rem;">Body (HTML allowed)</label>
+            <textarea id="news-body" rows="8" placeholder="<p>Hello researchers,</p><p>Today we added new data for...</p>" style="width:100%; padding:0.625rem; border:1px solid var(--gray-300); border-radius:6px; font-size:0.9rem; font-family:var(--font-mono); resize:vertical; margin-bottom:1rem;"></textarea>
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="sendNewsletter(true)">Send Test (to me only)</button>
+            <button class="btn btn-primary" onclick="sendNewsletter(false)">Send to All Subscribers</button>
+          </div>
+          <div id="news-result" style="margin-top:1rem; display:none;"></div>
+          <h4 style="margin-top:2rem;">Campaign history</h4>
+          <div id="campaign-history" style="font-size:0.85rem;"></div>
+        </div>
+      </div>
+
+      <!-- ══ SECURITY ══ -->
+      <div class="tab-panel" id="panel-security">
+        <h3 class="sec">Two-factor authentication</h3>
+        <div class="card" style="padding:1.5rem; margin-bottom:2rem;">
+          <div id="twofa-status"><p style="color:var(--gray-500);">Loading status...</p></div>
+        </div>
+        <h3 class="sec">Abuse signals</h3>
+        <div class="card" style="padding:1.5rem;">
+          <div id="security-summary" style="font-size:0.9rem; color:var(--gray-600);">Loading…</div>
+          <p style="font-size:0.85rem; color:var(--gray-400); margin:0.75rem 0 0;">Open the <a href="#" onclick="showTab('users'); setUserFilter('flagged'); return false;" style="color:var(--blue);">Users &rarr; Flagged</a> view to review the accounts.</p>
+        </div>
+      </div>
+
     </div>
   </section>
 </div>
@@ -186,22 +273,42 @@
 const API = 'https://api.hfdatalibrary.com';
 let sessionToken = localStorage.getItem('hfd_admin_session');
 
+// ── ISO 3166-1 alpha-2 → country name (for showing full names, not codes) ──
+const ISO2 = {AF:"Afghanistan",AX:"Åland Islands",AL:"Albania",DZ:"Algeria",AS:"American Samoa",AD:"Andorra",AO:"Angola",AI:"Anguilla",AQ:"Antarctica",AG:"Antigua and Barbuda",AR:"Argentina",AM:"Armenia",AW:"Aruba",AU:"Australia",AT:"Austria",AZ:"Azerbaijan",BS:"Bahamas",BH:"Bahrain",BD:"Bangladesh",BB:"Barbados",BY:"Belarus",BE:"Belgium",BZ:"Belize",BJ:"Benin",BM:"Bermuda",BT:"Bhutan",BO:"Bolivia",BQ:"Bonaire",BA:"Bosnia and Herzegovina",BW:"Botswana",BV:"Bouvet Island",BR:"Brazil",IO:"British Indian Ocean Territory",BN:"Brunei",BG:"Bulgaria",BF:"Burkina Faso",BI:"Burundi",CV:"Cabo Verde",KH:"Cambodia",CM:"Cameroon",CA:"Canada",KY:"Cayman Islands",CF:"Central African Republic",TD:"Chad",CL:"Chile",CN:"China",CX:"Christmas Island",CC:"Cocos (Keeling) Islands",CO:"Colombia",KM:"Comoros",CG:"Congo",CD:"Congo (DRC)",CK:"Cook Islands",CR:"Costa Rica",CI:"Côte d'Ivoire",HR:"Croatia",CU:"Cuba",CW:"Curaçao",CY:"Cyprus",CZ:"Czechia",DK:"Denmark",DJ:"Djibouti",DM:"Dominica",DO:"Dominican Republic",EC:"Ecuador",EG:"Egypt",SV:"El Salvador",GQ:"Equatorial Guinea",ER:"Eritrea",EE:"Estonia",SZ:"Eswatini",ET:"Ethiopia",FK:"Falkland Islands",FO:"Faroe Islands",FJ:"Fiji",FI:"Finland",FR:"France",GF:"French Guiana",PF:"French Polynesia",TF:"French Southern Territories",GA:"Gabon",GM:"Gambia",GE:"Georgia",DE:"Germany",GH:"Ghana",GI:"Gibraltar",GR:"Greece",GL:"Greenland",GD:"Grenada",GP:"Guadeloupe",GU:"Guam",GT:"Guatemala",GG:"Guernsey",GN:"Guinea",GW:"Guinea-Bissau",GY:"Guyana",HT:"Haiti",HM:"Heard & McDonald Islands",VA:"Vatican City",HN:"Honduras",HK:"Hong Kong",HU:"Hungary",IS:"Iceland",IN:"India",ID:"Indonesia",IR:"Iran",IQ:"Iraq",IE:"Ireland",IM:"Isle of Man",IL:"Israel",IT:"Italy",JM:"Jamaica",JP:"Japan",JE:"Jersey",JO:"Jordan",KZ:"Kazakhstan",KE:"Kenya",KI:"Kiribati",KP:"North Korea",KR:"South Korea",KW:"Kuwait",KG:"Kyrgyzstan",LA:"Laos",LV:"Latvia",LB:"Lebanon",LS:"Lesotho",LR:"Liberia",LY:"Libya",LI:"Liechtenstein",LT:"Lithuania",LU:"Luxembourg",MO:"Macao",MG:"Madagascar",MW:"Malawi",MY:"Malaysia",MV:"Maldives",ML:"Mali",MT:"Malta",MH:"Marshall Islands",MQ:"Martinique",MR:"Mauritania",MU:"Mauritius",YT:"Mayotte",MX:"Mexico",FM:"Micronesia",MD:"Moldova",MC:"Monaco",MN:"Mongolia",ME:"Montenegro",MS:"Montserrat",MA:"Morocco",MZ:"Mozambique",MM:"Myanmar",NA:"Namibia",NR:"Nauru",NP:"Nepal",NL:"Netherlands",NC:"New Caledonia",NZ:"New Zealand",NI:"Nicaragua",NE:"Niger",NG:"Nigeria",NU:"Niue",NF:"Norfolk Island",MK:"North Macedonia",MP:"Northern Mariana Islands",NO:"Norway",OM:"Oman",PK:"Pakistan",PW:"Palau",PS:"Palestine",PA:"Panama",PG:"Papua New Guinea",PY:"Paraguay",PE:"Peru",PH:"Philippines",PN:"Pitcairn",PL:"Poland",PT:"Portugal",PR:"Puerto Rico",QA:"Qatar",RE:"Réunion",RO:"Romania",RU:"Russia",RW:"Rwanda",BL:"Saint Barthélemy",SH:"Saint Helena",KN:"Saint Kitts and Nevis",LC:"Saint Lucia",MF:"Saint Martin",PM:"Saint Pierre and Miquelon",VC:"Saint Vincent",WS:"Samoa",SM:"San Marino",ST:"São Tomé and Príncipe",SA:"Saudi Arabia",SN:"Senegal",RS:"Serbia",SC:"Seychelles",SL:"Sierra Leone",SG:"Singapore",SX:"Sint Maarten",SK:"Slovakia",SI:"Slovenia",SB:"Solomon Islands",SO:"Somalia",ZA:"South Africa",GS:"South Georgia",SS:"South Sudan",ES:"Spain",LK:"Sri Lanka",SD:"Sudan",SR:"Suriname",SJ:"Svalbard and Jan Mayen",SE:"Sweden",CH:"Switzerland",SY:"Syria",TW:"Taiwan",TJ:"Tajikistan",TZ:"Tanzania",TH:"Thailand",TL:"Timor-Leste",TG:"Togo",TK:"Tokelau",TO:"Tonga",TT:"Trinidad and Tobago",TN:"Tunisia",TR:"Türkiye",TM:"Turkmenistan",TC:"Turks and Caicos",TV:"Tuvalu",UG:"Uganda",UA:"Ukraine",AE:"United Arab Emirates",GB:"United Kingdom",US:"United States",UM:"U.S. Minor Outlying Islands",UY:"Uruguay",UZ:"Uzbekistan",VU:"Vanuatu",VE:"Venezuela",VN:"Vietnam",VG:"British Virgin Islands",VI:"U.S. Virgin Islands",WF:"Wallis and Futuna",EH:"Western Sahara",YE:"Yemen",ZM:"Zambia",ZW:"Zimbabwe",UK:"United Kingdom",EU:"European Union"};
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+// Map an ISO-2 code to a full name; leave already-spelled-out names as-is.
+function countryName(code) { if (!code) return null; const c = String(code).trim().toUpperCase(); return ISO2[c] || null; }
+function fmtCountry(val) {
+  if (!val) return '<span class="muted">-</span>';
+  const name = countryName(val);
+  return name ? '<span title="' + esc(val) + '">' + esc(name) + '</span>' : esc(val);
+}
+
+// Channel display metadata
+const CHAN_META = {
+  api: { label: 'API',     color: '#2563eb', bg: '#eff6ff' },
+  web: { label: 'Website', color: '#059669', bg: '#ecfdf5' },
+  mcp: { label: 'MCP',     color: '#7c3aed', bg: '#f5f3ff' },
+};
+function chanBadge(c) {
+  const m = CHAN_META[c] || { label: c || '?', color: '#6b7280', bg: '#f3f4f6' };
+  return '<span class="badge" style="background:' + m.bg + '; color:' + m.color + ';">' + esc(m.label) + '</span>';
+}
+
 // ── Login ──
 let pendingTotpToken = null;
-
 async function adminLogin() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
   const err = document.getElementById('login-error');
-
   try {
     const r = await fetch(API + '/v1/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
     });
     const data = await r.json();
-
     if (data.totp_required) {
       pendingTotpToken = data.pending_token;
       document.querySelector('.login-box .register-form').innerHTML =
@@ -213,7 +320,6 @@ async function adminLogin() {
       setTimeout(() => document.getElementById('totp-code').focus(), 100);
       return;
     }
-
     if (data.session) {
       sessionToken = data.session;
       localStorage.setItem('hfd_admin_session', sessionToken);
@@ -222,21 +328,16 @@ async function adminLogin() {
       err.style.display = 'block';
       err.textContent = data.error || 'Login failed';
     }
-  } catch (e) {
-    err.style.display = 'block';
-    err.textContent = 'Connection error';
-  }
+  } catch (e) { err.style.display = 'block'; err.textContent = 'Connection error'; }
 }
 
 async function submitTotp() {
   const code = document.getElementById('totp-code').value.trim();
   const err = document.getElementById('totp-error');
   if (!/^\d{6}$/.test(code)) { err.style.display = 'block'; err.textContent = 'Enter a 6-digit code'; return; }
-
   try {
     const r = await fetch(API + '/v1/auth/2fa/verify-login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pending_token: pendingTotpToken, code })
     });
     const data = await r.json();
@@ -244,14 +345,8 @@ async function submitTotp() {
       sessionToken = data.session;
       localStorage.setItem('hfd_admin_session', sessionToken);
       showAdmin(data.user.name);
-    } else {
-      err.style.display = 'block';
-      err.textContent = data.error || 'Invalid code';
-    }
-  } catch (e) {
-    err.style.display = 'block';
-    err.textContent = 'Connection error';
-  }
+    } else { err.style.display = 'block'; err.textContent = data.error || 'Invalid code'; }
+  } catch (e) { err.style.display = 'block'; err.textContent = 'Connection error'; }
 }
 
 function adminLogout() {
@@ -262,291 +357,193 @@ function adminLogout() {
   document.getElementById('admin-content').style.display = 'none';
 }
 
-function authHeaders() {
-  return { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' };
+function authHeaders() { return { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' }; }
+
+// ── Tabs (lazy-load each panel the first time it's opened) ──
+const loaded = {};
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.getElementById('panel-' + name).classList.add('active');
+  if (!loaded[name]) {
+    loaded[name] = true;
+    if (name === 'users') loadUsers();
+    else if (name === 'downloads') loadDownloads();
+    else if (name === 'comms') loadCampaigns();
+    else if (name === 'security') { load2faStatus(); }
+  }
 }
 
-// ── Show admin panel ──
 async function showAdmin(name) {
   document.getElementById('admin-login').style.display = 'none';
   document.getElementById('admin-content').style.display = 'block';
   document.getElementById('admin-name').textContent = name || '';
+  loaded.dashboard = true;
   loadStats();
-  loadUsers();
-  loadDownloads();
-  loadCampaigns();
-  load2faStatus();
 }
 
-async function load2faStatus() {
-  try {
-    const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
-    if (!r.ok) return;
-    const u = await r.json();
-    const el = document.getElementById('twofa-status');
-    if (u.totp_enabled) {
-      el.innerHTML =
-        '<p style="color:#059669; margin-bottom:0.75rem;"><strong>&#10003; 2FA is enabled</strong></p>' +
-        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">You will be asked for a code from your authenticator app when you log in.</p>' +
-        '<button class="btn btn-sm btn-outline" style="color:#dc2626; border-color:#dc2626;" onclick="disable2fa()">Disable 2FA</button>';
-    } else {
-      el.innerHTML =
-        '<p style="color:#d97706; margin-bottom:0.75rem;"><strong>&#9888; 2FA is not enabled</strong></p>' +
-        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">Enable two-factor authentication to protect your admin account. Uses Google Authenticator, Authy, or any TOTP-compatible app.</p>' +
-        '<button class="btn btn-sm btn-primary" onclick="setup2fa()">Enable 2FA</button>' +
-        '<div id="twofa-setup" style="display:none; margin-top:1rem;"></div>';
-    }
-  } catch (e) { console.error(e); }
-}
-
-async function setup2fa() {
-  try {
-    const r = await fetch(API + '/v1/auth/2fa/setup', { method: 'POST', headers: authHeaders() });
-    const data = await r.json();
-    if (!r.ok) { alert(data.error || 'Failed'); return; }
-
-    document.getElementById('twofa-setup').style.display = 'block';
-    document.getElementById('twofa-setup').innerHTML =
-      '<div style="padding:1.5rem; background:var(--gray-50); border-radius:8px;">' +
-        '<p style="margin-bottom:1rem;"><strong>Step 1:</strong> Scan this QR code with Google Authenticator, Authy, or any TOTP app.</p>' +
-        '<img src="' + data.qr_code_url + '" alt="QR Code" style="display:block; margin:0 auto 1rem; border:1px solid var(--gray-200);">' +
-        '<p style="font-size:0.85rem; color:var(--gray-600); margin-bottom:1rem;">Or enter this secret manually: <code style="user-select:all; background:#fff; padding:0.25em 0.5em; border:1px solid var(--gray-200); border-radius:4px;">' + data.secret + '</code></p>' +
-        '<p style="margin-bottom:0.5rem;"><strong>Step 2:</strong> Enter the 6-digit code from your app to confirm.</p>' +
-        '<input type="text" id="twofa-code" placeholder="123456" maxlength="6" style="width:150px; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em;">' +
-        '<button class="btn btn-sm btn-primary" style="margin-left:0.5rem;" onclick="confirm2fa()">Confirm & Enable</button>' +
-        '<div id="twofa-setup-result" style="margin-top:0.75rem;"></div>' +
-      '</div>';
-  } catch (e) { alert('Connection error'); }
-}
-
-async function confirm2fa() {
-  const code = document.getElementById('twofa-code').value.trim();
-  const result = document.getElementById('twofa-setup-result');
-  if (!/^\d{6}$/.test(code)) { result.innerHTML = '<p style="color:var(--red); margin:0;">Enter a 6-digit code</p>'; return; }
-
-  try {
-    const r = await fetch(API + '/v1/auth/2fa/enable', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ code })
-    });
-    const data = await r.json();
-    if (r.ok) {
-      load2faStatus();
-    } else {
-      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
-    }
-  } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
-}
-
-async function disable2fa() {
-  const password = prompt('Enter your password to disable 2FA:');
-  if (!password) return;
-  const code = prompt('Enter your current 6-digit 2FA code:');
-  if (!code) return;
-
-  try {
-    const r = await fetch(API + '/v1/auth/2fa/disable', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ password, code })
-    });
-    const data = await r.json();
-    if (r.ok) {
-      alert('2FA disabled');
-      load2faStatus();
-    } else {
-      alert(data.error || 'Failed');
-    }
-  } catch (e) { alert('Connection error'); }
-}
-
-// ── Newsletter ──
-async function previewDigest() {
-  const out = document.getElementById('digest-result');
-  out.innerHTML = '<span style="color:var(--gray-500);">Sending...</span>';
-  try {
-    const r = await fetch(API + '/v1/admin/digest/preview', { method: 'POST', headers: authHeaders() });
-    const d = await r.json();
-    if (r.ok) {
-      out.innerHTML = '<span style="color:#059669;">Sent — check your inbox.</span>';
-    } else {
-      out.innerHTML = '<span style="color:var(--red);">' + (d.error || d.message || 'Failed') + '</span>';
-    }
-  } catch (e) {
-    out.innerHTML = '<span style="color:var(--red);">Connection error.</span>';
-  }
-}
-
-async function sendNewsletter(testOnly) {
-  const subject = document.getElementById('news-subject').value.trim();
-  const body = document.getElementById('news-body').value.trim();
-  const result = document.getElementById('news-result');
-
-  if (!subject || !body) {
-    result.style.display = 'block';
-    result.innerHTML = '<p style="color:var(--red);">Subject and body are required.</p>';
-    return;
-  }
-
-  if (!testOnly && !confirm('Send this newsletter to ALL subscribers? This cannot be undone.')) return;
-
-  result.style.display = 'block';
-  result.innerHTML = '<p style="color:var(--gray-500);">Sending...</p>';
-
-  try {
-    const r = await fetch(API + '/v1/admin/newsletter', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ subject, body_html: body, test_only: testOnly })
-    });
-    const data = await r.json();
-
-    if (r.ok) {
-      if (testOnly) {
-        result.innerHTML = '<p style="color:#059669;">Test email sent to your inbox.</p>';
-      } else {
-        result.innerHTML = '<p style="color:#059669;">Newsletter sent! ' + data.success + ' delivered, ' + data.failed + ' failed (' + data.total + ' total).</p>';
-        document.getElementById('news-subject').value = '';
-        document.getElementById('news-body').value = '';
-        loadCampaigns();
-      }
-    } else {
-      result.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Failed') + '</p>';
-    }
-  } catch (e) {
-    result.innerHTML = '<p style="color:var(--red);">Connection error.</p>';
-  }
-}
-
-async function loadCampaigns() {
-  try {
-    const r = await fetch(API + '/v1/admin/newsletter/campaigns', { headers: authHeaders() });
-    if (!r.ok) return;
-    const d = await r.json();
-    document.getElementById('newsletter-count').textContent = d.subscribers;
-    if (d.campaigns.length === 0) {
-      document.getElementById('campaign-history').innerHTML = '<p style="color:var(--gray-400);">No campaigns sent yet.</p>';
-      return;
-    }
-    document.getElementById('campaign-history').innerHTML = d.campaigns.map(c =>
-      '<div style="padding:0.5rem 0; border-bottom:1px solid var(--gray-100);">' +
-        '<strong>' + esc(c.subject) + '</strong>' +
-        '<span style="margin-left:1rem; color:var(--gray-500);">' + fmtCT(c.sent_at) + '</span>' +
-        '<span style="margin-left:1rem; color:var(--gray-500);">' + c.success_count + '/' + c.recipients_count + ' delivered</span>' +
-      '</div>'
-    ).join('');
-  } catch (e) { console.error(e); }
-}
-
-// ── Load stats ──
+// ── Dashboard ──
 async function loadStats() {
   try {
     const r = await fetch(API + '/v1/admin/stats', { headers: authHeaders() });
     if (r.status === 403) { adminLogout(); return; }
     const d = await r.json();
-    document.getElementById('stat-users').textContent = d.total_users;
-    document.getElementById('stat-downloads').textContent = d.total_downloads;
-    document.getElementById('stat-today-logins').textContent = d.today_logins;
-    const gb = (d.total_bytes_served / 1e9).toFixed(2);
-    document.getElementById('stat-bytes').textContent = gb + ' GB';
+    document.getElementById('stat-users').textContent = Number(d.total_users).toLocaleString();
+    document.getElementById('stat-users-sub').textContent = (d.active_users != null ? Number(d.active_users).toLocaleString() + ' active' : '');
+    document.getElementById('stat-downloads').textContent = Number(d.total_downloads).toLocaleString();
+    document.getElementById('stat-downloads-sub').textContent = (d.today_downloads != null ? Number(d.today_downloads).toLocaleString() + ' today' : '');
+    document.getElementById('stat-bytes').textContent = (d.total_bytes_served / 1e9).toFixed(2) + ' GB';
+    document.getElementById('stat-today-logins').textContent = Number(d.today_logins).toLocaleString();
+    document.getElementById('tab-users-cnt').textContent = '(' + Number(d.total_users).toLocaleString() + ')';
+
+    // Channel breakdown
+    renderChannels(d.channels || [], d.channels_7d || [], d.channel_tracked_since);
+
+    // Top tickers
+    document.getElementById('top-tickers').innerHTML = (d.top_tickers || []).map(t =>
+      '<tr><td><strong>' + esc(t.ticker) + '</strong></td><td class="mono" style="text-align:right;">' + Number(t.downloads).toLocaleString() + '</td></tr>'
+    ).join('') || '<tr><td class="muted">No downloads yet.</td></tr>';
 
     // Recent registrations
-    const html = d.recent_registrations.map(u =>
-      '<div style="display:flex; gap:1rem; padding:0.5rem 0; border-bottom:1px solid var(--gray-100); font-size:0.85rem;">' +
-        '<strong>' + u.name + '</strong>' +
-        '<span style="color:var(--gray-500);">' + u.email + '</span>' +
-        '<span>' + u.institution + '</span>' +
-        '<span style="color:var(--gray-400);">' + u.country + '</span>' +
-        '<span style="color:var(--gray-400);">' + fmtCT(u.created_at) + '</span>' +
-      '</div>'
-    ).join('');
-    document.getElementById('recent-users').innerHTML = html || '<p style="color:var(--gray-400);">No users yet.</p>';
-  } catch (e) {
-    console.error('Stats error:', e);
+    document.getElementById('recent-users').innerHTML = (d.recent_registrations || []).map(u =>
+      '<tr><td><strong>' + esc(u.name) + '</strong><br><span class="muted" style="font-size:0.78rem;">' + esc(u.email) + '</span></td>' +
+      '<td>' + esc(u.institution || '') + '</td>' +
+      '<td>' + fmtCountry(u.country) + '</td>' +
+      '<td class="muted" style="font-size:0.78rem; white-space:nowrap;">' + fmtCT(u.created_at) + '</td></tr>'
+    ).join('') || '<tr><td class="muted">No users yet.</td></tr>';
+  } catch (e) { console.error('Stats error:', e); }
+}
+
+function renderChannels(channels, channels7d, trackedSince) {
+  const map = {}, map7 = {}; let total = 0;
+  channels.forEach(c => { map[c.channel] = c; total += Number(c.downloads) || 0; });
+  channels7d.forEach(c => { map7[c.channel] = Number(c.downloads) || 0; });
+  const order = ['api', 'web', 'mcp'];
+  const html = order.map(k => {
+    const c = map[k] || { downloads: 0, bytes: 0 };
+    const n = Number(c.downloads) || 0;
+    const pct = total ? Math.round(n / total * 100) : 0;
+    const m = CHAN_META[k];
+    const gb = c.bytes ? (Number(c.bytes) / 1e9).toFixed(2) + ' GB' : '';
+    const n7 = map7[k] || 0;
+    return '<div class="chan-card">' +
+      '<div class="chan-name" style="color:' + m.color + ';">' + m.label + '</div>' +
+      '<div class="chan-num">' + n.toLocaleString() + '</div>' +
+      '<div class="chan-sub">' + pct + '% of downloads' + (gb ? ' · ' + gb : '') + '</div>' +
+      '<div class="chan-sub">' + n7.toLocaleString() + ' in last 7 days</div>' +
+      '<div class="chan-bar"><span style="width:' + pct + '%; background:' + m.color + ';"></span></div>' +
+    '</div>';
+  }).join('');
+  document.getElementById('channel-cards').innerHTML = html;
+  const note = document.getElementById('channel-note');
+  if (trackedSince) {
+    note.innerHTML = 'API vs Website vs MCP is tracked exactly since <strong>' + fmtCT(trackedSince) +
+      '</strong>. Earlier downloads are classified by endpoint: the pre-tracking &ldquo;Website&rdquo; bucket is an upper bound &mdash; it absorbs old API token-flow and MCP downloads that left no channel marker.';
+  } else {
+    note.innerHTML = 'Channel is not yet captured on any download &mdash; values are classified by endpoint until the tracking migration runs.';
   }
 }
 
-// ── Load users ──
+// ── Users (server-side search / sort / filter / paginate) ──
+let usersState = { q: '', sort: 'created_at', dir: 'desc', filter: '', offset: 0, limit: 50, totalMatching: 0 };
+let searchTimer = null;
+
+function usersReset() { usersState.offset = 0; loadUsers(); }
+function usersPage(delta) {
+  const next = usersState.offset + delta * usersState.limit;
+  if (next < 0 || next >= usersState.totalMatching) return;
+  usersState.offset = next; loadUsers();
+}
+function setUserFilter(f) {
+  usersState.filter = f; usersState.offset = 0;
+  document.querySelectorAll('.chip[data-filter]').forEach(c => c.classList.toggle('active', c.dataset.filter === f));
+  loadUsers();
+}
+function setUserSort(col) {
+  if (usersState.sort === col) usersState.dir = usersState.dir === 'asc' ? 'desc' : 'asc';
+  else { usersState.sort = col; usersState.dir = 'asc'; }
+  usersState.offset = 0; loadUsers();
+}
+
 async function loadUsers() {
   try {
-    const r = await fetch(API + '/v1/admin/users?limit=200', { headers: authHeaders() });
+    const p = new URLSearchParams({
+      q: usersState.q, sort: usersState.sort, dir: usersState.dir,
+      filter: usersState.filter, limit: usersState.limit, offset: usersState.offset,
+    });
+    const r = await fetch(API + '/v1/admin/users?' + p.toString(), { headers: authHeaders() });
     if (r.status === 403) { adminLogout(); return; }
     const d = await r.json();
+    usersState.totalMatching = d.total_matching != null ? d.total_matching : (d.total || 0);
 
-    // Latin-only check matching the server-side validator. Used to flag
-    // pre-validator records so the admin can find and clean them up.
+    // Latin-only check matching the server-side validator (flag pre-validator records).
     const isLatinish = s => !s || (/^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s));
-    const html = d.users.map(u => {
-      const dirty = !isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role);
-      const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
-      // Security flags (shared IP or disposable email) take visual precedence
-      // (red) over the data-quality / Latin-char flag (amber).
-      const rowStyle = (u.shared_ip || u.disposable_email) ? ' background:#fef2f2; border-left:3px solid #dc2626;'
-                     : (dirty ? ' background:#fffbeb; border-left:3px solid #f59e0b;' : '');
+    const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
+
+    const html = (d.users || []).map(u => {
+      const rowStyle = (u.shared_ip || u.disposable_email) ? 'background:#fef2f2; box-shadow:inset 3px 0 0 #dc2626;'
+        : (!isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role)) ? 'background:#fffbeb; box-shadow:inset 3px 0 0 #f59e0b;' : '';
       const ipCell = u.last_login_ip
-        ? '<code style="font-size:0.78rem;">' + esc(u.last_login_ip) + '</code>'
-          + (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="This IP is shared by ' + u.shared_ip_count + ' accounts — possible multi-account abuse">&#9888; ' + u.shared_ip_count + '</span>' : '')
-        : '<span style="color:var(--gray-400);">-</span>';
-      const dispBadge = u.disposable_email ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;" title="Disposable / temporary email domain">&#9888; temp</span>' : '';
-      // IP-derived location (Cloudflare cf-ipcountry of the last-login IP), distinct
-      // from the self-declared Country. Conservative mismatch flag: only when the
-      // declared value is itself a short code, to avoid "United States" vs "US"
-      // false positives — the two columns sit side-by-side for visual comparison.
+        ? '<code style="font-size:0.75rem;">' + esc(u.last_login_ip) + '</code>' +
+          (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c;" title="Shared by ' + u.shared_ip_count + ' accounts">&#9888; ' + u.shared_ip_count + '</span>' : '')
+        : '<span class="muted">-</span>';
       const dclCountry = (u.country || '').trim().toUpperCase();
       const geoMismatch = u.ip_country && dclCountry && dclCountry.length <= 3 && dclCountry !== String(u.ip_country).trim().toUpperCase();
-      const ipLocCell = u.ip_country
-        ? '<code style="font-size:0.78rem;' + (geoMismatch ? ' background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; padding:0 0.25em; border-radius:3px;' : '') + '" title="' + (geoMismatch ? 'IP geolocates to ' + esc(u.ip_country) + ' but user declared &quot;' + esc(u.country) + '&quot;' : 'Geolocation of last-login IP (Cloudflare edge)') + '">' + esc(u.ip_country) + (geoMismatch ? ' &#9888;' : '') + '</code>'
-        : '<span style="color:var(--gray-400);">-</span>';
-      return '<div class="user-row" onclick="showUser(' + u.id + ')" style="cursor:pointer;' + rowStyle + '">' +
-        '<div><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733; VIP</span>' : '') + '</div>' +
-        '<div style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</div>' +
-        '<div>' + dirtyMark(u.institution) + '</div>' +
-        '<div>' + dirtyMark(u.country) + '</div>' +
-        '<div>' + dirtyMark(u.role) + '</div>' +
-        '<div class="mono">' + u.download_count + '</div>' +
-        '<div>' + ipCell + '</div>' +
-        '<div>' + ipLocCell + '</div>' +
-        '<div>' +
-          (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
-          (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') +
-        '</div>' +
-      '</div>';
+      const ipLoc = u.ip_country
+        ? '<span style="font-size:0.78rem;' + (geoMismatch ? 'color:#b91c1c; font-weight:600;' : 'color:var(--gray-500);') + '" title="' + (geoMismatch ? 'IP geolocates to ' + esc(countryName(u.ip_country) || u.ip_country) + ' but user declared &quot;' + esc(u.country) + '&quot;' : 'Last-login IP location') + '">' + esc(countryName(u.ip_country) || u.ip_country) + (geoMismatch ? ' &#9888;' : '') + '</span>'
+        : '';
+      const dispBadge = u.disposable_email ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c;" title="Disposable email domain">temp</span>' : '';
+      return '<tr class="clickable" onclick="showUser(' + u.id + ')" style="' + rowStyle + '">' +
+        '<td><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733;</span>' : '') + '</td>' +
+        '<td style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</td>' +
+        '<td>' + dirtyMark(u.institution) + '</td>' +
+        '<td>' + (u.country ? (isLatinish(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
+        '<td>' + dirtyMark(u.role) + '</td>' +
+        '<td class="mono">' + u.download_count + '</td>' +
+        '<td class="muted" style="font-size:0.78rem; white-space:nowrap;">' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</td>' +
+        '<td>' + ipCell + (ipLoc ? '<br>' + ipLoc : '') + '</td>' +
+        '<td>' + (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
+          (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') + '</td>' +
+      '</tr>';
     }).join('');
+    document.getElementById('users-list').innerHTML = html || '<tr><td colspan="9" class="muted" style="padding:1rem;">No users match.</td></tr>';
 
-    const flaggedBar = (d.flagged_users > 0 || d.disposable_users > 0)
-      ? '<div style="padding:0.6rem 1rem; background:#fef2f2; border-bottom:1px solid #fca5a5; color:#b91c1c; font-size:0.85rem;">&#9888; <strong>' + (d.flagged_users || 0) + '</strong> account(s) across <strong>' + (d.shared_ip_clusters || 0) + '</strong> shared IP(s); <strong>' + (d.disposable_users || 0) + '</strong> on disposable email domains — review red-flagged rows.</div>'
+    // Flag bar — headline uses the same union the Flagged chip filters on.
+    const fb = document.getElementById('users-flag-bar');
+    const flaggedTotal = d.flagged_total != null ? d.flagged_total : (d.flagged_users || 0);
+    fb.innerHTML = (flaggedTotal > 0)
+      ? '<div style="padding:0.6rem 1rem; margin-bottom:0.75rem; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; color:#b91c1c; font-size:0.85rem;">&#9888; <strong>' + flaggedTotal + '</strong> flagged account(s): <strong>' + (d.flagged_users || 0) + '</strong> across <strong>' + (d.shared_ip_clusters || 0) + '</strong> shared IP(s), <strong>' + (d.disposable_users || 0) + '</strong> on disposable email domains.</div>'
       : '';
-    document.getElementById('users-list').innerHTML = flaggedBar + (html || '<div style="padding:1rem; color:var(--gray-400);">No users.</div>');
-  } catch (e) {
-    console.error('Users error:', e);
-  }
+
+    // Sort indicators
+    document.querySelectorAll('#users-table th.sortable').forEach(th => {
+      const base = th.textContent.replace(/[▲▼]/g, '').trim();
+      th.innerHTML = base + (th.dataset.sort === usersState.sort ? ' <span class="arr">' + (usersState.dir === 'asc' ? '▲' : '▼') + '</span>' : '');
+    });
+
+    // Pager
+    const from = usersState.totalMatching === 0 ? 0 : usersState.offset + 1;
+    const to = Math.min(usersState.offset + usersState.limit, usersState.totalMatching);
+    document.getElementById('users-range').textContent = from + '–' + to + ' of ' + Number(usersState.totalMatching).toLocaleString() + (usersState.filter || usersState.q ? ' (filtered)' : '');
+    document.getElementById('users-prev').disabled = usersState.offset === 0;
+    document.getElementById('users-next').disabled = to >= usersState.totalMatching;
+  } catch (e) { console.error('Users error:', e); }
 }
 
-// ── Show user detail ──
+// ── User detail modal ──
 let userEditOriginal = null;
 async function showUser(id) {
   try {
     const r = await fetch(API + '/v1/admin/users/' + id, { headers: authHeaders() });
     const d = await r.json();
     const u = d.user;
-    // Snapshot the original values so saveUserProfile() can send diffs only.
-    // Without this, an admin editing just "country" would also re-submit the
-    // user's original name/institution — which fails validation if those
-    // happen to contain non-Latin characters from a pre-validator signup.
-    userEditOriginal = {
-      name: u.name || '',
-      institution: u.institution || '',
-      country: u.country || '',
-      role: u.role || '',
-    };
+    userEditOriginal = { name: u.name || '', institution: u.institution || '', country: u.country || '', role: u.role || '' };
 
-    const logins = d.recent_logins.map(l =>
-      '<tr><td>' + fmtCT(l.timestamp) + '</td><td>' + l.ip_address + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
+    const logins = (d.recent_logins || []).map(l =>
+      '<tr><td>' + fmtCT(l.timestamp) + '</td><td>' + esc(l.ip_address) + '</td><td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + esc(l.user_agent || '') + '</td><td>' + (l.success ? 'OK' : '<span style="color:var(--red);">Failed</span>') + '</td></tr>'
     ).join('');
-
-    const dls = d.recent_downloads.map(dl =>
-      '<tr><td>' + fmtCT(dl.timestamp) + '</td><td>' + dl.ticker + '</td><td>' + dl.version + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + dl.ip_address + '</td></tr>'
+    const dls = (d.recent_downloads || []).map(dl =>
+      '<tr><td>' + fmtCT(dl.timestamp) + '</td><td>' + esc(dl.ticker) + '</td><td>' + esc(dl.version) + '</td><td>' + chanBadge(dl.channel || dlChannelFallback(dl.endpoint)) + '</td><td>' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td>' + esc(dl.ip_address) + '</td></tr>'
     ).join('');
 
     const inputStyle = 'width:100%; padding:0.4rem 0.55rem; border:1px solid var(--gray-300); border-radius:4px; font-size:0.85rem; font-family:var(--font-sans);';
@@ -562,14 +559,13 @@ async function showUser(id) {
         '<div><strong>Institution:</strong><br>' +
           '<input id="user-edit-institution" value="' + esc(u.institution || '') + '" style="' + inputStyle + '">' +
           '<label style="font-size:0.8rem; color:var(--gray-500); cursor:pointer; margin-top:0.35rem; display:inline-flex; align-items:center; gap:0.3rem;">' +
-            '<input type="checkbox" ' + (u.hide_institution ? 'checked' : '') + ' onchange="toggleHideInstitution(' + u.id + ', this.checked)">' +
-            ' Hide from stats</label></div>' +
-        '<div><strong>Country:</strong><br><input id="user-edit-country" value="' + esc(u.country || '') + '" style="' + inputStyle + '"></div>' +
+            '<input type="checkbox" ' + (u.hide_institution ? 'checked' : '') + ' onchange="toggleHideInstitution(' + u.id + ', this.checked)"> Hide from stats</label></div>' +
+        '<div><strong>Country:</strong> <span class="muted" style="font-size:0.8rem;">' + (countryName(u.country) ? '(' + esc(countryName(u.country)) + ')' : '') + '</span><br><input id="user-edit-country" value="' + esc(u.country || '') + '" style="' + inputStyle + '"></div>' +
         '<div><strong>Role:</strong><br><input id="user-edit-role" value="' + esc(u.role || '') + '" style="' + inputStyle + '"></div>' +
-        '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + u.api_key + '</code></div>' +
+        '<div><strong>API Key:</strong><br><code style="font-size:0.75rem;">' + esc(u.api_key) + '</code></div>' +
         '<div><strong>Registered:</strong><br>' + fmtCT(u.created_at) + '</div>' +
         '<div><strong>Last Login:</strong><br>' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</div>' +
-        '<div><strong>Last IP:</strong><br><code>' + (u.last_login_ip || '-') + '</code></div>' +
+        '<div><strong>Last IP:</strong><br><code>' + esc(u.last_login_ip || '-') + '</code></div>' +
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
       '</div>' +
@@ -579,25 +575,20 @@ async function showUser(id) {
       '</div>' +
       (u.orcid_id || u.google_id ? '<div style="margin-bottom:1rem; padding:0.75rem 1rem; background:#f9fafb; border-radius:8px; font-size:0.9rem;">' +
         '<strong>Linked accounts:</strong><br>' +
-        (u.orcid_id ? '<a href="https://orcid.org/' + u.orcid_id + '" target="_blank" style="color:#a6ce39; text-decoration:underline;">&#9733; ORCID: ' + u.orcid_id + '</a> ' : '') +
-        (u.google_id ? '<span style="color:#4285F4;">&#9733; Google ID: ' + u.google_id + '</span>' : '') +
+        (u.orcid_id ? '<a href="https://orcid.org/' + esc(u.orcid_id) + '" target="_blank" style="color:#a6ce39; text-decoration:underline;">&#9733; ORCID: ' + esc(u.orcid_id) + '</a> ' : '') +
+        (u.google_id ? '<span style="color:#4285F4;">&#9733; Google ID: ' + esc(u.google_id) + '</span>' : '') +
       '</div>' : '') +
       (u.orcid_profile ? '<details style="margin-bottom:1rem; padding:0.75rem 1rem; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; font-size:0.9rem;">' +
         '<summary style="cursor:pointer; font-weight:600; color:#065f46;">ORCID profile details</summary>' +
         '<div style="margin-top:0.75rem;">' +
           (u.orcid_profile.biography ? '<p><strong>Biography:</strong> ' + esc(u.orcid_profile.biography) + '</p>' : '') +
-          (u.orcid_profile.currentEmployment?.length > 0 ? '<p><strong>Current employment:</strong></p><ul style="margin-left:1.5rem;">' +
-            u.orcid_profile.currentEmployment.map(e =>
-              '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + (e.department ? ' (' + esc(e.department) + ')' : '') + '</li>'
-            ).join('') + '</ul>' : '') +
-          (u.orcid_profile.educationList?.length > 0 ? '<p><strong>Education:</strong></p><ul style="margin-left:1.5rem;">' +
-            u.orcid_profile.educationList.slice(0,5).map(e =>
-              '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + '</li>'
-            ).join('') + '</ul>' : '') +
+          (u.orcid_profile.currentEmployment && u.orcid_profile.currentEmployment.length > 0 ? '<p><strong>Current employment:</strong></p><ul style="margin-left:1.5rem;">' +
+            u.orcid_profile.currentEmployment.map(e => '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + (e.department ? ' (' + esc(e.department) + ')' : '') + '</li>').join('') + '</ul>' : '') +
+          (u.orcid_profile.educationList && u.orcid_profile.educationList.length > 0 ? '<p><strong>Education:</strong></p><ul style="margin-left:1.5rem;">' +
+            u.orcid_profile.educationList.slice(0,5).map(e => '<li>' + esc(e.organization || '?') + (e.role ? ' — ' + esc(e.role) : '') + '</li>').join('') + '</ul>' : '') +
           (u.orcid_profile.worksCount ? '<p><strong>Publications:</strong> ' + u.orcid_profile.worksCount + ' on ORCID record</p>' : '') +
-          (u.orcid_profile.emails?.length > 0 ? '<p><strong>Public emails on ORCID:</strong> ' + u.orcid_profile.emails.join(', ') + '</p>' : '') +
-        '</div>' +
-      '</details>' : '') +
+          (u.orcid_profile.emails && u.orcid_profile.emails.length > 0 ? '<p><strong>Public emails on ORCID:</strong> ' + esc(u.orcid_profile.emails.join(', ')) + '</p>' : '') +
+        '</div></details>' : '') +
       '<div style="margin-bottom:1.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">' +
         (u.is_active
           ? '<button class="btn btn-sm btn-danger" onclick="toggleUser(' + u.id + ', false)">Revoke Access</button>'
@@ -611,21 +602,22 @@ async function showUser(id) {
         '<button class="btn btn-sm btn-primary" style="margin-top:0.5rem;" onclick="saveNotes(' + u.id + ')">Save Notes</button>' +
       '</div>' +
       '<h4 style="margin-top:1.5rem;">Login History</h4>' +
-      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>IP</th><th>User Agent</th><th>Status</th></tr></thead><tbody>' + (logins || '<tr><td colspan="4" style="color:var(--gray-400);">No logins</td></tr>') + '</tbody></table></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>IP</th><th>User Agent</th><th>Status</th></tr></thead><tbody>' + (logins || '<tr><td colspan="4" class="muted">No logins</td></tr>') + '</tbody></table></div>' +
       '<h4 style="margin-top:1.5rem;">Download History</h4>' +
-      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Ticker</th><th>Version</th><th>Size</th><th>IP</th></tr></thead><tbody>' + (dls || '<tr><td colspan="5" style="color:var(--gray-400);">No downloads</td></tr>') + '</tbody></table></div>';
+      '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Ticker</th><th>Version</th><th>Channel</th><th>Size</th><th>IP</th></tr></thead><tbody>' + (dls || '<tr><td colspan="6" class="muted">No downloads</td></tr>') + '</tbody></table></div>';
 
     document.getElementById('user-modal').classList.add('open');
-  } catch (e) {
-    console.error('User detail error:', e);
-  }
+  } catch (e) { console.error('User detail error:', e); }
+}
+
+// Fallback channel for rows logged before the channel column existed.
+function dlChannelFallback(endpoint) {
+  if (endpoint === '/v1/bars' || endpoint === '/v1/variables' || endpoint === '/v1/quality') return 'api';
+  return 'web';
 }
 
 async function saveUserProfile(id) {
   const out = document.getElementById('user-edit-result');
-  // Build a diff against the snapshot from showUser(). Only include fields
-  // the admin actually changed — the validator on the server then only runs
-  // against new values.
   const current = {
     name: document.getElementById('user-edit-name').value.trim(),
     institution: document.getElementById('user-edit-institution').value.trim(),
@@ -636,137 +628,213 @@ async function saveUserProfile(id) {
   for (const k of ['name', 'institution', 'country', 'role']) {
     if (userEditOriginal && current[k] !== userEditOriginal[k]) body[k] = current[k];
   }
-  if (Object.keys(body).length === 0) {
-    out.textContent = 'No changes.';
-    out.style.color = 'var(--gray-500)';
-    return;
-  }
-  out.textContent = 'Saving...';
-  out.style.color = 'var(--gray-500)';
+  if (Object.keys(body).length === 0) { out.textContent = 'No changes.'; out.style.color = 'var(--gray-500)'; return; }
+  out.textContent = 'Saving...'; out.style.color = 'var(--gray-500)';
   try {
-    const r = await fetch(API + '/v1/admin/users/' + id, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-    });
+    const r = await fetch(API + '/v1/admin/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
     const d = await r.json();
     if (r.ok) {
-      out.textContent = 'Saved (' + Object.keys(body).join(', ') + ').';
-      out.style.color = '#059669';
-      // Update snapshot so subsequent saves diff against the new state.
+      out.textContent = 'Saved (' + Object.keys(body).join(', ') + ').'; out.style.color = '#059669';
       Object.assign(userEditOriginal, body);
       loadUsers();
-    } else {
-      out.textContent = d.error || 'Failed';
-      out.style.color = 'var(--red)';
-    }
-  } catch (e) {
-    out.textContent = 'Connection error.';
-    out.style.color = 'var(--red)';
-  }
+    } else { out.textContent = d.error || 'Failed'; out.style.color = 'var(--red)'; }
+  } catch (e) { out.textContent = 'Connection error.'; out.style.color = 'var(--red)'; }
 }
 
 async function toggleUser(id, active) {
-  await fetch(API + '/v1/admin/users/' + id, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify({ is_active: active })
-  });
-  closeModal();
-  loadUsers();
-  loadStats();
+  await fetch(API + '/v1/admin/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ is_active: active }) });
+  closeModal(); loadUsers(); loadStats();
 }
-
 async function toggleVip(id, vip) {
-  await fetch(API + '/v1/admin/users/' + id, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify({ is_vip: vip })
-  });
-  closeModal();
-  loadUsers();
+  await fetch(API + '/v1/admin/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ is_vip: vip }) });
+  closeModal(); loadUsers();
 }
-
 async function toggleHideInstitution(id, hide) {
-  await fetch(API + '/v1/admin/users/' + id, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify({ hide_institution: hide })
-  });
+  await fetch(API + '/v1/admin/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ hide_institution: hide }) });
 }
-
 async function saveNotes(id) {
   const notes = document.getElementById('user-notes').value;
-  await fetch(API + '/v1/admin/users/' + id, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify({ notes })
-  });
+  await fetch(API + '/v1/admin/users/' + id, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ notes }) });
   alert('Notes saved.');
 }
+function closeModal() { document.getElementById('user-modal').classList.remove('open'); }
 
-function closeModal() {
-  document.getElementById('user-modal').classList.remove('open');
+// ── Downloads ──
+let downloadChannel = '';
+function setDownloadChannel(c) {
+  downloadChannel = c;
+  document.querySelectorAll('.chip[data-dchan]').forEach(x => x.classList.toggle('active', x.dataset.dchan === c));
+  loadDownloads();
 }
-
-// ── Load downloads ──
 async function loadDownloads() {
   try {
-    const r = await fetch(API + '/v1/admin/downloads?limit=50', { headers: authHeaders() });
+    const p = new URLSearchParams({ limit: '100' });
+    if (downloadChannel) p.set('channel', downloadChannel);
+    const r = await fetch(API + '/v1/admin/downloads?' + p.toString(), { headers: authHeaders() });
     const d = await r.json();
-    document.getElementById('download-log').innerHTML = d.downloads.map(dl =>
-      '<tr><td class="mono" style="font-size:0.8rem;">' + fmtCT(dl.timestamp) + '</td><td>' + esc(dl.name || '-') + '</td><td style="font-size:0.8rem;">' + esc(dl.email || '-') + '</td><td><strong>' + dl.ticker + '</strong></td><td>' + dl.version + '</td><td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td><td class="mono" style="font-size:0.8rem;">' + dl.ip_address + '</td></tr>'
-    ).join('') || '<tr><td colspan="7" style="color:var(--gray-400);">No downloads yet.</td></tr>';
-  } catch (e) {
-    console.error('Downloads error:', e);
-  }
+    document.getElementById('download-log').innerHTML = (d.downloads || []).map(dl =>
+      '<tr><td class="mono" style="font-size:0.8rem; white-space:nowrap;">' + fmtCT(dl.timestamp) + '</td>' +
+      '<td>' + esc(dl.name || '-') + '</td>' +
+      '<td style="font-size:0.8rem;">' + esc(dl.email || '-') + '</td>' +
+      '<td><strong>' + esc(dl.ticker) + '</strong></td>' +
+      '<td>' + esc(dl.version) + '</td>' +
+      '<td>' + chanBadge(dl.channel_display || dl.channel || dlChannelFallback(dl.endpoint)) + '</td>' +
+      '<td class="mono">' + (dl.bytes_served / 1e6).toFixed(1) + ' MB</td>' +
+      '<td class="mono" style="font-size:0.8rem;">' + esc(dl.ip_address) + '</td></tr>'
+    ).join('') || '<tr><td colspan="8" class="muted">No downloads.</td></tr>';
+  } catch (e) { console.error('Downloads error:', e); }
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// ── Communications ──
+async function previewDigest() {
+  const out = document.getElementById('digest-result');
+  out.innerHTML = '<span style="color:var(--gray-500);">Sending...</span>';
+  try {
+    const r = await fetch(API + '/v1/admin/digest/preview', { method: 'POST', headers: authHeaders() });
+    const dd = await r.json();
+    out.innerHTML = r.ok ? '<span style="color:#059669;">Sent — check your inbox.</span>' : '<span style="color:var(--red);">' + (dd.error || dd.message || 'Failed') + '</span>';
+  } catch (e) { out.innerHTML = '<span style="color:var(--red);">Connection error.</span>'; }
+}
+
+async function sendNewsletter(testOnly) {
+  const subject = document.getElementById('news-subject').value.trim();
+  const body = document.getElementById('news-body').value.trim();
+  const result = document.getElementById('news-result');
+  if (!subject || !body) { result.style.display = 'block'; result.innerHTML = '<p style="color:var(--red);">Subject and body are required.</p>'; return; }
+  if (!testOnly && !confirm('Send this newsletter to ALL subscribers? This cannot be undone.')) return;
+  result.style.display = 'block'; result.innerHTML = '<p style="color:var(--gray-500);">Sending...</p>';
+  try {
+    const r = await fetch(API + '/v1/admin/newsletter', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ subject, body_html: body, test_only: testOnly }) });
+    const data = await r.json();
+    if (r.ok) {
+      if (testOnly) { result.innerHTML = '<p style="color:#059669;">Test email sent to your inbox.</p>'; }
+      else {
+        result.innerHTML = '<p style="color:#059669;">Newsletter sent! ' + data.success + ' delivered, ' + data.failed + ' failed (' + data.total + ' total).</p>';
+        document.getElementById('news-subject').value = ''; document.getElementById('news-body').value = '';
+        loadCampaigns();
+      }
+    } else { result.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Failed') + '</p>'; }
+  } catch (e) { result.innerHTML = '<p style="color:var(--red);">Connection error.</p>'; }
+}
+
+async function loadCampaigns() {
+  try {
+    const r = await fetch(API + '/v1/admin/newsletter/campaigns', { headers: authHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('newsletter-count').textContent = d.subscribers;
+    document.getElementById('campaign-history').innerHTML = (d.campaigns.length === 0)
+      ? '<p class="muted">No campaigns sent yet.</p>'
+      : d.campaigns.map(c =>
+          '<div style="padding:0.5rem 0; border-bottom:1px solid var(--gray-100);">' +
+            '<strong>' + esc(c.subject) + '</strong>' +
+            '<span style="margin-left:1rem; color:var(--gray-500);">' + fmtCT(c.sent_at) + '</span>' +
+            '<span style="margin-left:1rem; color:var(--gray-500);">' + c.success_count + '/' + c.recipients_count + ' delivered</span>' +
+          '</div>'
+        ).join('');
+  } catch (e) { console.error(e); }
+}
+
+// ── Security (2FA) ──
+async function load2faStatus() {
+  try {
+    const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
+    if (!r.ok) return;
+    const u = await r.json();
+    const el = document.getElementById('twofa-status');
+    if (u.totp_enabled) {
+      el.innerHTML = '<p style="color:#059669; margin-bottom:0.75rem;"><strong>&#10003; 2FA is enabled</strong></p>' +
+        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">You will be asked for a code from your authenticator app when you log in.</p>' +
+        '<button class="btn btn-sm btn-outline" style="color:#dc2626; border-color:#dc2626;" onclick="disable2fa()">Disable 2FA</button>';
+    } else {
+      el.innerHTML = '<p style="color:#d97706; margin-bottom:0.75rem;"><strong>&#9888; 2FA is not enabled</strong></p>' +
+        '<p style="color:var(--gray-600); font-size:0.9rem; margin-bottom:1rem;">Enable two-factor authentication to protect your admin account. Uses Google Authenticator, Authy, or any TOTP-compatible app.</p>' +
+        '<button class="btn btn-sm btn-primary" onclick="setup2fa()">Enable 2FA</button>' +
+        '<div id="twofa-setup" style="display:none; margin-top:1rem;"></div>';
+    }
+    // Populate the abuse-signals card from a lightweight users query.
+    const ur = await fetch(API + '/v1/admin/users?limit=1', { headers: authHeaders() });
+    if (ur.ok) {
+      const ud = await ur.json();
+      document.getElementById('security-summary').innerHTML =
+        '<strong>' + (ud.flagged_users || 0) + '</strong> account(s) share a login IP across <strong>' + (ud.shared_ip_clusters || 0) +
+        '</strong> IP cluster(s); <strong>' + (ud.disposable_users || 0) + '</strong> on disposable email domains.';
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function setup2fa() {
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/setup', { method: 'POST', headers: authHeaders() });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || 'Failed'); return; }
+    document.getElementById('twofa-setup').style.display = 'block';
+    document.getElementById('twofa-setup').innerHTML =
+      '<div style="padding:1.5rem; background:var(--gray-50); border-radius:8px;">' +
+        '<p style="margin-bottom:1rem;"><strong>Step 1:</strong> Scan this QR code with Google Authenticator, Authy, or any TOTP app.</p>' +
+        '<img src="' + data.qr_code_url + '" alt="QR Code" style="display:block; margin:0 auto 1rem; border:1px solid var(--gray-200);">' +
+        '<p style="font-size:0.85rem; color:var(--gray-600); margin-bottom:1rem;">Or enter this secret manually: <code style="user-select:all; background:#fff; padding:0.25em 0.5em; border:1px solid var(--gray-200); border-radius:4px;">' + esc(data.secret) + '</code></p>' +
+        '<p style="margin-bottom:0.5rem;"><strong>Step 2:</strong> Enter the 6-digit code from your app to confirm.</p>' +
+        '<input type="text" id="twofa-code" placeholder="123456" maxlength="6" style="width:150px; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em;">' +
+        '<button class="btn btn-sm btn-primary" style="margin-left:0.5rem;" onclick="confirm2fa()">Confirm & Enable</button>' +
+        '<div id="twofa-setup-result" style="margin-top:0.75rem;"></div>' +
+      '</div>';
+  } catch (e) { alert('Connection error'); }
+}
+
+async function confirm2fa() {
+  const code = document.getElementById('twofa-code').value.trim();
+  const result = document.getElementById('twofa-setup-result');
+  if (!/^\d{6}$/.test(code)) { result.innerHTML = '<p style="color:var(--red); margin:0;">Enter a 6-digit code</p>'; return; }
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/enable', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ code }) });
+    const data = await r.json();
+    if (r.ok) load2faStatus();
+    else result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
+  } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
+}
+
+async function disable2fa() {
+  const password = prompt('Enter your password to disable 2FA:');
+  if (!password) return;
+  const code = prompt('Enter your current 6-digit 2FA code:');
+  if (!code) return;
+  try {
+    const r = await fetch(API + '/v1/auth/2fa/disable', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ password, code }) });
+    const data = await r.json();
+    if (r.ok) { alert('2FA disabled'); load2faStatus(); }
+    else alert(data.error || 'Failed');
+  } catch (e) { alert('Connection error'); }
+}
 
 // Format a SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS") or ISO string as US Central time.
 function fmtCT(ts) {
   if (!ts) return '-';
-  // SQLite datetime('now') returns UTC with no tz marker. Append Z so Date parses as UTC.
   const iso = ts.includes('T')
     ? (ts.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(ts) ? ts : ts + 'Z')
     : ts.replace(' ', 'T') + 'Z';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return ts;
-  return d.toLocaleString('en-US', {
-    timeZone: 'America/Chicago',
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }) + ' CT';
+  return d.toLocaleString('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + ' CT';
 }
 
+// ── Wire up search box (debounced) + Enter on login ──
+document.getElementById('user-search').addEventListener('input', function () {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { usersState.q = this.value.trim(); usersState.offset = 0; loadUsers(); }, 300);
+});
+document.getElementById('login-password').addEventListener('keyup', function (e) { if (e.key === 'Enter') adminLogin(); });
+
 // ── Auto-login if session exists ──
-(async function() {
+(async function () {
   if (sessionToken) {
     try {
       const r = await fetch(API + '/v1/auth/me', { headers: authHeaders() });
-      if (r.ok) {
-        const u = await r.json();
-        showAdmin(u.name);
-      } else {
-        localStorage.removeItem('hfd_admin_session');
-        sessionToken = null;
-      }
-    } catch (e) {
-      localStorage.removeItem('hfd_admin_session');
-      sessionToken = null;
-    }
+      if (r.ok) { const u = await r.json(); showAdmin(u.name); }
+      else { localStorage.removeItem('hfd_admin_session'); sessionToken = null; }
+    } catch (e) { localStorage.removeItem('hfd_admin_session'); sessionToken = null; }
   }
 })();
-
-// Enter key on password field
-document.getElementById('login-password').addEventListener('keyup', function(e) {
-  if (e.key === 'Enter') adminLogin();
-});
 </script>
 
 </body>

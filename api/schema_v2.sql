@@ -60,6 +60,7 @@ CREATE TABLE download_log (
   ticker TEXT,
   version TEXT,
   endpoint TEXT,
+  channel TEXT,            -- 'api' | 'web' | 'mcp' (derived at download time)
   ip_address TEXT,
   bytes_served INTEGER DEFAULT 0,
   timestamp TEXT DEFAULT (datetime('now'))

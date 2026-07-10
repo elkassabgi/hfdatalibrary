@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS download_tokens (
   ticker TEXT NOT NULL,
   version TEXT NOT NULL,
   format TEXT NOT NULL,
+  channel TEXT,            -- 'web' | 'api' | 'mcp': how the token was issued
   expires_at TEXT NOT NULL,
   used INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
