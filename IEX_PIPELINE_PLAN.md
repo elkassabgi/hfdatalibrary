@@ -8,7 +8,7 @@
 - 7 GB RAM
 - 2 CPU cores
 
-**Legal:** IEX HIST data is public and redistributable with attribution. Alpaca is NOT used.
+**Legal:** IEX HIST data is public and redistributable with attribution.
 
 ---
 
