@@ -7,9 +7,8 @@
 
   // ── Maintenance banner (auto-expires; remove after the 2026-07 data revision) ──
   var MAINT_EXPIRES_UTC = Date.UTC(2026, 6, 14, 5, 0, 0); // 2026-07-14 05:00Z
-  var MAINT_MSG = 'Scheduled maintenance this weekend: the post\u2013March 2022 data is being ' +
-                  're-derived directly from IEX Exchange HIST source files. The site and all ' +
-                  'downloads remain available; daily updates resume Tuesday.';
+  var MAINT_MSG = 'Scheduled maintenance this weekend. The site and all downloads ' +
+                  'remain available; daily updates resume Tuesday.';
   function injectMaintenanceBanner() {
     try {
       if (Date.now() > MAINT_EXPIRES_UTC) return;
