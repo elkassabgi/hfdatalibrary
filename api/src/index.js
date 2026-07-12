@@ -2105,7 +2105,7 @@ async function handleBars(ticker, request, env, cors, ip) {
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
-    headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}.parquet"`, 'Content-Length': obj.size }
+    headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}.parquet"`, 'Content-Length': obj.size, 'X-Data-Attribution': 'Data provided for free by IEX (post-March-2022 bars). Terms: https://www.iex.io/legal/hist-data-terms' }
   });
 }
 
@@ -2137,7 +2137,7 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
-    headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}_${kind}.parquet"`, 'Content-Length': obj.size }
+    headers: { ...cors, 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ticker}_${version}_${kind}.parquet"`, 'Content-Length': obj.size, 'X-Data-Attribution': 'Data provided for free by IEX (post-March-2022 bars). Terms: https://www.iex.io/legal/hist-data-terms' }
   });
 }
 
@@ -2273,7 +2273,7 @@ async function handleDownload(ticker, request, env, cors, ip) {
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
-    headers: { ...cors, 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${filename}"`, 'Content-Length': obj.size }
+    headers: { ...cors, 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${filename}"`, 'Content-Length': obj.size, 'X-Data-Attribution': 'Data provided for free by IEX (post-March-2022 bars). Terms: https://www.iex.io/legal/hist-data-terms' }
   });
 }
 
@@ -2743,6 +2743,7 @@ async function handleStatus(env, cors) {
     r2_connected: list.objects.length > 0,
     registered_users: userCount?.c || 0,
     rate_limit: '300 requests per minute (downloads), 5 login attempts per 5 min',
+    attribution: 'Post-March-2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the IEX Historical Data Terms of Use. https://www.iex.io/legal/hist-data-terms',
     timestamp: new Date().toISOString()
   }, 200, cors);
 }

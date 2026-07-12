@@ -38,3 +38,9 @@ Notices:
 ---
 
 Full legal text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+
+Upstream scope note: bars dated 2022-03-07 onward are derived from IEX market data;
+IEX retains all rights in the underlying securities information. Redistribution of that
+segment must include: "Data provided for free by IEX. By accessing or using IEX Historical
+Data, you agree to the IEX Historical Data Terms of Use." (https://www.iex.io/legal/hist-data-terms)

@@ -29,3 +29,5 @@ abstract: >-
   U.S. stocks and ETFs, from December 2002 through the present. Two
   cleaning versions (Raw, Clean), 25 pre-computed academic
   variables, full methodology documentation. Updated daily.
+# Note: post-March-2022 bars remain subject to the IEX Historical Data Terms of Use
+# (https://www.iex.io/legal/hist-data-terms); IEX retains proprietary rights in the underlying securities information.

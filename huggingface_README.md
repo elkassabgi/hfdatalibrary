@@ -162,3 +162,8 @@ You are free to share and adapt the material for any purpose, including commerci
 - **GitHub:** https://github.com/elkassabgi/hfdatalibrary
 - **Zenodo:** https://zenodo.org/records/19501605
 - **Contact:** admin@hfdatalibrary.com
+
+
+## Upstream source attribution (required)
+
+Bars dated 2022-03-07 onward are derived from IEX market data and reflect IEX-only trading activity (roughly 2–3% of consolidated volume — a reference point, not the full tape). If you redistribute or provide access to this data, include: “Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the [IEX Historical Data Terms of Use](https://www.iex.io/legal/hist-data-terms).” IEX retains all rights in the underlying securities information; the CC BY 4.0 grant covers the compilation, documentation, and pre-2022 portion.

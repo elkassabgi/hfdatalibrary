@@ -103,10 +103,10 @@
       <li>Studies where NBBO (National Best Bid/Offer) prices are needed — IEX quotes reflect IEX's book, not the NBBO</li>
     </ul>
 
-    <p><strong>How to identify the data source:</strong> Each bar has a <code>source</code> column. Bars with <code>source="pitrading"</code> are from the consolidated tape. Bars with <code>source="iex"</code> are from IEX Exchange HIST only.</p>
+    <p><strong>How to identify the data source:</strong> Each bar has a <code>source</code> column. Bars with <code>source="pitrading"</code> are from the consolidated tape. Bars with <code>source="iex"</code> are from IEX Exchange HIST only. Post-2022 bars not yet tagged <code>source="iex"</code> are being re-derived directly from IEX HIST this week.</p>
 
     <h4>Why not use a full-tape source?</h4>
-    <p>Consolidated tape data (CTA/UTP) is owned by NYSE and Nasdaq. All providers who redistribute it (Polygon, Yahoo Finance, etc.) charge licensing fees and prohibit re-redistribution in their terms of service. IEX Exchange HIST is the only U.S. equity exchange that makes its historical data freely available and permits redistribution with attribution. This is a trade-off between coverage and accessibility.</p>
+    <p>Consolidated tape data (CTA/UTP) is owned by NYSE and Nasdaq. All providers who redistribute it (Polygon, Yahoo Finance, etc.) charge licensing fees and prohibit re-redistribution in their terms of service. IEX Exchange HIST is the only U.S. equity exchange that makes its historical data freely available and permits redistribution with attribution. This is a trade-off between coverage and accessibility. Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
     <p>Researchers who require full consolidated tape data for post-2022 analysis should supplement this library with institutional access to WRDS/TAQ or similar licensed sources.</p>
 
     <h4>Splice boundary (March 2022)</h4>
@@ -130,6 +130,7 @@
   <div class="container">
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
+      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
