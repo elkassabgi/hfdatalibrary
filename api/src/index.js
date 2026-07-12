@@ -2744,6 +2744,7 @@ async function handleStatus(env, cors) {
     registered_users: userCount?.c || 0,
     rate_limit: '300 requests per minute (downloads), 5 login attempts per 5 min',
     attribution: 'Post-March-2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the IEX Historical Data Terms of Use. https://www.iex.io/legal/hist-data-terms',
+    maintenance: 'Scheduled maintenance 2026-07-12/13: post-March-2022 data is being re-derived from IEX HIST source files. All endpoints remain available; daily updates resume Tuesday.',
     timestamp: new Date().toISOString()
   }, 200, cors);
 }

@@ -266,7 +266,7 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         merged_raw = new_bars
 
     # 2. Dedupe by datetime, keep last (newest data wins on conflict)
-    merged_raw = merged_raw.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
+    merged_raw = merged_raw.sort_values("datetime", kind="stable").drop_duplicates(subset=["datetime"], keep="last")
     merged_raw = merged_raw.reset_index(drop=True)
     stats["raw_total_bars"] = len(merged_raw)
 
@@ -311,10 +311,14 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     raw_aggs = aggregate_all(merged_raw)
     clean_aggs = aggregate_all(merged_clean)
 
-    # 5. Upload ALL parquet files in parallel (no CSVs — saves hours of CPU)
+    # 5. Upload parquet files in parallel + keep the served 1-min CSVs current
+    #    (csv/{version}/{ticker}.csv is served via /v1/download?format=csv and
+    #    previously went stale after the initial batch — Ahmed 2026-07-12).
     upload_tasks = []
     upload_tasks.append(("parquet", merged_raw, "raw", ticker, "1min"))
     upload_tasks.append(("parquet", merged_clean, "clean", ticker, "1min"))
+    upload_tasks.append(("csv", merged_raw, "raw", ticker, "1min"))
+    upload_tasks.append(("csv", merged_clean, "clean", ticker, "1min"))
 
     for tf_name in TIMEFRAMES:
         if not raw_aggs[tf_name].empty:
@@ -323,7 +327,9 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             upload_tasks.append(("parquet", clean_aggs[tf_name], "clean", ticker, tf_name))
 
     def _do_upload(task):
-        _, df, version, tkr, tf = task
+        kind, df, version, tkr, tf = task
+        if kind == "csv":
+            return upload_csv(client, df, version, tkr, tf)
         return upload_parquet(client, df, version, tkr, tf)
 
     with ThreadPoolExecutor(max_workers=N_IO_THREADS) as upload_pool:

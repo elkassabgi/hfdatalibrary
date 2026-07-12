@@ -5,6 +5,36 @@
 (function () {
   'use strict';
 
+  // ── Maintenance banner (auto-expires; remove after the 2026-07 data revision) ──
+  var MAINT_EXPIRES_UTC = Date.UTC(2026, 6, 14, 5, 0, 0); // 2026-07-14 05:00Z
+  var MAINT_MSG = 'Scheduled maintenance this weekend: the post\u2013March 2022 data is being ' +
+                  're-derived directly from IEX Exchange HIST source files. The site and all ' +
+                  'downloads remain available; daily updates resume Tuesday.';
+  function injectMaintenanceBanner() {
+    try {
+      if (Date.now() > MAINT_EXPIRES_UTC) return;
+      if (sessionStorage.getItem('maint-dismissed') === '1') return;
+      var bar = document.createElement('div');
+      bar.id = 'maint-banner';
+      bar.style.cssText = 'background:#1e3a5f;color:#fff;padding:0.6rem 2.2rem 0.6rem 1rem;' +
+        'font-size:0.88rem;line-height:1.45;text-align:center;position:relative;z-index:1500;';
+      bar.textContent = '\u2699\uFE0F ' + MAINT_MSG;
+      var x = document.createElement('button');
+      x.textContent = '\u00D7';
+      x.setAttribute('aria-label', 'Dismiss');
+      x.style.cssText = 'position:absolute;right:0.7rem;top:50%;transform:translateY(-50%);' +
+        'background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;';
+      x.onclick = function () { bar.remove(); sessionStorage.setItem('maint-dismissed', '1'); };
+      bar.appendChild(x);
+      document.body.insertBefore(bar, document.body.firstChild);
+    } catch (e) { /* banner must never break the page */ }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectMaintenanceBanner);
+  } else {
+    injectMaintenanceBanner();
+  }
+
   // Determine path to data/metadata.json relative to current page
   const isSubpage = window.location.pathname.includes('/pages/');
   const basePath = isSubpage ? '../data/metadata.json' : 'data/metadata.json';

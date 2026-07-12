@@ -158,9 +158,21 @@ def download_parquet(client, version: str, ticker: str, timeframe: str = "1min")
 
 
 def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min") -> int:
-    """Serialize a DataFrame to parquet and upload to R2. Returns bytes uploaded."""
+    """Serialize a DataFrame to parquet (with citation + IEX attribution in the
+    file-level metadata — invisible to pandas users, readable via pyarrow) and
+    upload to R2. Returns bytes uploaded."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    meta = dict(table.schema.metadata or {})
+    meta[b"citation"] = (b"Elkassabgi, A. (2026). HF Data Library: Free 1-Minute "
+                        b"Intraday U.S. Equity Data. Zenodo. https://doi.org/10.5281/zenodo.19501605")
+    meta[b"iex_attribution"] = (b"Post-March-2022 bars: Data provided for free by IEX. "
+                                b"By accessing or using IEX Historical Data, you agree to the "
+                                b"IEX Historical Data Terms of Use. https://www.iex.io/legal/hist-data-terms")
+    table = table.replace_schema_metadata(meta)
     buf = io.BytesIO()
-    df.to_parquet(buf, index=False)
+    pq.write_table(table, buf)
     data = buf.getvalue()
     upload_from_buffer(client, parquet_key(version, ticker, timeframe), data)
     return len(data)
