@@ -123,6 +123,22 @@ pre code { background: none; padding: 0; color: inherit; }
   flex-shrink: 0;
 }
 .navbar-brand span { color: var(--gold); }
+/* ElkassabgiData family tag — matches econdatalibrary.com navbar */
+.navbar-brand-group { display: inline-flex; align-items: center; gap: 0.55rem; flex-shrink: 0; }
+.navbar-fam {
+  font-size: 0.62rem;
+  color: var(--gold);
+  border: 1px solid rgba(212,168,67,0.5);
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.navbar-fam:hover { background: rgba(212,168,67,0.15); color: var(--gold); }
+@media (max-width: 680px) { .navbar-fam { display: none; } }
 .nav-links { display: flex; gap: 0.1rem; list-style: none; align-items: center; white-space: nowrap; }
 .nav-links a {
   color: rgba(255,255,255,0.8);
