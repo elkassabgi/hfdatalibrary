@@ -27,20 +27,25 @@ QUALITY_COLS = ["trade_date", "ticker", "gap_rate", "observed_bars",
 
 
 def sync_ticker_variables(client, version: str, ticker: str, bars: pd.DataFrame,
-                          max_new: int = 5) -> dict:
+                          max_new: int = 5, force_full: bool = False) -> dict:
     """Compute the new day's variables from `bars` (a ticker's full in-memory
     1-minute frame for `version`) and merge them into R2. Returns a small stats
     dict. Raises on error; the caller isolates failures (see daily_update).
     max_new: cap on missing days computed in one call (5 = daily pipeline;
-    catchup_variables.py passes a large value to close historical gaps)."""
-    existing = download_parquet(client, version, ticker, timeframe="variables")
+    catchup_variables.py passes a large value to close historical gaps).
+    force_full: recompute EVERY day from `bars`, ignoring existing rows — used
+    when an overnight corporate action rescaled the served history (see
+    daily_update._detect_and_apply_split): price-level variables computed on
+    the old basis are stale across the whole history, not just recent days."""
+    existing = None if force_full else download_parquet(client, version, ticker,
+                                                        timeframe="variables")
     existing_dates = None
     if existing is not None and not existing.empty:
         existing["trade_date"] = pd.to_datetime(existing["trade_date"]).dt.normalize()
         existing_dates = existing["trade_date"].tolist()
 
     new_rows = compute_recent_days(bars, ticker, existing_dates=existing_dates,
-                                   max_new=max_new)
+                                   max_new=(10 ** 9) if force_full else max_new)
     if new_rows.empty:
         return {"version": version, "ticker": ticker, "new_rows": 0}
     new_rows["trade_date"] = pd.to_datetime(new_rows["trade_date"]).dt.normalize()

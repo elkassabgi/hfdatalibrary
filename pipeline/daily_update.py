@@ -230,14 +230,109 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# Round corporate-action ratios a raw overnight jump may snap to (same table the
+# 2022-2026 IEX HIST backfill used). A split-sized jump that does NOT snap to one
+# of these is treated as a market move (crash/moon) and only flagged, never applied.
+_CA_RATIOS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 60, 100]
+
+
+def _snap_ca_ratio(r: float, tol: float = 0.03):
+    """Best-match snap of an overnight close ratio to a round split ratio (or its
+    reciprocal) within `tol`; None if nothing matches (not a corporate action).
+    The daily tolerance is TIGHT (3%, vs the backfill's 12%): here the only
+    evidence is one overnight ratio, and a 45% crash (r=0.55) sits within 12%
+    of a 2:1 — measured in testing — while real splits land within ~1-2% of
+    round because both sides are real prints of the same instrument."""
+    best, best_err = None, tol
+    for R in _CA_RATIOS:
+        err_fwd = abs(r * R - 1.0)          # r ~ 1/R  (forward split)
+        if err_fwd < best_err:
+            best, best_err = 1.0 / R, err_fwd
+        err_rev = abs(r / R - 1.0)          # r ~ R    (reverse split)
+        if err_rev < best_err:
+            best, best_err = float(R), err_rev
+    return best
+
+
+def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
+    """Overnight corporate-action handling for the daily append (ports the
+    2022-2026 backfill's convention forward; see
+    hist_backfill_merge._adjust_to_established).
+
+    The served series' basis is 'current as of last write'. When an R:1 split
+    happens overnight, today's raw IEX prints arrive on the NEW basis, so the
+    ENTIRE served history must be rescaled (price x r, volume / r, r = 1/R) or
+    the series gains a permanent R-times discontinuity — the exact latent bug
+    this function closes (before it, daily appends were raw with no CA logic).
+
+    Guards (all measured in testing, see session log 2026-07-13):
+      * dual measurement — a real split re-bases the WHOLE session, so the
+        open-period and late-day ratios must snap to the SAME round ratio; a
+        crash gaps at the open and keeps moving.
+      * 3:1 ambiguity floor — a clean 50% crash that holds all day is
+        numerically identical to a 2:1 split; ratios below 3:1 are alerted
+        with a one-command manual fix (pipeline/manual_split.py), never
+        auto-applied.
+
+    Returns (existing_raw, rescaled: bool). Caller must full-reclean +
+    force-full variables recompute when rescaled (history changed everywhere).
+    """
+    if existing_raw is None or not len(existing_raw) or new_bars.empty:
+        return existing_raw, False
+    prev_last_day = existing_raw["datetime"].dt.normalize().max()
+    prev_close = float(
+        existing_raw.loc[existing_raw["datetime"].dt.normalize() == prev_last_day, "Close"].median())
+    today_close = float(new_bars["Close"].median())
+    if prev_close <= 0 or today_close <= 0:
+        return existing_raw, False
+    r = today_close / prev_close
+    if 1 / 1.4 < r < 1.4:
+        return existing_raw, False          # normal overnight move
+    nb = new_bars.sort_values("datetime")
+    n = len(nb)
+    r_open = float(nb["Close"].head(max(5, n // 6)).median()) / prev_close
+    r_late = float(nb["Close"].tail(max(5, n // 6)).median()) / prev_close
+    snapped = _snap_ca_ratio(r)
+    s_open = _snap_ca_ratio(r_open)
+    s_late = _snap_ca_ratio(r_late)
+    if snapped is None or s_open != snapped or s_late != snapped:
+        stats["ca_alert"] = (f"{ticker}: overnight x{r:.3f} vs {prev_last_day.date()} "
+                             f"(open x{r_open:.3f}, late x{r_late:.3f}) is split-sized but "
+                             "inconsistent/non-round — NOT applied, review")
+        print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        return existing_raw, False
+    R_eff = (1 / snapped) if snapped < 1 else snapped
+    if R_eff < 3:
+        stats["ca_alert"] = (
+            f"{ticker}: consistent {R_eff:.0f}:1 candidate split (x{r:.3f} overnight, "
+            f"stable all day) — BELOW the 3:1 auto-apply floor (2:1 is crash-ambiguous). "
+            f"If confirmed a real split, run: python -m pipeline.manual_split {ticker} {snapped:.6g}")
+        print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        return existing_raw, False
+    rescaled = existing_raw.copy()
+    for c in ("Open", "High", "Low", "Close"):
+        rescaled[c] = (rescaled[c] * snapped).round(6)
+    vol = rescaled["Volume"].to_numpy() / snapped
+    # floor originally-nonzero minutes to >=1 share (reverse split shrinks volume;
+    # clean_bars drops Volume<=0, which would corrupt gap/quality metrics)
+    vol_r = pd.Series(vol).round()
+    vol_r[(rescaled["Volume"] > 0) & (vol_r == 0)] = 1
+    rescaled["Volume"] = vol_r.astype("int64")
+    kind = "forward split" if snapped < 1 else "reverse split"
+    stats["ca_applied"] = f"{ticker}: {R_eff:.0f}:1 {kind} — history rescaled x{snapped:.6g}"
+    print(f"[split_detect] {stats['ca_applied']}", flush=True)
+    return rescaled, True
+
+
 def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = False) -> dict:
     """Merge a single ticker's new bars into R2.
 
     Steps:
       1. Download existing raw parquet
+      1b. Detect overnight split → rescale served history (round CA ratio only)
       2. Append new bars (dedup on datetime)
       3. Upload raw
-      4. Clean → upload clean
+      4. Clean → upload clean (FULL re-clean when history was rescaled)
       5. Aggregate → upload all timeframes (raw + clean)
       6. CSV versions for raw and clean
 
@@ -258,9 +353,15 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
 
     # 1. Download existing raw
     existing_raw = download_parquet(client, "raw", ticker)
+    ca_rescaled = False
     if existing_raw is not None and len(existing_raw) > 0:
         # Drop legacy boolean flags and any other extra columns
         existing_raw = existing_raw[[c for c in STANDARD_COLS if c in existing_raw.columns]]
+        existing_raw["datetime"] = pd.to_datetime(existing_raw["datetime"])
+        if existing_raw["datetime"].dt.tz is not None:
+            existing_raw["datetime"] = existing_raw["datetime"].dt.tz_localize(None)
+        # 1b. overnight corporate action? rescale the served history to today's basis
+        existing_raw, ca_rescaled = _detect_and_apply_split(existing_raw, new_bars, ticker, stats)
         merged_raw = pd.concat([existing_raw, new_bars], ignore_index=True)
     else:
         merged_raw = new_bars
@@ -285,6 +386,10 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             existing_clean["datetime"] = existing_clean["datetime"].dt.tz_localize(None)
         existing_clean = existing_clean[[c for c in STANDARD_COLS if c in existing_clean.columns]]
         is_backfill = new_bars["datetime"].max() < existing_clean["datetime"].max()
+        if ca_rescaled:
+            # history changed basis — the incremental context (old clean tail) is on
+            # the PRE-split basis and would poison the boundary; full re-clean.
+            is_backfill = True
 
     existing_clean_count = len(existing_clean) if existing_clean is not None and not existing_clean.empty else 0
 
@@ -342,7 +447,10 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     #    from the bars already in memory and merged per-ticker into R2.
     for _vver, _vbars in (("raw", merged_raw), ("clean", merged_clean)):
         try:
-            _vs = sync_ticker_variables(client, _vver, ticker, _vbars)
+            # ca_rescaled: the whole history changed basis, so every historical
+            # variables row is stale — full recompute, not just the new day.
+            _vs = sync_ticker_variables(client, _vver, ticker, _vbars,
+                                        force_full=ca_rescaled)
             stats[f"{_vver}_var_rows"] = _vs.get("new_rows", 0)
         except Exception as _ve:  # noqa: BLE001 - variables must never break OHLCV
             print(f"[variables] WARN {ticker} ({_vver}): {_ve}", flush=True)
@@ -480,6 +588,7 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
     total_new_raw = 0
     total_new_clean = 0
     ticker_stats = []  # per-ticker cleaning stats for the log
+    ca_events = []     # (kind, message) corporate-action applications/alerts
     per_ticker = new_bars.groupby("ticker")
     total_tickers = len(per_ticker)
 
@@ -509,6 +618,13 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
                         "clean_bars": data.get("new_clean_bars", 0),
                         "removed": data.get("new_raw_bars", 0) - data.get("new_clean_bars", 0),
                     })
+                    # corporate-action events must reach the daily email, never
+                    # just the run log — an applied rescale rewrote a ticker's
+                    # whole history; an alert needs a human decision.
+                    for k in ("ca_applied", "ca_alert"):
+                        if data.get(k):
+                            ca_events.append(("APPLIED" if k == "ca_applied" else "ALERT",
+                                              data[k]))
                 else:
                     print(f"  {ticker} FAILED: {data}")
 
@@ -522,7 +638,8 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
 
     return {"date": d, "status": "ok", "tickers": tickers_updated,
             "new_bars": len(new_bars), "uploaded_mb": total_uploaded / 1e6,
-            "elapsed_min": (time.time() - day_start) / 60}
+            "elapsed_min": (time.time() - day_start) / 60,
+            "ca_events": ca_events}
 
 
 def read_pipeline_state() -> tuple[Optional[date], List[date]]:
@@ -660,6 +777,16 @@ def main():
         f"{rows}</table>"
         f"<p><strong>Total elapsed:</strong> {elapsed:.1f} minutes</p>"
     )
+    ca_all = [(r["date"], kind, msg) for r in results
+              for kind, msg in r.get("ca_events", [])]
+    if ca_all:
+        body += "<h3>⚠ Corporate actions</h3><ul>"
+        for cd, kind, msg in ca_all:
+            color = "#b45309" if kind == "ALERT" else "#166534"
+            body += f"<li><strong style='color:{color}'>{kind}</strong> [{cd}] {msg}</li>"
+        body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1, "
+                 "stable all day). ALERT = needs review; a confirmed split below the "
+                 "auto floor is applied with <code>pipeline/manual_split.py</code>.</p>")
     if nodata:
         body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
     if deferred:
@@ -671,6 +798,11 @@ def main():
 
     if failures:
         subject = f"Daily update: {len(ok)} OK, {len(failures)} FAILED"
+    elif ca_all:
+        n_app = sum(1 for _, k, _m in ca_all if k == "APPLIED")
+        n_al = len(ca_all) - n_app
+        subject = (f"Daily update OK — ⚠ corporate actions: "
+                   f"{n_app} applied, {n_al} need review")
     elif len(ok) == 1 and not nodata and not deferred:
         subject = f"Daily update OK: {ok[0]['date']} ({ok[0]['tickers']} tickers)"
     elif ok:
