@@ -607,6 +607,10 @@ document.addEventListener('DOMContentLoaded', function () {
   note.innerHTML = 'You&rsquo;re creating your free <strong>ElkassabgiData</strong> account from the ' +
     FAMILY_RETURN.label + ' &mdash; one account works across every library, and you&rsquo;ll get a link back here when you&rsquo;re done.';
   h.parentNode.insertBefore(note, h.nextSibling);
+  // The ticker-search content loads above #register and shifts it, so the
+  // browser's initial hash-scroll lands short. Re-scroll to the form once the
+  // layout settles so a visitor from a family site lands ON the register form.
+  setTimeout(function () { h.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 700);
 });
 let currentUser = null;
 let sessionToken = localStorage.getItem('hfd_session');
