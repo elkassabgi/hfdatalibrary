@@ -1034,16 +1034,17 @@ function verificationEmail(name, token) {
   const link = SITE_URL + '/pages/verify?token=' + token;
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
-      <h2 style="color: #1a2332;">Welcome to the HF Data Library</h2>
+      <h2 style="color: #1a2332;">Welcome to ElkassabgiData</h2>
       <p>Hi ${name},</p>
-      <p>Thank you for registering. Please verify your email address to activate your account and start downloading data.</p>
+      <p>Thank you for creating your free <strong>ElkassabgiData</strong> account. One login and one API key work across the whole family &mdash; the <a href="https://hfdatalibrary.com" style="color: #2563eb;">HF Data Library</a> (1-minute U.S. equities) and the <a href="https://econdatalibrary.com" style="color: #2563eb;">Econ Data Library</a> (global economic &amp; financial data).</p>
+      <p>Please verify your email address to activate your account and start downloading data.</p>
       <p style="text-align: center; margin: 2rem 0;">
         <a href="${link}" style="background: #2563eb; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Verify Email</a>
       </p>
       <p style="font-size: 0.9rem; color: #6b7280;">Or copy this link: ${link}</p>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0;">
-      <p style="font-size: 0.8rem; color: #9ca3af;">HF Data Library — Ahmed Elkassabgi, University of Central Arkansas<br>
-      <a href="https://hfdatalibrary.com" style="color: #2563eb;">hfdatalibrary.com</a></p>
+      <p style="font-size: 0.8rem; color: #9ca3af;">ElkassabgiData &mdash; Ahmed Elkassabgi, University of Central Arkansas<br>
+      <a href="https://elkassabgidata.com" style="color: #2563eb;">elkassabgidata.com</a> &middot; <a href="https://hfdatalibrary.com" style="color: #2563eb;">hfdatalibrary.com</a> &middot; <a href="https://econdatalibrary.com" style="color: #2563eb;">econdatalibrary.com</a></p>
     </div>`;
 }
 
@@ -1432,7 +1433,7 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     const verifyExpires = new Date(Date.now() + 86400000).toISOString(); // 24 hours
     await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
       .bind(user.id, verifyToken, verifyExpires).run();
-    await sendEmail(env, email.toLowerCase(), 'Verify your HF Data Library account', verificationEmail(name, verifyToken));
+    await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
   }
 
   // Send admin notification for every new registration
@@ -1868,7 +1869,7 @@ async function handleResendVerification(request, env, cors) {
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
   await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
     .bind(userId, verifyToken, verifyExpires).run();
-  await sendEmail(env, user.email, 'Verify your HF Data Library account', verificationEmail(user.name, verifyToken));
+  await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
 
   return jsonRes({ message: 'Verification email sent. Check your inbox.' }, 200, cors);
 }
