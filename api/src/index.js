@@ -246,6 +246,13 @@ export default {
       if (path === '/v1/auth/me')
         return await handleMe(request, env, cors);
 
+      // Cross-site SSO: a family site (econ / elkassabgidata) redirects the user
+      // here; we read the first-party hfd_session cookie and bounce back to the
+      // (allow-listed) return URL with the user's key in the fragment, so they
+      // arrive already signed in. Works in every browser (no third-party cookie).
+      if (path === '/v1/auth/sso')
+        return await handleSSO(request, env);
+
       if (path === '/v1/auth/regenerate-key' && request.method === 'POST')
         return await handleRegenerateKey(request, env, cors);
 
@@ -1299,6 +1306,30 @@ async function getSessionUser(request, env) {
 
   if (!session || !session.is_active) return null;
   return session;
+}
+
+// Cross-site SSO: read the first-party hfd_session cookie and redirect back to an
+// allow-listed family origin with the user's api_key in the URL fragment. The
+// fragment is never sent to any server (and econ strips it on arrival); the key
+// is the user's own download key already shown on the account page; and the
+// return-origin allow-list stops the key ever reaching an untrusted site.
+async function handleSSO(request, env) {
+  const ALLOWED_RETURN = [
+    'https://econdatalibrary.com', 'https://www.econdatalibrary.com',
+    'https://elkassabgidata.com', 'https://www.elkassabgidata.com',
+  ];
+  const ret = new URL(request.url).searchParams.get('return') || '';
+  let retUrl;
+  try { retUrl = new URL(ret); } catch (e) { return new Response('bad return url', { status: 400 }); }
+  if (!ALLOWED_RETURN.includes(retUrl.origin)) {
+    return new Response('return origin not allowed', { status: 403 });
+  }
+  const user = await getSessionUser(request, env);
+  const frag = (user && user.api_key)
+    ? 'sso_key=' + encodeURIComponent(user.api_key) + '&sso_name=' + encodeURIComponent(user.name || '')
+    : 'sso_key=none';
+  const dest = retUrl.origin + retUrl.pathname + '#' + frag;
+  return new Response(null, { status: 302, headers: { 'Location': dest, 'Cache-Control': 'no-store' } });
 }
 
 async function getUserByApiKey(request, env) {
