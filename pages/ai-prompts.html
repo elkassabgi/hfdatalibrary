@@ -97,6 +97,27 @@
     .tip-list { padding-left:1.5rem; line-height:1.7; color:var(--gray-700); }
     .tip-list li { margin-bottom:0.5rem; }
     .tip-list code { font-family:var(--font-mono); font-size:0.85em; background:var(--gray-100); padding:0.05em 0.35em; border-radius:3px; }
+    /* MCP installer tabs (same styling as the mcp guide page) */
+    .tabs { display:flex; flex-wrap:wrap; gap:0.5rem; margin:1.5rem 0 0; border-bottom:2px solid var(--gray-200); }
+    .tab-btn { appearance:none; border:none; background:none; font-family:var(--font-sans); font-weight:600; font-size:0.92rem; color:var(--gray-500); padding:0.7rem 1rem; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; transition:color .15s, border-color .15s; }
+    .tab-btn:hover { color:var(--navy); }
+    .tab-btn.active { color:var(--navy); border-bottom-color:var(--gold); }
+    .tab-panel { display:none; padding:1.5rem 0 0; }
+    .tab-panel.active { display:block; animation:fade .2s ease; }
+    @keyframes fade { from { opacity:0; transform:translateY(4px);} to {opacity:1; transform:none;} }
+    .tab-panel h3 { color:var(--navy); margin:0 0 0.25rem; }
+    .tab-panel .req { font-size:0.82rem; color:var(--gray-500); margin:0 0 1rem; }
+    .tab-panel ol { padding-left:1.3rem; line-height:1.7; color:var(--gray-700); }
+    .tab-panel ol li { margin-bottom:0.55rem; }
+    .codeblock { position:relative; margin:0.8rem 0; }
+    .codeblock pre { margin:0; padding:1rem 1.1rem; background:#0b1220; color:#e5e7eb; border-radius:9px; overflow-x:auto; font-family:var(--font-mono); font-size:0.83rem; line-height:1.6; }
+    .codeblock pre .ekey { color:#fbbf24; font-weight:600; }
+    .cfg-copy { position:absolute; top:0.55rem; right:0.55rem; appearance:none; border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.08); color:#e5e7eb; font-family:var(--font-sans); font-weight:600; font-size:0.72rem; padding:0.3rem 0.6rem; border-radius:6px; cursor:pointer; }
+    .cfg-copy:hover { background:rgba(255,255,255,0.18); }
+    .cfg-copy.done { background:#059669; border-color:#059669; color:#fff; }
+    .keybar { background:#fef9ee; border:1px solid #fde68a; border-radius:10px; padding:1rem 1.25rem; margin:1.5rem 0; font-size:0.9rem; color:var(--gray-700); line-height:1.55; }
+    .keybar.signed { background:#ecfdf5; border-color:#a7f3d0; }
+    .keybar strong { color:var(--navy); }
   </style>
 </head>
 <body>
@@ -134,35 +155,120 @@
 <section class="section">
   <div class="container">
 
-    <h2 id="mcp">Skip the code — just ask your AI</h2>
-    <p>Don't want to write curl commands at all? Connect the <strong>ElkassabgiData MCP server</strong> to
-    Claude, Cursor, Gemini, or ChatGPT once, and then ask for data in plain English. Your assistant finds the
-    exact series, downloads it, and hands it back <strong>with the citation and license attached</strong> —
-    across this library and the <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>.</p>
+    <h2 id="mcp">Connect your AI — pick your tool</h2>
+    <p>Connect the <strong>ElkassabgiData MCP server</strong> to Claude, Cursor, Antigravity, or ChatGPT once,
+    and then ask for data in plain English. Your assistant finds the exact series, downloads it, and hands it
+    back <strong>with the citation and license attached</strong> — across this library and the
+    <a href="https://econdatalibrary.com" rel="noopener">Econ Data Library</a>.</p>
 
-    <div style="border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; margin:1.5rem 0; background:#fff;">
-      <div style="background:var(--navy); color:#fff; padding:0.85rem 1.25rem; font-weight:600; font-size:0.95rem;">
-        For example, you could just ask&hellip;
-      </div>
-      <div style="padding:1.25rem;">
-        <div style="background:var(--navy); color:#fff; border-radius:10px; border-bottom-right-radius:2px; padding:0.7rem 1rem; margin:0 0 0.6rem auto; max-width:88%; font-size:0.95rem; line-height:1.5;">
-          &ldquo;How many people live below the poverty line in Poland?&rdquo;
-        </div>
-        <div style="background:var(--gray-50); border:1px solid var(--gray-200); color:var(--gray-800); border-radius:10px; border-bottom-left-radius:2px; padding:0.7rem 1rem; max-width:88%; font-size:0.92rem; line-height:1.55;">
-          &hellip;and the AI searches the catalog, finds the World Bank and PIP poverty series, asks whether you
-          mean Poland's national line or an international benchmark, then downloads it — cited and ready.
-        </div>
-        <p style="margin:1rem 0 0; font-size:0.9rem; color:var(--gray-600);">
-          Same idea for &ldquo;how much does Australia import each year?&rdquo;, &ldquo;pull AAPL 1-minute bars and
-          run an event study,&rdquo; or anything else in the libraries.
-        </p>
-        <a href="mcp" class="btn btn-primary" style="margin-top:1.25rem;">See the full MCP setup guide &rarr;</a>
-        <p style="margin:0.75rem 0 0; font-size:0.85rem; color:var(--gray-500);">
-          Step-by-step setup for Claude, Claude Code, Cursor, Antigravity CLI &amp; ChatGPT — with your personal
-          connect key filled in automatically once you're signed in.
-        </p>
-      </div>
+    <div class="keybar" id="keybar">
+      <strong>Not signed in.</strong> The commands below show <code style="font-family:var(--font-mono);">YOUR_KEY</code> as a placeholder.
+      <a href="download#register">Sign in or get a free key</a> and this page will drop your real key into every command.
     </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="claude">Claude (app)</button>
+      <button class="tab-btn" data-tab="claudecode">Claude Code</button>
+      <button class="tab-btn" data-tab="cursor">Cursor</button>
+      <button class="tab-btn" data-tab="gemini">Antigravity CLI</button>
+      <button class="tab-btn" data-tab="chatgpt">ChatGPT</button>
+    </div>
+
+    <!-- Claude app -->
+    <div class="tab-panel active" id="tab-claude">
+      <h3>Claude — web, desktop &amp; mobile</h3>
+      <p class="req">Works on Free, Pro, Max, Team &amp; Enterprise. (Free plans allow one custom connector.) No install — it's all in Settings.</p>
+      <ol>
+        <li>Open <strong>Settings &rarr; Connectors</strong> (in the Claude app or on claude.ai).</li>
+        <li>Click <strong>Add custom connector</strong>.</li>
+        <li>Name it <em>ElkassabgiData</em> and paste this URL (your key is embedded, so there's nothing else to configure):
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span></pre></div>
+        </li>
+        <li>Click <strong>Add</strong>, then start a chat and ask a data question. Claude will show the ElkassabgiData tools it's using.</li>
+      </ol>
+    </div>
+
+    <!-- Claude Code -->
+    <div class="tab-panel" id="tab-claudecode">
+      <h3>Claude Code (terminal)</h3>
+      <p class="req">One command in your shell. Free to install: <code style="font-family:var(--font-mono);">npm i -g @anthropic-ai/claude-code</code>.</p>
+      <ol>
+        <li>Add the server over HTTP transport:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>claude mcp add --transport http elkassabgidata \
+  "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span>"</pre></div>
+        </li>
+        <li>Prefer a header to keep the key out of the URL? Use this form instead:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>claude mcp add --transport http elkassabgidata \
+  https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp \
+  --header "Authorization: Bearer <span class="ekey">YOUR_KEY</span>"</pre></div>
+        </li>
+        <li>Run <code style="font-family:var(--font-mono);">claude</code> and type <code style="font-family:var(--font-mono);">/mcp</code> to confirm <em>elkassabgidata</em> is connected, then ask away.</li>
+      </ol>
+    </div>
+
+    <!-- Cursor -->
+    <div class="tab-panel" id="tab-cursor">
+      <h3>Cursor</h3>
+      <p class="req">Add a global server in <code style="font-family:var(--font-mono);">~/.cursor/mcp.json</code> (or use <strong>Settings &rarr; Tools &amp; MCP &rarr; New MCP Server</strong>).</p>
+      <ol>
+        <li>Open (or create) <code style="font-family:var(--font-mono);">~/.cursor/mcp.json</code> and add:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>{
+  "mcpServers": {
+    "elkassabgidata": {
+      "url": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
+      "headers": { "Authorization": "Bearer <span class="ekey">YOUR_KEY</span>" }
+    }
+  }
+}</pre></div>
+        </li>
+        <li>Save, then open <strong>Settings &rarr; Tools &amp; MCP</strong> and confirm <em>elkassabgidata</em> shows a green dot.</li>
+        <li>In chat (Agent mode), ask a data question — Cursor will call the tools.</li>
+      </ol>
+    </div>
+
+    <!-- Antigravity CLI (replaced Gemini CLI, retired June 18, 2026) -->
+    <div class="tab-panel" id="tab-gemini">
+      <h3>Antigravity CLI</h3>
+      <p class="req">Google retired Gemini CLI on June 18, 2026 — its replacement is <strong>Antigravity CLI</strong> (the binary is <code style="font-family:var(--font-mono);">agy</code>). MCP servers live in a dedicated <code style="font-family:var(--font-mono);">mcp_config.json</code>, and remote servers use <code style="font-family:var(--font-mono);">serverUrl</code>.</p>
+      <ol>
+        <li>Add the server to <code style="font-family:var(--font-mono);">~/.gemini/antigravity-cli/mcp_config.json</code> (or <code style="font-family:var(--font-mono);">.agents/mcp_config.json</code> inside one project):
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>{
+  "mcpServers": {
+    "elkassabgidata": {
+      "serverUrl": "https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp",
+      "headers": { "Authorization": "Bearer <span class="ekey">YOUR_KEY</span>" }
+    }
+  }
+}</pre></div>
+        </li>
+        <li>Start <code style="font-family:var(--font-mono);">agy</code> and ask it to list its tools — the <code style="font-family:var(--font-mono);">elkassabgidata</code> tools should appear.</li>
+        <li>Ask your question in the CLI.</li>
+      </ol>
+    </div>
+
+    <!-- ChatGPT -->
+    <div class="tab-panel" id="tab-chatgpt">
+      <h3>ChatGPT</h3>
+      <p class="req">Custom MCP connectors live in <strong>Developer Mode</strong> (web). Available on Plus, Pro, Business, Enterprise &amp; Edu.</p>
+      <ol>
+        <li>Go to <strong>Settings &rarr; Connectors &rarr; Advanced</strong> and turn on <strong>Developer Mode</strong>.</li>
+        <li>Back in <strong>Connectors</strong>, add a new remote MCP server / app with this URL:
+          <div class="codeblock"><button class="cfg-copy">Copy</button><pre>https://elkassabgidata-mcp.elkassabgi.workers.dev/mcp?api_key=<span class="ekey">YOUR_KEY</span></pre></div>
+        </li>
+        <li>Save and refresh the connector so it pulls in the tools. In a chat, enable it from the Developer Mode / tools menu and ask your question.</li>
+      </ol>
+    </div>
+
+    <div class="warning-box" style="margin-top:1.5rem;">
+      <strong>Your connect URL and configs contain your real key — treat them like a password.</strong>
+      Don't paste them into shared or public chats or commit them to a public repo. If a key leaks, regenerate it from
+      <a href="account">your account page</a>; the old one revokes instantly.
+    </div>
+
+    <p style="margin:1rem 0 0; font-size:0.9rem; color:var(--gray-600);">
+      New to MCP? <a href="mcp">The beginner guide</a> explains it in plain English, with worked examples
+      (&ldquo;how many people live below the poverty line in Poland?&rdquo;) and troubleshooting.
+    </p>
 
     <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
@@ -533,7 +639,37 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
 </script>
 
 <script>
-// Fill the signed-in user's real API key into every prompt (same as the MCP guide).
+// MCP installer tabs + config copy buttons (same behavior as the MCP guide).
+document.querySelectorAll('.tab-btn').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.tab-btn').forEach(function (x) { x.classList.remove('active'); });
+    document.querySelectorAll('.tab-panel').forEach(function (x) { x.classList.remove('active'); });
+    b.classList.add('active');
+    document.getElementById('tab-' + b.getAttribute('data-tab')).classList.add('active');
+  });
+});
+document.querySelectorAll('.cfg-copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var pre = btn.parentElement.querySelector('pre');
+    if (!pre) return;
+    var t = pre.textContent;
+    var done = function () {
+      btn.classList.add('done'); var o = btn.textContent; btn.textContent = 'Copied';
+      setTimeout(function () { btn.classList.remove('done'); btn.textContent = o; }, 1600);
+    };
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(t).then(done).catch(function () {}); }
+    else {
+      var ta = document.createElement('textarea'); ta.value = t;
+      ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  });
+});
+</script>
+
+<script>
+// Fill the signed-in user's real API key into every MCP config and prompt.
 (function () {
   var token = localStorage.getItem('hfd_session');
   if (!token) return;
@@ -541,7 +677,12 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (u) {
       if (!u || !u.api_key) return;
-      document.querySelectorAll('.prompt-body pre .ekey').forEach(function (el) { el.textContent = u.api_key; });
+      document.querySelectorAll('.ekey').forEach(function (el) { el.textContent = u.api_key; });
+      var kb = document.getElementById('keybar');
+      if (kb) {
+        kb.classList.add('signed');
+        kb.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every command below — just copy and paste.';
+      }
       var note = document.getElementById('key-note');
       if (note) note.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every prompt below &mdash; ' +
         'just copy and paste. Treat these like a password — do not share prompts that contain your key. ' +

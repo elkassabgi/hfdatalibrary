@@ -604,6 +604,10 @@ var FAMILY_RETURN = (function () {
       if (ok.indexOf(u.origin) !== -1) url = u.href;
     } catch (e) { /* malformed return -> fall back to the site origin */ }
   }
+  // #sso_recheck tells the family site's sso.js to re-run its session check on
+  // arrival — the user may have just signed in HERE, after that site's
+  // once-per-session check already ran and cached "signed out".
+  if (url.indexOf('#') === -1) url += '#sso_recheck';
   return { url: url, label: site.label };
 })();
 function familyReturnHtml() {
