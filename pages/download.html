@@ -579,6 +579,35 @@
 
 <script>
 const API = 'https://api.hfdatalibrary.com';
+
+// Family-aware registration: a visitor arriving from another ElkassabgiData site
+// carries ?from=econ / ?from=elkassabgidata. Accounts are shared family-wide, so
+// we acknowledge where they came from and offer a one-click way back afterwards.
+var FAMILY_RETURN = (function () {
+  var f = new URLSearchParams(location.search).get('from');
+  if (f === 'econ') return { url: 'https://econdatalibrary.com', label: 'Econ Data Library' };
+  if (f === 'elkassabgidata') return { url: 'https://elkassabgidata.com', label: 'ElkassabgiData' };
+  return null;
+})();
+function familyReturnHtml() {
+  if (!FAMILY_RETURN) return '';
+  return '<p style="margin:1rem 0 0;"><a href="' + FAMILY_RETURN.url + '" ' +
+    'style="display:inline-block; background:#1a2332; color:#fff; padding:0.6rem 1.2rem; ' +
+    'border-radius:8px; text-decoration:none; font-weight:600;">&larr; Back to ' +
+    FAMILY_RETURN.label + '</a></p>';
+}
+// Drop a note above the register form when they arrive from a family site.
+document.addEventListener('DOMContentLoaded', function () {
+  if (!FAMILY_RETURN) return;
+  var h = document.getElementById('register');
+  if (!h) return;
+  var note = document.createElement('p');
+  note.style.cssText = 'background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; ' +
+    'border-radius:8px; padding:0.75rem 1rem; font-size:0.9rem; margin:0.75rem 0 1rem;';
+  note.innerHTML = 'You&rsquo;re creating your free <strong>ElkassabgiData</strong> account from the ' +
+    FAMILY_RETURN.label + ' &mdash; one account works across every library, and you&rsquo;ll get a link back here when you&rsquo;re done.';
+  h.parentNode.insertBefore(note, h.nextSibling);
+});
 let currentUser = null;
 let sessionToken = localStorage.getItem('hfd_session');
 
@@ -1034,10 +1063,11 @@ async function registerUser() {
       localStorage.setItem('hfd_session', sessionToken);
       result.innerHTML =
         '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.25rem;">' +
-          '<strong style="color:#065f46;">Account created! You are now logged in.</strong>' +
-          '<p style="margin:0.5rem 0 0; font-size:0.9rem;">Your API key (for programmatic access):</p>' +
+          '<strong style="color:#065f46;">Account created!</strong>' +
+          '<p style="margin:0.6rem 0 0; font-size:0.95rem;">&#128231; <strong>Verify your email to start downloading.</strong> We&rsquo;ve sent a verification link &mdash; check your inbox (and spam folder) and click it to activate your account.</p>' +
+          '<p style="margin:0.75rem 0 0; font-size:0.9rem;">Your API key (works across every ElkassabgiData library once your email is verified):</p>' +
           '<code style="display:block; margin-top:0.5rem; padding:0.75rem; background:#fff; border:1px solid #d1d5db; border-radius:4px; font-size:0.95rem; word-break:break-all;">' + data.api_key + '</code>' +
-          '<p style="margin:0.75rem 0 0; font-size:0.8rem; color:#6b7280;">You can now download data from the search above or use the API.</p>' +
+          familyReturnHtml() +
         '</div>';
       checkAuth();
     } else {
