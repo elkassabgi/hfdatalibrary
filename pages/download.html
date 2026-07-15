@@ -584,10 +584,27 @@ const API = 'https://api.hfdatalibrary.com';
 // carries ?from=econ / ?from=elkassabgidata. Accounts are shared family-wide, so
 // we acknowledge where they came from and offer a one-click way back afterwards.
 var FAMILY_RETURN = (function () {
-  var f = new URLSearchParams(location.search).get('from');
-  if (f === 'econ') return { url: 'https://econdatalibrary.com', label: 'Econ Data Library' };
-  if (f === 'elkassabgidata') return { url: 'https://elkassabgidata.com', label: 'ElkassabgiData' };
-  return null;
+  var p = new URLSearchParams(location.search);
+  var sites = {
+    econ: { origin: 'https://econdatalibrary.com', label: 'Econ Data Library' },
+    elkassabgidata: { origin: 'https://elkassabgidata.com', label: 'ElkassabgiData' }
+  };
+  var site = sites[p.get('from')];
+  if (!site) return null;
+  // Optional ?return= carries the exact page the user came from, so "Back"
+  // returns them there (not just the site's homepage). Origin-validated
+  // against the family allow-list so we never send users to a foreign URL.
+  var url = site.origin;
+  var ret = p.get('return');
+  if (ret) {
+    try {
+      var u = new URL(ret);
+      var ok = ['https://econdatalibrary.com', 'https://www.econdatalibrary.com',
+                'https://elkassabgidata.com', 'https://www.elkassabgidata.com'];
+      if (ok.indexOf(u.origin) !== -1) url = u.href;
+    } catch (e) { /* malformed return -> fall back to the site origin */ }
+  }
+  return { url: url, label: site.label };
 })();
 function familyReturnHtml() {
   if (!FAMILY_RETURN) return '';
@@ -605,7 +622,9 @@ document.addEventListener('DOMContentLoaded', function () {
   note.style.cssText = 'background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; ' +
     'border-radius:8px; padding:0.75rem 1rem; font-size:0.9rem; margin:0.75rem 0 1rem;';
   note.innerHTML = 'You&rsquo;re creating your free <strong>ElkassabgiData</strong> account from the ' +
-    FAMILY_RETURN.label + ' &mdash; one account works across every library, and you&rsquo;ll get a link back here when you&rsquo;re done.';
+    FAMILY_RETURN.label + ' &mdash; one account works across every library. ' +
+    '<a href="' + FAMILY_RETURN.url + '" style="font-weight:600; color:#1e40af; white-space:nowrap;">&larr; Back to ' +
+    FAMILY_RETURN.label + '</a>';
   h.parentNode.insertBefore(note, h.nextSibling);
   // The ticker-search content loads asynchronously above #register and keeps
   // shifting it, so a fixed-delay scroll lands short (the form ends up far down
