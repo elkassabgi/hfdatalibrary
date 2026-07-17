@@ -50,24 +50,27 @@ jobs:
           DEV="https://hfdatalibrary-api.elkassabgi.workers.dev"
           code() { curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$@" || echo 000; }
 
+          # Retry each assertion (up to ~60s) so edge propagation of a fresh
+          # deploy + the workers_dev=false route removal can't cause a false red.
+          # assert_eq / assert_ne <label> <expected> <curl-args...>
+          assert() {
+            local mode="$1" label="$2" want="$3"; shift 3
+            local c
+            for i in 1 2 3 4 5 6; do
+              c=$(code "$@")
+              echo "attempt $i: $label -> $c"
+              if { [ "$mode" = eq ] && [ "$c" = "$want" ]; } || \
+                 { [ "$mode" = ne ] && [ "$c" != "$want" ]; }; then return 0; fi
+              sleep 10
+            done
+            echo "FAIL: $label expected ${mode}=${want}, last got $c"; exit 1
+          }
+
           # 1) Custom Domain serves the API (catches a detached custom domain).
-          ok=""
-          for i in 1 2 3 4 5 6; do
-            c=$(code "$API/v1/status")
-            echo "attempt $i: $API/v1/status -> $c"
-            if [ "$c" = "200" ]; then ok=1; break; fi
-            sleep 10
-          done
-          if [ -z "$ok" ]; then echo "FAIL: $API/v1/status did not return 200"; exit 1; fi
-
+          assert eq  "$API/v1/status == 200"                  200 "$API/v1/status"
           # 2) workers.dev bypass is closed (any non-200 = closed).
-          c=$(code "$DEV/")
-          echo "$DEV/ -> $c"
-          if [ "$c" = "200" ]; then echo "FAIL: workers.dev bypass still serves the API"; exit 1; fi
-
+          assert ne  "$DEV/ != 200 (bypass closed)"           200 "$DEV/"
           # 3) §8 cross-site mutation guard is live (403 before auth).
-          c=$(code -X POST -H "Sec-Fetch-Site: cross-site" "$API/v1/auth/logout")
-          echo "cross-site POST /v1/auth/logout -> $c"
-          if [ "$c" != "403" ]; then echo "FAIL: cross-site mutation guard not returning 403 (got $c)"; exit 1; fi
+          assert eq  "cross-site POST logout == 403"          403 -X POST -H "Sec-Fetch-Site: cross-site" "$API/v1/auth/logout"
 
           echo "OK: reachability, bypass closure, and CSRF gate all verified."
