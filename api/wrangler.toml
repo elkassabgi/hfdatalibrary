@@ -24,6 +24,20 @@ binding = "DB"
 database_name = "hfdatalibrary-db"
 database_id = "a396506e-e78a-4978-bc38-883056f98810"
 
+# §18 Durable-Object rate limiter for the IdP token endpoints (Workers Paid).
+# In-memory dual-bucket (IP + account), atomic per instance, OFF D1. Fronts only
+# /authorize + /token/* on accounts.elkassabgidata.com; never gates data routes.
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[migrations]]
+tag = "v1"
+# SQLite-backed DO (Cloudflare's current default): the limiter uses only the
+# KV-style state.storage.get/put API, which works unchanged on this backend, and
+# it deploys without a plan dependency.
+new_sqlite_classes = ["RateLimiterDO"]
+
 # Daily activity digest — 02:00 UTC = 21:00 CDT (summer) / 20:00 CST (winter).
 # Fires scheduled() handler in src/index.js.
 [triggers]

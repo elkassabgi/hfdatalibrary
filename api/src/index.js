@@ -74,6 +74,22 @@ const ACCOUNTS_ALLOW = new Set([
   '/v1/auth/orcid/callback',
 ]);
 
+// §5 M2 token TTLs. SHORT TTLs are written with SQLite datetime() arithmetic,
+// NEVER toISOString() (the 'T' > ' ' lexical-compare bug makes a toISOString
+// expiry validate for ~a full day).
+const EKD_SESSION_DAYS = 30;   // idp_master (ekd_session), 30d sliding
+const EDL_AT_TTL_SEC = 900;    // family access token, 15 min
+const EDL_RT_TTL_HOURS = 24;   // refresh token absolute cap (§18 decision)
+const CODE_TTL_SEC = 60;       // one-time authorization code
+const GESTURE_TTL_SEC = 300;   // consent gesture HMAC token, 5 min
+const RT_GRACE_SEC = 10;       // benign multi-tab refresh race window
+// §18 DO rate-limit ceilings (per minute); log-only shadow for the first soak.
+const AUTHZ_IP_MAX = 120;
+const EXCH_IP_MAX = 120;
+const EXCH_ACCT_MAX = 30;
+const RT_IP_MAX = 240;
+const RT_ACCT_MAX = 60;
+
 // hf-owned origins that legitimately use the first-party hfd_session cookie and
 // may receive credentialed CORS. Every OTHER family origin uses Authorization:
 // Bearer and must NEVER get Access-Control-Allow-Credentials (§8).
@@ -1601,11 +1617,42 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     path.startsWith('/sdk/') ||
     path.startsWith('/.well-known/');
   if (!onAllowlist) return new Response('Not found', { status: 404 });
-  // Surface exists and fail-closes; the IdP logic ships in M2b.
-  return new Response('Not implemented', {
-    status: 501,
-    headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
-  });
+
+  const method = request.method;
+  // Cookieless CORS for the token endpoints (called cross-origin by the SDK).
+  // A registered active family origin gets ACAO=origin, NEVER credentials.
+  const origin = request.headers.get('Origin') || '';
+  const decision = await corsDecision(origin, env);
+  const tokenCors = {
+    'Access-Control-Allow-Origin': decision.allow ? origin : IDP_ORIGIN,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
+  };
+  if (method === 'OPTIONS' && (path === '/token/exchange' || path === '/token/refresh' || path === '/logout')) {
+    return new Response(null, { headers: tokenCors });
+  }
+
+  try {
+    if (path === '/authorize' && method === 'GET') return await handleAuthorizeGet(request, env, url);
+    if (path === '/authorize' && method === 'POST') return await handleAuthorizePost(request, env, ip, ua);
+    if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
+    if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
+    if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
+    if (path === '/v1/auth/google/callback') return await handleAccountsGoogleCallback(request, env, ip, ua, country);
+    if (path === '/v1/auth/orcid/callback') return await handleAccountsOrcidCallback(request, env, ip, ua, country);
+    if (path.startsWith('/sdk/')) return await handleSdkAsset(path);
+    // Allowlisted but not built in this sub-stage (e.g. /.well-known/*): fail closed.
+    return new Response('Not implemented', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+  } catch (err) {
+    // Generic error only — the token endpoints are CORS-readable by family
+    // origins, so never reflect err.message (D1/SQL/schema fragments). Log it
+    // server-side instead.
+    console.error(JSON.stringify({ evt: 'idp_error', path, msg: err && err.message }));
+    return new Response(JSON.stringify({ error: 'idp_error' }), {
+      status: 500, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...tokenCors },
+    });
+  }
 }
 
 // Returns a specific, actionable 401 message explaining WHY auth failed —
@@ -3075,4 +3122,432 @@ function jsonRes(data, status, cors) {
       ...cors
     }
   });
+}
+
+// ══════════════════════════════════════
+// ── Durable Object rate limiter (§18) ──
+// ══════════════════════════════════════
+// One DO instance per bucket:key (idFromName). Fixed-window, in-memory (off D1),
+// atomic within the instance. Fronts ONLY /authorize + /token/* on accounts.*.
+export class RateLimiterDO {
+  constructor(state) {
+    this.state = state;
+  }
+  async fetch(request) {
+    const { limit, windowSec } = await request.json();
+    const now = Date.now();
+    let d = await this.state.storage.get('w');
+    if (!d || now >= d.reset) d = { count: 0, reset: now + windowSec * 1000 };
+    d.count += 1;
+    await this.state.storage.put('w', d);
+    const ok = d.count <= limit;
+    return new Response(
+      JSON.stringify({ ok, retryAfter: Math.max(1, Math.ceil((d.reset - now) / 1000)) }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+
+// Ask the DO whether this (bucket,key) is within `limit` per `windowSec`.
+// SHADOW mode (default) logs a would-be denial but never blocks — flip `enforce`
+// after a soak. Fails OPEN on any DO error (availability > strictness on the
+// login path; abuse is still bounded by the other bucket).
+async function rateLimit(env, bucket, key, limit, windowSec, enforce) {
+  try {
+    const id = env.RATE_LIMITER.idFromName(bucket + ':' + key);
+    const stub = env.RATE_LIMITER.get(id);
+    const res = await stub.fetch('https://ratelimit/', {
+      method: 'POST',
+      body: JSON.stringify({ limit, windowSec }),
+    });
+    const { ok, retryAfter } = await res.json();
+    if (!ok) {
+      console.log(JSON.stringify({ evt: 'rate_limit', bucket, enforce: !!enforce, key: key.slice(0, 24) }));
+      if (enforce) return { ok: false, retryAfter };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: true };
+  }
+}
+
+// ══════════════════════════════════════
+// ── Family SSO M2b-1 — IdP issuer core ──
+// ══════════════════════════════════════
+// The IdP identity, tokens, and issuer endpoints on accounts.elkassabgidata.com.
+// All credentials are stored HASHED at rest (sha256Hex). Short TTLs use SQLite
+// datetime() arithmetic, never toISOString().
+
+function htmlEncode(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function hmacSign(secret, msg) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg));
+  return b64url(new Uint8Array(sig));
+}
+
+// ── ekd_session (idp_master) — the family-wide login. Stored hashed; the raw
+//    value lives only in a host-only HttpOnly cookie on accounts.* ──
+async function getIdpSessionUser(request, env) {
+  const cookie = request.headers.get('cookie') || '';
+  const m = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  const idHash = await sha256Hex(m[1]);
+  const row = await env.DB.prepare(
+    "SELECT u.*, s.id AS session_id, s.kind AS session_kind, s.expires_at AS session_expires_at " +
+    "FROM sessions s JOIN users u ON s.user_id = u.id " +
+    "WHERE s.id = ? AND s.kind = 'idp_master' AND s.expires_at > datetime('now')"
+  ).bind(idHash).first();
+  if (!row || !row.is_active) return null;
+  return row;
+}
+
+async function createIdpSession(env, userId, ip, ua) {
+  const raw = generateToken();
+  const idHash = await sha256Hex(raw);
+  await env.DB.prepare(
+    "INSERT INTO sessions (id, user_id, ip_address, user_agent, expires_at, kind) " +
+    "VALUES (?, ?, ?, ?, datetime('now','+" + EKD_SESSION_DAYS + " days'), 'idp_master')"
+  ).bind(idHash, userId, ip, ua).run();
+  const cookie = 'ekd_session=' + raw + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=' + (EKD_SESSION_DAYS * 86400);
+  return { raw, cookie };
+}
+
+// ── Consent gesture (stateless HMAC, defense-in-depth over SameSite=Lax) ──
+async function mintGestureToken(env, idpSessionHash, clientId, state, codeChallenge) {
+  if (!env.CONSENT_HMAC_SECRET) return '';
+  const expMs = Date.now() + GESTURE_TTL_SEC * 1000;
+  const sig = await hmacSign(env.CONSENT_HMAC_SECRET, idpSessionHash + '.' + clientId + '.' + state + '.' + codeChallenge + '.' + expMs);
+  return sig + '.' + expMs;
+}
+async function verifyGestureToken(env, token, idpSessionHash, clientId, state, codeChallenge) {
+  // No secret configured → gesture is explicitly skipped (relies on SameSite=Lax
+  // + Origin + Sec-Fetch), never fail-open silently.
+  if (!env.CONSENT_HMAC_SECRET) { console.log(JSON.stringify({ evt: 'gesture_skipped_no_secret' })); return true; }
+  if (!token || token.indexOf('.') < 0) return false;
+  const i = token.lastIndexOf('.');
+  const sig = token.slice(0, i);
+  const expMs = parseInt(token.slice(i + 1), 10);
+  if (!expMs || Date.now() > expMs) return false;
+  const expected = await hmacSign(env.CONSENT_HMAC_SECRET, idpSessionHash + '.' + clientId + '.' + state + '.' + codeChallenge + '.' + expMs);
+  return constantTimeEqual(sig, expected);
+}
+
+// ── Family token minting + chain revocation ──
+async function mintFamilyTokens(env, userId, clientOrigin, ip, ua, chain) {
+  const rawAt = generateToken();
+  const atHash = await sha256Hex(rawAt);
+  await env.DB.prepare(
+    "INSERT INTO sessions (id,user_id,ip_address,user_agent,expires_at,kind,audience) " +
+    "VALUES (?,?,?,?,datetime('now','+" + EDL_AT_TTL_SEC + " seconds'),'family_access',?)"
+  ).bind(atHash, userId, ip, ua, clientOrigin).run();
+
+  const rawRt = generateToken();
+  const rtHash = await sha256Hex(rawRt);
+  const chainId = (chain && chain.chainId) || generateToken();
+  const generation = (chain && chain.generation != null) ? chain.generation + 1 : 0;
+  const parentHash = (chain && chain.parentHash) || null;
+  if (chain && chain.absoluteExpiresAt) {
+    await env.DB.prepare(
+      "INSERT INTO sso_refresh_tokens (token_hash,user_id,audience,chain_id,parent_hash,access_hash,generation,used,revoked,absolute_expires_at,expires_at) " +
+      "VALUES (?,?,?,?,?,?,?,0,0,?,?)"
+    ).bind(rtHash, userId, clientOrigin, chainId, parentHash, atHash, generation, chain.absoluteExpiresAt, chain.absoluteExpiresAt).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO sso_refresh_tokens (token_hash,user_id,audience,chain_id,parent_hash,access_hash,generation,used,revoked,absolute_expires_at,expires_at) " +
+      "VALUES (?,?,?,?,?,?,?,0,0,datetime('now','+" + EDL_RT_TTL_HOURS + " hours'),datetime('now','+" + EDL_RT_TTL_HOURS + " hours'))"
+    ).bind(rtHash, userId, clientOrigin, chainId, parentHash, atHash, generation).run();
+  }
+  if (parentHash) {
+    await env.DB.prepare("UPDATE sso_refresh_tokens SET child_hash=? WHERE token_hash=?").bind(rtHash, parentHash).run();
+  }
+  return { access_token: rawAt, refresh_token: rawRt, expires_in: EDL_AT_TTL_SEC, chain_id: chainId, generation };
+}
+
+async function mintFamilyAccessOnly(env, userId, clientOrigin, ip, ua, chain) {
+  const rawAt = generateToken();
+  const atHash = await sha256Hex(rawAt);
+  await env.DB.prepare(
+    "INSERT INTO sessions (id,user_id,ip_address,user_agent,expires_at,kind,audience) " +
+    "VALUES (?,?,?,?,datetime('now','+" + EDL_AT_TTL_SEC + " seconds'),'family_access',?)"
+  ).bind(atHash, userId, ip, ua, clientOrigin).run();
+  // Bookkeeping refresh row (used=1, never handed out) that LINKS this grace-minted
+  // edl_at to the chain via access_hash, so revokeChain's access_hash sweep can
+  // delete it on chain revocation — otherwise a grace edl_at would survive a
+  // reuse-triggered revoke for its full 15-min TTL.
+  if (chain && chain.chainId) {
+    const bookHash = await sha256Hex(generateToken());
+    if (chain.absoluteExpiresAt) {
+      await env.DB.prepare(
+        "INSERT INTO sso_refresh_tokens (token_hash,user_id,audience,chain_id,access_hash,generation,used,revoked,absolute_expires_at,expires_at) " +
+        "VALUES (?,?,?,?,?,?,1,0,?,?)"
+      ).bind(bookHash, userId, clientOrigin, chain.chainId, atHash, (chain.generation || 0), chain.absoluteExpiresAt, chain.absoluteExpiresAt).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO sso_refresh_tokens (token_hash,user_id,audience,chain_id,access_hash,generation,used,revoked,absolute_expires_at,expires_at) " +
+        "VALUES (?,?,?,?,?,?,1,0,datetime('now','+" + EDL_RT_TTL_HOURS + " hours'),datetime('now','+" + EDL_RT_TTL_HOURS + " hours'))"
+      ).bind(bookHash, userId, clientOrigin, chain.chainId, atHash, (chain.generation || 0)).run();
+    }
+  }
+  return { access_token: rawAt, expires_in: EDL_AT_TTL_SEC };
+}
+
+async function revokeChain(env, chainId) {
+  // Delete the linked live family_access sessions (kills live edl_ats now), then
+  // mark the whole refresh chain revoked.
+  await env.DB.prepare(
+    "DELETE FROM sessions WHERE id IN (SELECT access_hash FROM sso_refresh_tokens WHERE chain_id=? AND access_hash IS NOT NULL)"
+  ).bind(chainId).run();
+  await env.DB.prepare("UPDATE sso_refresh_tokens SET revoked=1 WHERE chain_id=?").bind(chainId).run();
+}
+
+function jsonNoStore(obj, status, cors) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(cors || {}) },
+  });
+}
+
+// ── GET /authorize — sign-in prompt (no session) or branded consent (session) ──
+async function handleAuthorizeGet(request, env, url) {
+  const q = url.searchParams;
+  const clientId = q.get('client_id') || '';
+  const redirectUri = q.get('redirect_uri') || '';
+  const state = q.get('state') || '';
+  const codeChallenge = q.get('code_challenge') || '';
+  const method = q.get('code_challenge_method') || '';
+  const responseType = q.get('response_type') || '';
+  const secHeaders = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  };
+  if (responseType !== 'code' || method !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) {
+    return new Response('<h1>Invalid request</h1>', { status: 400, headers: secHeaders });
+  }
+  const reg = await getRegistry(env);
+  const row = reg.get(clientId);
+  if (!row) return new Response('<h1>Unknown application</h1>', { status: 400, headers: secHeaders });
+  if (row.status !== 'active') return new Response('<h1>Application suspended</h1>', { status: 403, headers: secHeaders });
+  if (!row.redirect_exact || row.redirect_exact !== redirectUri) {
+    return new Response('<h1>Redirect URI mismatch</h1>', { status: 400, headers: secHeaders });
+  }
+  const user = await getIdpSessionUser(request, env);
+  if (!user) {
+    return new Response(renderSignInPrompt(row, { clientId, redirectUri, state, codeChallenge, method }), { status: 200, headers: secHeaders });
+  }
+  // signed in → branded consent with a gesture-bound POST form
+  const cookie = request.headers.get('cookie') || '';
+  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
+  const idpSessionHash = cm ? await sha256Hex(cm[1]) : '';
+  const gesture = await mintGestureToken(env, idpSessionHash, clientId, state, codeChallenge);
+  return new Response(renderConsentPage(user, row, { clientId, redirectUri, state, codeChallenge, method }, gesture), { status: 200, headers: secHeaders });
+}
+
+// ── POST /authorize — the ONLY code-minting path for password/cookie users ──
+async function handleAuthorizePost(request, env, ip, ua) {
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response('login_required', { status: 401 });
+  const origin = request.headers.get('Origin') || '';
+  const sfs = request.headers.get('Sec-Fetch-Site');
+  if (origin !== IDP_ORIGIN || (sfs && sfs !== 'same-origin')) {
+    return new Response('cross_site_blocked', { status: 403 });
+  }
+  const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, false);
+  if (!rl.ok) return new Response('rate_limited', { status: 429 });
+
+  const body = await request.formData();
+  const clientId = body.get('client_id') || '';
+  const redirectUri = body.get('redirect_uri') || '';
+  const state = body.get('state') || '';
+  const codeChallenge = body.get('code_challenge') || '';
+  const method = body.get('code_challenge_method') || '';
+  const gesture = body.get('gesture') || '';
+  if (method !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) return new Response('invalid_request', { status: 400 });
+  const reg = await getRegistry(env);
+  const row = reg.get(clientId);
+  if (!row || row.status !== 'active') return new Response('invalid_client', { status: 400 });
+  if (!row.redirect_exact || row.redirect_exact !== redirectUri) return new Response('redirect_mismatch', { status: 400 });
+
+  const cookie = request.headers.get('cookie') || '';
+  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
+  const idpSessionHash = cm ? await sha256Hex(cm[1]) : '';
+  if (!(await verifyGestureToken(env, gesture, idpSessionHash, clientId, state, codeChallenge))) {
+    return new Response('bad_gesture', { status: 403 });
+  }
+  return await mintCodeAndRedirect(env, user.id, clientId, redirectUri, state, codeChallenge, 303);
+}
+
+// Shared code-mint + redirect (used by consent POST and OAuth callbacks).
+async function mintCodeAndRedirect(env, userId, clientOrigin, redirectExact, state, codeChallenge, status) {
+  const rawCode = generateToken();
+  const codeHash = await sha256Hex(rawCode);
+  const consentToken = generateToken();
+  await env.DB.prepare(
+    "INSERT INTO sso_codes (code_hash,user_id,client_origin,state,code_challenge,consent_token,used,expires_at) " +
+    "VALUES (?,?,?,?,?,?,0,datetime('now','+" + CODE_TTL_SEC + " seconds'))"
+  ).bind(codeHash, userId, clientOrigin, state, codeChallenge, consentToken).run();
+  const dest = redirectExact + '#code=' + encodeURIComponent(rawCode) + '&state=' + encodeURIComponent(state);
+  return new Response(null, {
+    status: status || 303,
+    headers: { 'Location': dest, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' },
+  });
+}
+
+// ── POST /token/exchange — cookieless, no-store ──
+async function handleTokenExchange(request, env, ip, ua, cors) {
+  const rlIp = await rateLimit(env, 'exch_ip', ip, EXCH_IP_MAX, 60, false);
+  if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
+  let body;
+  try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
+  const { code, code_verifier, client_origin } = body || {};
+  if (!code || !code_verifier || !client_origin) return jsonNoStore({ error: 'invalid_request' }, 400, cors);
+  const origin = request.headers.get('Origin') || '';
+  if (origin !== client_origin) return jsonNoStore({ error: 'origin_mismatch' }, 403, cors);
+
+  // atomic single-use consume — burns the code regardless of what follows
+  const codeHash = await sha256Hex(code);
+  const claim = await env.DB.prepare(
+    "UPDATE sso_codes SET used=1 WHERE code_hash=? AND used=0 AND expires_at>datetime('now')"
+  ).bind(codeHash).run();
+  if (!claim.meta || claim.meta.changes !== 1) return jsonNoStore({ error: 'invalid_code' }, 400, cors);
+  const row = await env.DB.prepare("SELECT * FROM sso_codes WHERE code_hash=?").bind(codeHash).first();
+  if (!row || row.client_origin !== client_origin || !row.consent_token) return jsonNoStore({ error: 'invalid_code' }, 400, cors);
+  if ((await pkceS256(code_verifier)) !== row.code_challenge) return jsonNoStore({ error: 'invalid_grant' }, 400, cors);
+  const reg = await getRegistry(env);
+  const client = reg.get(client_origin);
+  if (!client || client.status !== 'active') return jsonNoStore({ error: 'invalid_client' }, 400, cors);
+  const u = await env.DB.prepare("SELECT id,is_active FROM users WHERE id=?").bind(row.user_id).first();
+  if (!u || !u.is_active) return jsonNoStore({ error: 'user_inactive' }, 401, cors);
+
+  const rlAcct = await rateLimit(env, 'exch_acct', String(row.user_id), EXCH_ACCT_MAX, 60, false);
+  if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
+  const t = await mintFamilyTokens(env, row.user_id, client_origin, ip, ua, null);
+  return jsonNoStore({ access_token: t.access_token, refresh_token: t.refresh_token, token_type: 'Bearer', expires_in: t.expires_in }, 200, cors);
+}
+
+// ── POST /token/refresh — rotating single-use, reuse→chain revoke ──
+async function handleTokenRefresh(request, env, ip, ua, cors) {
+  const rlIp = await rateLimit(env, 'rt_ip', ip, RT_IP_MAX, 60, false);
+  if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
+  let body;
+  try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
+  const { refresh_token, client_origin } = body || {};
+  if (!refresh_token || !client_origin) return jsonNoStore({ error: 'invalid_request' }, 400, cors);
+  const origin = request.headers.get('Origin') || '';
+  if (origin !== client_origin) return jsonNoStore({ error: 'origin_mismatch' }, 403, cors);
+
+  const rtHash = await sha256Hex(refresh_token);
+  // Read + validate BEFORE any state mutation. audience is immutable (written only
+  // at INSERT), so a pre-claim read is TOCTOU-safe and a wrong-audience/absent
+  // token becomes a pure no-op — it can never BURN a valid token (forced-logout).
+  const rt = await env.DB.prepare("SELECT * FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
+  if (!rt) return jsonNoStore({ error: 'invalid_grant' }, 401, cors);
+  if (rt.audience !== client_origin) return jsonNoStore({ error: 'origin_mismatch' }, 403, cors);
+
+  // Atomic single-use rotation claim (the used=0 predicate is the sole atomicity point).
+  const claim = await env.DB.prepare(
+    "UPDATE sso_refresh_tokens SET used=1, used_at=datetime('now'), grace_until=datetime('now','+" + RT_GRACE_SEC + " seconds') " +
+    "WHERE token_hash=? AND used=0 AND revoked=0 AND absolute_expires_at>datetime('now')"
+  ).bind(rtHash).run();
+
+  if (claim.meta && claim.meta.changes === 1) {
+    const rlAcct = await rateLimit(env, 'rt_acct', String(rt.user_id), RT_ACCT_MAX, 60, false);
+    if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
+    const t = await mintFamilyTokens(env, rt.user_id, client_origin, ip, ua, {
+      chainId: rt.chain_id, generation: rt.generation, parentHash: rtHash, absoluteExpiresAt: rt.absolute_expires_at,
+    });
+    return jsonNoStore({ access_token: t.access_token, refresh_token: t.refresh_token, token_type: 'Bearer', expires_in: t.expires_in }, 200, cors);
+  }
+
+  // Claim failed — re-read the CURRENT state to classify (a concurrent claim may
+  // have won). Three cases: (a) still used=0/revoked=0 → the only failing predicate
+  // was the absolute cap → benign idle expiry, NOT reuse (do not revoke). (b) inside
+  // the grace window → benign multi-tab race → a fresh edl_at only (linked to the
+  // chain so revokeChain can reach it). (c) otherwise → genuine reuse → revoke chain.
+  const cur = await env.DB.prepare("SELECT used,revoked,grace_until FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
+  if (!cur) return jsonNoStore({ error: 'invalid_grant' }, 401, cors);
+  if (cur.used === 0 && cur.revoked === 0) {
+    return jsonNoStore({ error: 'invalid_grant' }, 401, cors);
+  }
+  const inGrace = await env.DB.prepare(
+    "SELECT 1 FROM sso_refresh_tokens WHERE token_hash=? AND revoked=0 AND grace_until>datetime('now')"
+  ).bind(rtHash).first();
+  if (inGrace) {
+    const a = await mintFamilyAccessOnly(env, rt.user_id, client_origin, ip, ua, {
+      chainId: rt.chain_id, generation: rt.generation, absoluteExpiresAt: rt.absolute_expires_at,
+    });
+    return jsonNoStore({ access_token: a.access_token, token_type: 'Bearer', expires_in: a.expires_in }, 200, cors);
+  }
+  await revokeChain(env, rt.chain_id);
+  return jsonNoStore({ error: 'token_reuse' }, 401, cors);
+}
+
+// ── POST /logout ──
+async function handleAccountsLogout(request, env, cors) {
+  let body = {};
+  try { body = await request.json(); } catch { /* optional */ }
+  const cookie = request.headers.get('cookie') || '';
+  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
+  if (cm) {
+    const idHash = await sha256Hex(cm[1]);
+    await env.DB.prepare("DELETE FROM sessions WHERE id=? AND kind='idp_master'").bind(idHash).run();
+  }
+  if (body && body.refresh_token) {
+    const rtHash = await sha256Hex(body.refresh_token);
+    const rt = await env.DB.prepare("SELECT chain_id FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
+    if (rt) await revokeChain(env, rt.chain_id);
+  }
+  const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': clear, ...cors },
+  });
+}
+
+// ── Branded pages (theme is an enumerated token; brand/name HTML-encoded) ──
+function renderConsentPage(user, row, p, gesture) {
+  const brand = htmlEncode(row.brand_name || 'ElkassabgiData');
+  const name = htmlEncode(user.name || user.email || 'your account');
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Continue to ' + brand + '</title><style>body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}' +
+    '.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:2rem;max-width:380px;text-align:center}' +
+    'h1{font-size:1.1rem;color:#d4a843}button{background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.7rem 1.4rem;font-weight:700;font-size:1rem;cursor:pointer;width:100%}' +
+    'p{color:#9ca3af;font-size:.9rem}</style></head><body><div class="card"><h1>Continue to ' + brand + '</h1>' +
+    '<p>You are signed in to ElkassabgiData as<br><strong style="color:#e5e7eb">' + name + '</strong></p>' +
+    '<form method="POST" action="/authorize">' +
+    '<input type="hidden" name="client_id" value="' + htmlEncode(p.clientId) + '">' +
+    '<input type="hidden" name="redirect_uri" value="' + htmlEncode(p.redirectUri) + '">' +
+    '<input type="hidden" name="state" value="' + htmlEncode(p.state) + '">' +
+    '<input type="hidden" name="code_challenge" value="' + htmlEncode(p.codeChallenge) + '">' +
+    '<input type="hidden" name="code_challenge_method" value="S256">' +
+    '<input type="hidden" name="gesture" value="' + htmlEncode(gesture) + '">' +
+    '<button type="submit">Continue as ' + name + '</button></form></div></body></html>';
+}
+
+function renderSignInPrompt(row, p) {
+  const brand = htmlEncode(row.brand_name || 'ElkassabgiData');
+  // M2b-2 builds the real login/register surface here; for now, a prompt.
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Sign in to ElkassabgiData</title><style>body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}' +
+    '.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:2rem;max-width:380px;text-align:center}h1{font-size:1.1rem;color:#d4a843}p{color:#9ca3af}</style></head><body>' +
+    '<div class="card"><h1>Sign in to continue to ' + brand + '</h1><p>One ElkassabgiData account works across every library. Sign-in and registration arrive here shortly.</p></div></body></html>';
+}
+
+// ── Stubs for the sub-stages that follow (fail-closed 501 until built) ──
+async function handleAccountsGoogleCallback(request, env, ip, ua, country) {
+  return new Response('Not implemented (M2b-2)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+}
+async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
+  return new Response('Not implemented (M2b-2)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+}
+async function handleSdkAsset(path) {
+  return new Response('Not implemented (M2b-3)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
 }
