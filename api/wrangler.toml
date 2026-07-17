@@ -2,6 +2,16 @@ name = "hfdatalibrary-api"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 
+# §6/§14 fail-closed IaC: disable the *.workers.dev subdomain so a routine
+# `wrangler deploy` cannot silently reopen the bypass host. The worker keeps
+# serving on its dashboard-managed Custom Domain api.hfdatalibrary.com (Custom
+# Domains are independent of workers_dev and of [[routes]]). The in-code
+# hostname gate (src/index.js) is the primary, deploy-token-agnostic enforcement;
+# this is the platform-level belt. [[routes]] is intentionally NOT declared — the
+# CI deploy token lacks Zone Workers Routes permission and the Custom Domain
+# already routes api.hfdatalibrary.com.
+workers_dev = false
+
 [vars]
 CORS_ORIGIN = "https://hfdatalibrary.com"
 
@@ -19,7 +29,13 @@ database_id = "a396506e-e78a-4978-bc38-883056f98810"
 [triggers]
 crons = ["0 2 * * *"]
 
-# Route will be configured via dashboard — token needs Zone Workers Routes permission
+# REACHABILITY DEPENDENCY (out of IaC): with workers_dev=false and no [[routes]],
+# the worker is reachable ONLY via the dashboard-managed Custom Domain
+# api.hfdatalibrary.com. If that domain is ever detached, `wrangler deploy` still
+# exits 0 while the worker has zero reachable hosts. The deploy.yml post-deploy
+# smoke step (api.hfdatalibrary.com/v1/status == 200) guards against this.
+# [[routes]] stays commented: the CI deploy token lacks Zone Workers Routes
+# permission, and the Custom Domain already routes api.hfdatalibrary.com.
 # [[routes]]
 # pattern = "api.hfdatalibrary.com/*"
 # zone_name = "hfdatalibrary.com"

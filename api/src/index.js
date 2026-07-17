@@ -46,6 +46,98 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8080', // for local dev
 ];
 
+// ── Family SSO M1 scaffolding (AUTH_SSO_PLAN v3) ────────────────────────────
+// §6 fail-closed hostname gate. ONLY these hosts serve; anything else — most
+// importantly the default *.workers.dev bypass — 404s before any routing.
+// (accounts.elkassabgidata.com is added in M2.) Loopback is kept for `wrangler
+// dev`; Cloudflare never routes a request with hostname 'localhost' to the
+// deployed worker, so this is not a production bypass.
+const HOSTNAME_ALLOW = new Set([
+  'api.hfdatalibrary.com',
+  'localhost',
+  '127.0.0.1',
+]);
+
+// hf-owned origins that legitimately use the first-party hfd_session cookie and
+// may receive credentialed CORS. Every OTHER family origin uses Authorization:
+// Bearer and must NEVER get Access-Control-Allow-Credentials (§8).
+const HF_OWNED_ORIGINS = new Set([
+  'https://hfdatalibrary.com',
+  'https://www.hfdatalibrary.com',
+  'http://localhost:8080',
+]);
+
+// §8 CSRF surface: account-mutation / admin routes that must reject cross-site
+// browser requests regardless of CORS (a cross-site fetch still EXECUTES
+// server-side even when the browser blocks reading the response). Matched by
+// exact path or, for admin, prefix. Non-browser clients (no Sec-Fetch-Site
+// header) and same-origin/same-site requests are allowed.
+const MUTATION_GUARD_EXACT = new Set([
+  '/v1/auth/regenerate-key',
+  '/v1/auth/delete',
+  '/v1/auth/update-profile',
+  '/v1/auth/change-password',
+  '/v1/auth/2fa/setup',
+  '/v1/auth/2fa/enable',
+  '/v1/auth/2fa/disable',
+  // Other authenticated state-changing POSTs. Cross-site is already blocked
+  // upstream (hfd_session is SameSite=Lax; the Bearer / X-API-Key path is
+  // unforgeable cross-site), so these are uniform defense-in-depth — legit
+  // same-site calls send Sec-Fetch-Site: same-site and pass.
+  '/v1/auth/logout',
+  '/v1/auth/orcid/link-init',
+  '/v1/newsletter/subscribe',
+  '/v1/newsletter/unsubscribe-toggle',
+]);
+function isMutationGuarded(path) {
+  return MUTATION_GUARD_EXACT.has(path) || path.startsWith('/v1/admin/');
+}
+// A browser labels genuinely cross-site requests 'cross-site'. same-origin,
+// same-site (hfdatalibrary.com → api.hfdatalibrary.com), and absent (non-browser
+// API clients) are all allowed.
+function isCrossSiteRequest(request) {
+  return request.headers.get('Sec-Fetch-Site') === 'cross-site';
+}
+
+// §9 client registry, cached ~60s per isolate (branding/CORS-allowlist lookups
+// are not urgency-critical; suspend/revocation gets a fast channel in M2).
+let _registryCache = null;
+let _registryCacheAt = 0;
+async function getRegistry(env) {
+  const now = Date.now();
+  if (_registryCache && (now - _registryCacheAt) < 60000) return _registryCache;
+  try {
+    const { results } = await env.DB.prepare(
+      'SELECT origin, brand_name, logo_url, theme_json, redirect_exact, status FROM sso_clients'
+    ).all();
+    _registryCache = new Map((results || []).map((r) => [r.origin, r]));
+    _registryCacheAt = now;
+  } catch (e) {
+    // Fail closed: an empty registry grants nothing (never throws into routing).
+    // NOTE: intentionally does NOT stamp _registryCacheAt, so a cold isolate
+    // retries D1 on the next request instead of pinning an empty map for 60s.
+    // Harmless in M1 (this result only feeds the shadow divergence log, never
+    // the live response); before the enforcement flip, add a short negative-cache
+    // window here so an ongoing D1 outage isn't re-hit on every request.
+    if (!_registryCache) _registryCache = new Map();
+  }
+  return _registryCache;
+}
+
+// The registry-driven CORS decision. NOT wired into the live response in M1
+// (shadow mode) — computed and compared only. At the post-soak enforcement flip
+// it replaces the ALLOWED_ORIGINS logic. Rules: hf-owned origins → allow +
+// credentials; other registered active origins → allow, NEVER credentials;
+// everything else → deny.
+async function corsDecision(origin, env) {
+  if (!origin) return { allow: false, credentials: false };
+  if (HF_OWNED_ORIGINS.has(origin)) return { allow: true, credentials: true };
+  const reg = await getRegistry(env);
+  const row = reg.get(origin);
+  if (row && row.status === 'active') return { allow: true, credentials: false };
+  return { allow: false, credentials: false };
+}
+
 // Country name -> ISO 3166-1 alpha-2 code. Users register by typing the
 // country, but the world map (Google GeoChart) and flag CDN both want ISO-2.
 // Keys are lowercased; lookup via normalizeCountry() handles both directions.
@@ -207,6 +299,12 @@ export default {
     const ua = request.headers.get('user-agent') || 'unknown';
     const country = request.headers.get('cf-ipcountry') || 'unknown';
 
+    // §6 fail-closed hostname gate — before any routing. Only HOSTNAME_ALLOW
+    // hosts serve; the *.workers.dev bypass and every other host 404.
+    if (!HOSTNAME_ALLOW.has(url.hostname)) {
+      return new Response('Not found', { status: 404 });
+    }
+
     const origin = request.headers.get('Origin') || '';
     const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'https://hfdatalibrary.com';
     const cors = {
@@ -217,6 +315,31 @@ export default {
       'Access-Control-Max-Age': '86400',
       'Vary': 'Origin',
     };
+
+    // §8/§9 shadow mode: compute the registry-driven CORS decision and LOG any
+    // divergence from the current ALLOWED_ORIGINS behavior. The live `cors`
+    // object above is unchanged — this only surfaces what enforcement WOULD do,
+    // so the post-soak flip is a known quantity. Never throws into routing.
+    if (origin) {
+      try {
+        const decision = await corsDecision(origin, env);
+        const oldAllow = ALLOWED_ORIGINS.includes(origin);
+        if (decision.allow !== oldAllow) {
+          console.log(JSON.stringify({
+            evt: 'cors_shadow_divergence', origin,
+            old_allow: oldAllow, new_allow: decision.allow,
+            new_credentials: decision.credentials, path,
+          }));
+        }
+      } catch (e) { /* shadow logging must never affect the response */ }
+    }
+
+    // §8 anti-CSRF: reject genuinely cross-site browser requests to
+    // mutation/admin routes (they execute server-side even when CORS blocks the
+    // response read). Same-origin, same-site, and non-browser clients pass.
+    if (isMutationGuarded(path) && isCrossSiteRequest(request)) {
+      return jsonRes({ error: 'Cross-site request blocked' }, 403, cors);
+    }
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: cors });
@@ -675,7 +798,7 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
     status: 302,
     headers: {
       'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
-      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`
+      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`
     }
   });
 }
@@ -782,7 +905,7 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     status: 302,
     headers: {
       'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
-      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`
+      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`
     }
   });
 }
@@ -1300,11 +1423,25 @@ async function getSessionUser(request, env) {
 
   if (!sessionId) return null;
 
+  // §7 scope-aware, collision-free lookup. Explicit aliases — NEVER SELECT
+  // s.*, u.* (which flattens so `session.id` becomes the USER id). u.* supplies
+  // the user fields (user.id = the user's id); `user_id` is preserved for the
+  // ~20 handlers that read it; the session's own id/kind/audience/expiry are
+  // exposed under distinct session_* names. The `kind IS NULL OR kind = 'web'`
+  // predicate means family_access / idp_master tokens (minted from M2) can never
+  // authenticate a full/web session here — structural, not by convention.
   const session = await env.DB.prepare(
-    'SELECT s.*, u.* FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ? AND s.expires_at > datetime("now")'
+    "SELECT u.*, s.user_id AS user_id, s.id AS session_id, " +
+    "s.kind AS session_kind, s.audience AS session_audience, " +
+    "s.expires_at AS session_expires_at " +
+    "FROM sessions s JOIN users u ON s.user_id = u.id " +
+    "WHERE s.id = ? AND s.expires_at > datetime('now') " +
+    "AND (s.kind IS NULL OR s.kind = 'web')"
   ).bind(sessionId).first();
 
   if (!session || !session.is_active) return null;
+  // Defense in depth: assert kind even though the query already filters it.
+  if (session.session_kind && session.session_kind !== 'web') return null;
   return session;
 }
 
@@ -1487,7 +1624,7 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     email_verified: isAdmin ? true : false
   }, 201, cors);
 
-  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`);
+  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
   return res;
 }
 
@@ -1548,7 +1685,7 @@ async function handleLogin(request, env, cors, ip, ua, country) {
     session: sessionId
   }, 200, cors);
 
-  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`);
+  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
   return res;
 }
 
@@ -1559,7 +1696,7 @@ async function handleLogout(request, env, cors) {
     await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(match[1]).run();
   }
   const res = jsonRes({ message: 'Logged out' }, 200, cors);
-  res.headers.set('Set-Cookie', 'hfd_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0');
+  res.headers.set('Set-Cookie', 'hfd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
   return res;
 }
 
@@ -1699,7 +1836,7 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
     session: sessionId
   }, 200, cors);
 
-  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_DAYS * 86400}`);
+  res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
   return res;
 }
 
@@ -1775,7 +1912,7 @@ async function handleDeleteAccount(request, env, cors) {
   } catch (e) {}
 
   const res = jsonRes({ message: 'Account deleted. Goodbye.' }, 200, cors);
-  res.headers.set('Set-Cookie', 'hfd_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0');
+  res.headers.set('Set-Cookie', 'hfd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
   return res;
 }
 
@@ -1845,8 +1982,14 @@ async function handleChangePassword(request, env, cors) {
   const newHash = await hashPassword(new_password);
   await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, userId).run();
 
-  // Kill all other sessions as a security measure
-  const currentSession = user.id; // session id
+  // Kill all other sessions as a security measure.
+  // NOTE (pre-existing behavior, intentionally unchanged in M1): `user.id` is
+  // the USER id, not the session id (the real session id is now `user.session_id`
+  // after the §7 rewrite). Because sessions.id is a TEXT uuid, `id != <userId>`
+  // is always true, so this currently logs the user out on ALL devices including
+  // the current one. Fixing it (use user.session_id) is a deliberate behavior
+  // change tracked as a separate post-M1 task, not part of this no-op milestone.
+  const currentSession = user.id;
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, currentSession).run();
 
   return jsonRes({ message: 'Password changed. Other sessions have been logged out.' }, 200, cors);
