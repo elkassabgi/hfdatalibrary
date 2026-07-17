@@ -67,9 +67,14 @@ const ACCOUNTS_HOST = 'accounts.elkassabgidata.com';
 const IDP_ORIGIN = 'https://accounts.elkassabgidata.com';
 const ACCOUNTS_ALLOW = new Set([
   '/authorize',
+  '/login',
+  '/login/2fa',
+  '/register',
   '/token/exchange',
   '/token/refresh',
   '/logout',
+  '/v1/auth/google/start',
+  '/v1/auth/orcid/start',
   '/v1/auth/google/callback',
   '/v1/auth/orcid/callback',
 ]);
@@ -323,6 +328,7 @@ const RATE_LIMITS = {
   'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
+  'api:2fa': { max: 5, window: 600 },           // 5 TOTP guesses per pending token (IP-independent brute-force cap)
 };
 
 export default {
@@ -1636,13 +1642,19 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
   try {
     if (path === '/authorize' && method === 'GET') return await handleAuthorizeGet(request, env, url);
     if (path === '/authorize' && method === 'POST') return await handleAuthorizePost(request, env, ip, ua);
+    if (path === '/login' && method === 'POST') return await handleAccountsLogin(request, env, ip, ua, country);
+    if (path === '/login/2fa' && method === 'POST') return await handleAccounts2faVerify(request, env, ip, ua, country);
+    if (path === '/register' && method === 'POST') return await handleAccountsRegister(request, env, ip, ua, country);
+    // GET on a form path (no body) → 404 (the allowlist is method-agnostic).
+    if (path === '/login' || path === '/login/2fa' || path === '/register') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
     if (path === '/v1/auth/google/callback') return await handleAccountsGoogleCallback(request, env, ip, ua, country);
     if (path === '/v1/auth/orcid/callback') return await handleAccountsOrcidCallback(request, env, ip, ua, country);
     if (path.startsWith('/sdk/')) return await handleSdkAsset(path);
-    // Allowlisted but not built in this sub-stage (e.g. /.well-known/*): fail closed.
+    // Allowlisted but not built in this sub-stage (e.g. /v1/auth/*/start until
+    // M2b-2b, /.well-known/*): fail closed.
     return new Response('Not implemented', { status: 501, headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     // Generic error only — the token endpoints are CORS-readable by family
@@ -1989,6 +2001,15 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
 
   const { pending_token, code } = body;
   if (!pending_token || !code) return jsonRes({ error: 'Required: pending_token, code' }, 400, cors);
+
+  // Cap TOTP guesses per pending token (IP-independent brute-force cap). Same
+  // hardening as the accounts.* /login/2fa endpoint — kept in sync so the two
+  // 2FA surfaces don't drift.
+  const rl2 = await checkRateLimit(env, 'tfa:' + pending_token, 'api:2fa');
+  if (!rl2.ok) {
+    await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pending_token).run();
+    return jsonRes({ error: 'Too many attempts. Please log in again.' }, 429, cors);
+  }
 
   const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND expires_at > datetime("now")').bind(pending_token).first();
   if (!pending) return jsonRes({ error: 'Invalid or expired login attempt. Please log in again.' }, 401, cors);
@@ -3342,7 +3363,13 @@ async function handleAuthorizeGet(request, env, url) {
   }
   const user = await getIdpSessionUser(request, env);
   if (!user) {
-    return new Response(renderSignInPrompt(row, { clientId, redirectUri, state, codeChallenge, method }), { status: 200, headers: secHeaders });
+    // No IdP session → the real login/register auth page (M2b-2a). Uses the
+    // Turnstile-permitting CSP; on submit, /login or /register sets ekd_session
+    // and 303s back with the code (the auth submission is the consent).
+    return new Response(
+      renderAuthPage(row, { clientId, redirectUri, state, codeChallenge, method }, { tab: 'login', error: '', loginEmail: '' }),
+      { status: 200, headers: authPageHeaders }
+    );
   }
   // signed in → branded consent with a gesture-bound POST form
   const cookie = request.headers.get('cookie') || '';
@@ -3364,7 +3391,8 @@ async function handleAuthorizePost(request, env, ip, ua) {
   const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, false);
   if (!rl.ok) return new Response('rate_limited', { status: 429 });
 
-  const body = await request.formData();
+  let body;
+  try { body = await request.formData(); } catch { return new Response('Bad request', { status: 400, headers: { 'Cache-Control': 'no-store' } }); }
   const clientId = body.get('client_id') || '';
   const redirectUri = body.get('redirect_uri') || '';
   const state = body.get('state') || '';
@@ -3550,4 +3578,281 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
 }
 async function handleSdkAsset(path) {
   return new Response('Not implemented (M2b-3)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+}
+
+// ══════════════════════════════════════
+// ── Family SSO M2b-2a — IdP account surface (auth page + login + register) ──
+// ══════════════════════════════════════
+// Server-rendered, same-origin forms on accounts.elkassabgidata.com. On a
+// successful login/register/2FA we set ekd_session (createIdpSession) and 303 to
+// the family callback with the code — the auth submission IS the consent gesture
+// (a RETURNING cookie user still gets the M2b-1 "Continue as X" gesture page).
+// The api.* handleRegister/handleLogin stay byte-for-byte (M3 policy); these
+// duplicate their sequences (see AUTH_SSO_BUILD_LOG.md duplication-drift note).
+
+const NEWSLETTER_LISTS = [
+  { key: 'hf',     label: 'HF Data Library — 1-minute U.S. equities' },
+  { key: 'econ',   label: 'Econ Data Library — global economic & financial data' },
+  { key: 'ip',     label: 'IP / Patent Data Library' },
+  { key: 'family', label: 'ElkassabgiData family updates' },
+];
+const NEWSLETTER_KEYS = new Set(NEWSLETTER_LISTS.map((l) => l.key));
+
+const authPageHeaders = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Content-Security-Policy':
+    "default-src 'none'; " +
+    "script-src https://challenges.cloudflare.com; " +
+    "frame-src https://challenges.cloudflare.com; " +
+    "connect-src https://challenges.cloudflare.com; " +
+    "style-src 'unsafe-inline'; img-src https: data:; " +
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+};
+
+// Same-origin form guard (copied from handleAuthorizePost). The login/register
+// forms are same-origin (form-action 'self'); a cross-site POST is rejected.
+function assertSameOriginForm(request) {
+  const origin = request.headers.get('Origin') || '';
+  const sfs = request.headers.get('Sec-Fetch-Site');
+  return !(origin !== IDP_ORIGIN || (sfs && sfs !== 'same-origin'));
+}
+
+// Re-validate the authorize params on EVERY POST (the GET-time check does not
+// bind a tampered hidden field). Returns {ok, row, status}.
+async function validateAuthorizeParams(env, p) {
+  if (p.method !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(p.codeChallenge || '')) return { ok: false, status: 400 };
+  const reg = await getRegistry(env);
+  const row = reg.get(p.clientId);
+  if (!row) return { ok: false, status: 400 };
+  if (row.status !== 'active') return { ok: false, status: 403 };
+  if (!row.redirect_exact || row.redirect_exact !== p.redirectUri) return { ok: false, status: 400 };
+  return { ok: true, row, status: 200 };
+}
+
+function paramsFromForm(body) {
+  return {
+    clientId: body.get('client_id') || '',
+    redirectUri: body.get('redirect_uri') || '',
+    state: body.get('state') || '',
+    codeChallenge: body.get('code_challenge') || '',
+    method: body.get('code_challenge_method') || '',
+  };
+}
+
+function parseNewsletter(body) {
+  const prefs = body.getAll('newsletter').filter((k) => NEWSLETTER_KEYS.has(k));
+  return { prefs, hfSelected: prefs.includes('hf') };
+}
+async function applyNewsletterPrefs(env, userId, prefs) {
+  for (const key of prefs) {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO newsletter_prefs (user_id, list_key, subscribed, created_at) VALUES (?, ?, 1, datetime('now'))"
+    ).bind(userId, key).run();
+  }
+}
+
+// Shared success tail: set ekd_session + 303 to the family callback with the code.
+async function loginAndRedirect(env, userId, ip, ua, p) {
+  const idp = await createIdpSession(env, userId, ip, ua);
+  const resp = await mintCodeAndRedirect(env, userId, p.clientId, p.row.redirect_exact, p.state, p.codeChallenge, 303);
+  resp.headers.append('Set-Cookie', idp.cookie);
+  return resp;
+}
+
+// ── Auth page (login/register tabs) + 2FA page ──
+function hiddenAuthParams(p) {
+  return '<input type="hidden" name="client_id" value="' + htmlEncode(p.clientId) + '">' +
+    '<input type="hidden" name="redirect_uri" value="' + htmlEncode(p.redirectUri) + '">' +
+    '<input type="hidden" name="state" value="' + htmlEncode(p.state) + '">' +
+    '<input type="hidden" name="code_challenge" value="' + htmlEncode(p.codeChallenge) + '">' +
+    '<input type="hidden" name="code_challenge_method" value="S256">';
+}
+
+function renderAuthPage(row, p, opts) {
+  opts = opts || {};
+  const brand = htmlEncode(row.brand_name || 'ElkassabgiData');
+  const err = opts.error ? '<div class="err">' + htmlEncode(opts.error) + '</div>' : '';
+  const em = htmlEncode(opts.loginEmail || '');
+  const loginChecked = opts.tab === 'register' ? '' : 'checked';
+  const regChecked = opts.tab === 'register' ? 'checked' : '';
+  const oauthQ = 'client_id=' + encodeURIComponent(p.clientId) + '&redirect_uri=' + encodeURIComponent(p.redirectUri) +
+    '&state=' + encodeURIComponent(p.state) + '&code_challenge=' + encodeURIComponent(p.codeChallenge) +
+    '&code_challenge_method=S256&response_type=code';
+  const news = NEWSLETTER_LISTS.map((l) =>
+    '<label class="nl"><input type="checkbox" name="newsletter" value="' + l.key + '"' + (l.key === 'hf' ? ' checked' : '') + '> ' + htmlEncode(l.label) + '</label>'
+  ).join('');
+  const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}" +
+    ".card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.6rem;max-width:420px;width:92%}" +
+    "h1{font-size:1.15rem;color:#d4a843;text-align:center;margin:.2rem 0 1rem}" +
+    ".tabs{display:flex;gap:.4rem;margin-bottom:1rem}.tabs label{flex:1;text-align:center;padding:.5rem;border-radius:8px;background:#0f1729;cursor:pointer;color:#9ca3af;font-weight:600}" +
+    "input[name=authtab]{display:none}.panel{display:none}" +
+    "#tl:checked~.tabs label[for=tl],#tr:checked~.tabs label[for=tr]{background:#d4a843;color:#0f1729}" +
+    "#tl:checked~#pl{display:block}#tr:checked~#pr{display:block}" +
+    "input[type=email],input[type=password],input[type=text]{width:100%;box-sizing:border-box;padding:.6rem;margin:.3rem 0;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#e5e7eb}" +
+    "button{width:100%;background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.7rem;font-weight:700;font-size:1rem;cursor:pointer;margin-top:.5rem}" +
+    ".oauth a{display:block;text-align:center;padding:.55rem;margin:.4rem 0;border:1px solid #2a3550;border-radius:8px;color:#e5e7eb;text-decoration:none}" +
+    ".err{background:#7f1d1d;color:#fee;padding:.5rem .7rem;border-radius:8px;margin-bottom:.8rem;font-size:.9rem}" +
+    ".nl{display:block;font-size:.82rem;color:#cbd5e1;margin:.25rem 0}.nl input{width:auto;margin-right:.4rem}fieldset{border:1px solid #2a3550;border-radius:8px;margin:.6rem 0;padding:.5rem}legend{font-size:.8rem;color:#9ca3af}" +
+    ".muted{color:#9ca3af;font-size:.8rem;text-align:center;margin-top:.8rem}";
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Sign in to ElkassabgiData</title>' +
+    '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' +
+    '<style>' + S + '</style></head><body><div class="card">' +
+    '<h1>Continue to ' + brand + '</h1>' + err +
+    '<input type="radio" name="authtab" id="tl" ' + loginChecked + '>' +
+    '<input type="radio" name="authtab" id="tr" ' + regChecked + '>' +
+    '<div class="tabs"><label for="tl">Log in</label><label for="tr">Sign up</label></div>' +
+    // login panel
+    '<div class="panel" id="pl"><form method="POST" action="/login">' + hiddenAuthParams(p) +
+    '<input type="email" name="email" placeholder="Email" value="' + em + '" required autocomplete="email">' +
+    '<input type="password" name="password" placeholder="Password" required autocomplete="current-password">' +
+    '<button type="submit">Log in</button></form>' +
+    '<div class="oauth"><a href="/v1/auth/google/start?' + oauthQ + '">Continue with Google</a>' +
+    '<a href="/v1/auth/orcid/start?' + oauthQ + '">Continue with ORCID</a></div></div>' +
+    // register panel
+    '<div class="panel" id="pr"><form method="POST" action="/register">' + hiddenAuthParams(p) +
+    '<input type="text" name="name" placeholder="Full name" required maxlength="100">' +
+    '<input type="email" name="email" placeholder="Email" required autocomplete="email">' +
+    '<input type="password" name="password" placeholder="Password (min 10 chars)" required autocomplete="new-password">' +
+    '<input type="text" name="institution" placeholder="Institution" required maxlength="200">' +
+    '<input type="text" name="country" placeholder="Country" required maxlength="100">' +
+    '<input type="text" name="role" placeholder="Role (e.g. Professor, Student)" required maxlength="100">' +
+    '<fieldset><legend>Newsletters (optional)</legend>' + news + '</fieldset>' +
+    '<div class="cf-turnstile" data-sitekey="0x4AAAAAAC5ydfuRj9dEK0kY" data-response-field-name="turnstile_token" data-theme="auto"></div>' +
+    '<button type="submit">Create ElkassabgiData account</button></form>' +
+    '<div class="oauth"><a href="/v1/auth/google/start?' + oauthQ + '">Sign up with Google</a>' +
+    '<a href="/v1/auth/orcid/start?' + oauthQ + '">Sign up with ORCID</a></div></div>' +
+    '<p class="muted">One free account works across every ElkassabgiData library.</p>' +
+    '</div></body></html>';
+}
+
+function renderTwoFactorPage(pendingToken, p, error) {
+  const err = error ? '<div class="err">' + htmlEncode(error) + '</div>' : '';
+  const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.6rem;max-width:360px;width:92%;text-align:center}h1{font-size:1.1rem;color:#d4a843}input{width:100%;box-sizing:border-box;padding:.6rem;margin:.4rem 0;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#e5e7eb;text-align:center;letter-spacing:.3em;font-size:1.2rem}button{width:100%;background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.7rem;font-weight:700;cursor:pointer}.err{background:#7f1d1d;color:#fee;padding:.5rem;border-radius:8px;margin-bottom:.6rem;font-size:.9rem}";
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Two-factor</title><style>' + S + '</style></head><body><div class="card"><h1>Enter your 2FA code</h1>' + err +
+    '<form method="POST" action="/login/2fa">' + hiddenAuthParams(p) +
+    '<input type="hidden" name="pending_token" value="' + htmlEncode(pendingToken) + '">' +
+    '<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required autofocus>' +
+    '<button type="submit">Verify</button></form></div></body></html>';
+}
+
+// ── POST /login ──
+async function handleAccountsLogin(request, env, ip, ua, country) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const rl = await checkRateLimit(env, ip, 'api:login');
+  if (!rl.ok) return new Response('Too many attempts. Try again later.', { status: 429, headers: authPageHeaders });
+  let body;
+  try { body = await request.formData(); } catch { return new Response('Bad request', { status: 400, headers: { 'Cache-Control': 'no-store' } }); }
+  const p = paramsFromForm(body);
+  const v = await validateAuthorizeParams(env, p);
+  if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
+  p.row = v.row;
+  const email = (body.get('email') || '').toLowerCase();
+  const password = body.get('password') || '';
+  const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
+    if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
+    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Invalid email or password', loginEmail: email }), { status: 200, headers: authPageHeaders });
+  }
+  if (!user.is_active) {
+    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Account has been deactivated.', loginEmail: email }), { status: 200, headers: authPageHeaders });
+  }
+  if (user.totp_enabled) {
+    const pendingToken = generateId();
+    const pendingExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await env.DB.prepare('INSERT INTO totp_pending (token, user_id, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)').bind(pendingToken, user.id, pendingExpires, ip, ua).run();
+    return new Response(renderTwoFactorPage(pendingToken, p, ''), { status: 200, headers: authPageHeaders });
+  }
+  await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
+  await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
+  return await loginAndRedirect(env, user.id, ip, ua, p);
+}
+
+// ── POST /login/2fa ──
+async function handleAccounts2faVerify(request, env, ip, ua, country) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  let body;
+  try { body = await request.formData(); } catch { return new Response('<h1>Invalid request</h1>', { status: 400, headers: authPageHeaders }); }
+  const p = paramsFromForm(body);
+  const v = await validateAuthorizeParams(env, p);
+  if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
+  p.row = v.row;
+  const pendingToken = body.get('pending_token') || '';
+  const code = body.get('code') || '';
+  // Cap TOTP guesses per pending token (IP-independent), so a compromised
+  // password can't brute-force the 6-digit code within the 10-min pending window.
+  const rl2 = await checkRateLimit(env, 'tfa:' + pendingToken, 'api:2fa');
+  if (!rl2.ok) {
+    await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pendingToken).run();
+    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Too many attempts — please sign in again.' }), { status: 200, headers: authPageHeaders });
+  }
+  const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND expires_at > datetime("now")').bind(pendingToken).first();
+  if (!pending) return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Login expired — please sign in again.' }), { status: 200, headers: authPageHeaders });
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
+  if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code))) {
+    if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
+    return new Response(renderTwoFactorPage(pendingToken, p, 'Invalid 2FA code'), { status: 200, headers: authPageHeaders });
+  }
+  await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pendingToken).run();
+  await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
+  await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
+  return await loginAndRedirect(env, user.id, ip, ua, p);
+}
+
+// ── POST /register ──  (duplicates handleRegister's validation/creation; api.* untouched)
+async function handleAccountsRegister(request, env, ip, ua, country) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const rl = await checkRateLimit(env, ip, 'api:register');
+  if (!rl.ok) return new Response('Too many attempts. Try again later.', { status: 429, headers: authPageHeaders });
+  let body;
+  try { body = await request.formData(); } catch { return new Response('Bad request', { status: 400, headers: { 'Cache-Control': 'no-store' } }); }
+  const p = paramsFromForm(body);
+  const v = await validateAuthorizeParams(env, p);
+  if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
+  p.row = v.row;
+  const rerr = (msg, tab, extra) => new Response(renderAuthPage(v.row, p, Object.assign({ tab: tab || 'register', error: msg }, extra || {})), { status: 200, headers: authPageHeaders });
+
+  if (!(await verifyTurnstile(env, body.get('turnstile_token'), ip))) return rerr('CAPTCHA verification failed. Please try again.');
+  const name = body.get('name') || '';
+  const email = body.get('email') || '';
+  const password = body.get('password') || '';
+  const institution = body.get('institution') || '';
+  const role = body.get('role') || '';
+  const userCountry = body.get('country') || country;
+  const { prefs, hfSelected } = parseNewsletter(body);
+
+  if (!name || !email || !password || !institution || !role || !userCountry) return rerr('All fields are required.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rerr('Invalid email address.');
+  if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) return rerr('One or more fields exceed length limits.');
+  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) return rerr('Name, institution, country, and role must use English/Latin letters only.');
+  const normalizedCountry = normalizeCountry(userCountry) || userCountry.trim();
+  const pw = checkPasswordStrength(password);
+  if (!pw.ok) return rerr(pw.error);
+
+  const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
+  if (existing) return rerr('Email already registered — please log in.', 'login', { loginEmail: email.toLowerCase() });
+
+  const passwordHash = await hashPassword(password);
+  const apiKey = 'hfd_' + generateId();
+  const unsubscribeToken = generateId();
+  const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase()) ? 1 : 0;
+  const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
+  ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, hfSelected ? 1 : 0, unsubscribeToken, ip, ua, null, null).run();
+  const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
+  await applyNewsletterPrefs(env, user.id, prefs);
+  await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, userCountry).run();
+  if (!isAdmin) {
+    const verifyToken = generateId();
+    const verifyExpires = new Date(Date.now() + 86400000).toISOString();
+    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+    try { await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) { /* non-blocking */ }
+  }
+  try { await sendEmail(env, ADMIN_NOTIFY, `New registration: ${name} (${institution})`, adminNotificationEmail({ name, email: email.toLowerCase(), institution, country: userCountry, role }, ip, ua, country)); } catch (e) { /* non-blocking */ }
+  return await loginAndRedirect(env, user.id, ip, ua, p);
 }
