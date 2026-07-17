@@ -103,9 +103,11 @@ function isCrossSiteRequest(request) {
 // are not urgency-critical; suspend/revocation gets a fast channel in M2).
 let _registryCache = null;
 let _registryCacheAt = 0;
+const REGISTRY_TTL_MS = 60000;       // good-data cache window
+const REGISTRY_NEG_TTL_MS = 5000;    // short negative-cache on D1 error
 async function getRegistry(env) {
   const now = Date.now();
-  if (_registryCache && (now - _registryCacheAt) < 60000) return _registryCache;
+  if (_registryCache && (now - _registryCacheAt) < REGISTRY_TTL_MS) return _registryCache;
   try {
     const { results } = await env.DB.prepare(
       'SELECT origin, brand_name, logo_url, theme_json, redirect_exact, status FROM sso_clients'
@@ -113,22 +115,22 @@ async function getRegistry(env) {
     _registryCache = new Map((results || []).map((r) => [r.origin, r]));
     _registryCacheAt = now;
   } catch (e) {
-    // Fail closed: an empty registry grants nothing (never throws into routing).
-    // NOTE: intentionally does NOT stamp _registryCacheAt, so a cold isolate
-    // retries D1 on the next request instead of pinning an empty map for 60s.
-    // Harmless in M1 (this result only feeds the shadow divergence log, never
-    // the live response); before the enforcement flip, add a short negative-cache
-    // window here so an ongoing D1 outage isn't re-hit on every request.
+    // Fail closed and NEGATIVE-CACHE briefly: on a D1 error, keep the
+    // last-known-good map if we have one; otherwise serve an empty map (grants
+    // nothing beyond the hardcoded hf-owned set). Stamp a SHORT window so an
+    // ongoing outage isn't re-queried on every request, while still recovering
+    // within a few seconds once D1 heals. Never throws into routing.
     if (!_registryCache) _registryCache = new Map();
+    _registryCacheAt = now - (REGISTRY_TTL_MS - REGISTRY_NEG_TTL_MS);
   }
   return _registryCache;
 }
 
-// The registry-driven CORS decision. NOT wired into the live response in M1
-// (shadow mode) — computed and compared only. At the post-soak enforcement flip
-// it replaces the ALLOWED_ORIGINS logic. Rules: hf-owned origins → allow +
-// credentials; other registered active origins → allow, NEVER credentials;
-// everything else → deny.
+// The registry-driven CORS decision (LIVE from the enforcement flip). Rules:
+// hf-owned origins → allow + credentials; other registered active origins →
+// allow, NEVER credentials; everything else → deny. Fails closed on D1 error
+// (hf-owned still allowed via the hardcoded set; family origins denied until
+// the registry read recovers).
 async function corsDecision(origin, env) {
   if (!origin) return { allow: false, credentials: false };
   if (HF_OWNED_ORIGINS.has(origin)) return { allow: true, credentials: true };
@@ -305,33 +307,27 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
+    // §8/§9 ENFORCEMENT: the registry now drives CORS. Allowed origins are the
+    // hf-owned set (credentialed — they use the hfd_session cookie) plus every
+    // active sso_clients row (family sites, allowed but NEVER credentialed — the
+    // family flow is Authorization: Bearer). Unregistered origins get a safe
+    // canonical fallback and no credentials. The soak proved this only EXPANDS
+    // access (corsDecision allows a superset of ALLOWED_ORIGINS), so no origin
+    // that works today loses CORS. corsDecision fails closed on a D1 error.
     const origin = request.headers.get('Origin') || '';
-    const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'https://hfdatalibrary.com';
+    const decision = await corsDecision(origin, env);
+    const allowedOrigin = decision.allow ? origin : 'https://hfdatalibrary.com';
     const cors = {
       'Access-Control-Allow-Origin': allowedOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, Authorization',
-      'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Max-Age': '86400',
       'Vary': 'Origin',
     };
-
-    // §8/§9 shadow mode: compute the registry-driven CORS decision and LOG any
-    // divergence from the current ALLOWED_ORIGINS behavior. The live `cors`
-    // object above is unchanged — this only surfaces what enforcement WOULD do,
-    // so the post-soak flip is a known quantity. Never throws into routing.
-    if (origin) {
-      try {
-        const decision = await corsDecision(origin, env);
-        const oldAllow = ALLOWED_ORIGINS.includes(origin);
-        if (decision.allow !== oldAllow) {
-          console.log(JSON.stringify({
-            evt: 'cors_shadow_divergence', origin,
-            old_allow: oldAllow, new_allow: decision.allow,
-            new_credentials: decision.credentials, path,
-          }));
-        }
-      } catch (e) { /* shadow logging must never affect the response */ }
+    // §8: credentials ONLY for hf-owned origins. Never send
+    // Access-Control-Allow-Credentials to a cross-registrable-domain family origin.
+    if (decision.credentials) {
+      cors['Access-Control-Allow-Credentials'] = 'true';
     }
 
     // §8 anti-CSRF: reject genuinely cross-site browser requests to
