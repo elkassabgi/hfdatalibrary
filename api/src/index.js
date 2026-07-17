@@ -1978,14 +1978,14 @@ async function handleChangePassword(request, env, cors) {
   const newHash = await hashPassword(new_password);
   await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, userId).run();
 
-  // Kill all other sessions as a security measure.
-  // NOTE (pre-existing behavior, intentionally unchanged in M1): `user.id` is
-  // the USER id, not the session id (the real session id is now `user.session_id`
-  // after the §7 rewrite). Because sessions.id is a TEXT uuid, `id != <userId>`
-  // is always true, so this currently logs the user out on ALL devices including
-  // the current one. Fixing it (use user.session_id) is a deliberate behavior
-  // change tracked as a separate post-M1 task, not part of this no-op milestone.
-  const currentSession = user.id;
+  // Kill all OTHER sessions as a security measure, PRESERVING the current one.
+  // user.session_id is the real session id (exposed by the §7 getSessionUser
+  // rewrite); user.id is the USER id. This handler is session-only
+  // (getSessionUser above returns 401 otherwise), so session_id is always
+  // present. Previously this bound user.id here, and since sessions.id is a TEXT
+  // uuid never equal to the integer user id, `id != <userId>` matched every row
+  // and logged the user out on their current device too.
+  const currentSession = user.session_id;
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, currentSession).run();
 
   return jsonRes({ message: 'Password changed. Other sessions have been logged out.' }, 200, cors);
