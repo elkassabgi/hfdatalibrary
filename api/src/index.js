@@ -624,6 +624,12 @@ function checkPasswordStrength(password) {
 
 const OAUTH_REDIRECT_ORCID = 'https://api.hfdatalibrary.com/v1/auth/orcid/callback';
 const OAUTH_REDIRECT_GOOGLE = 'https://api.hfdatalibrary.com/v1/auth/google/callback';
+// M2b-2b — the centralized family broker's own callbacks on accounts.*. These
+// URIs must be registered as Authorized redirect URIs on the Google OAuth client
+// and the ORCID app (Ahmed console step) or the providers reject with
+// redirect_uri_mismatch. Distinct from the api.* URIs above (M3: api.* untouched).
+const OAUTH_REDIRECT_GOOGLE_ACCOUNTS = 'https://accounts.elkassabgidata.com/v1/auth/google/callback';
+const OAUTH_REDIRECT_ORCID_ACCOUNTS  = 'https://accounts.elkassabgidata.com/v1/auth/orcid/callback';
 
 // Fetch ORCID public profile data (employment, current affiliation, etc.)
 async function fetchOrcidProfile(orcidId) {
@@ -1647,6 +1653,8 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/register' && method === 'POST') return await handleAccountsRegister(request, env, ip, ua, country);
     // GET on a form path (no body) → 404 (the allowlist is method-agnostic).
     if (path === '/login' || path === '/login/2fa' || path === '/register') return new Response('Not found', { status: 404 });
+    if (path === '/v1/auth/google/start' && method === 'GET') return await startFamilyOAuth(request, env, 'google', ip, url);
+    if (path === '/v1/auth/orcid/start'  && method === 'GET') return await startFamilyOAuth(request, env, 'orcid', ip, url);
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
@@ -3569,12 +3577,309 @@ function renderSignInPrompt(row, p) {
     '<div class="card"><h1>Sign in to continue to ' + brand + '</h1><p>One ElkassabgiData account works across every library. Sign-in and registration arrive here shortly.</p></div></body></html>';
 }
 
-// ── Stubs for the sub-stages that follow (fail-closed 501 until built) ──
-async function handleAccountsGoogleCallback(request, env, ip, ua, country) {
-  return new Response('Not implemented (M2b-2)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+// ══════════════════════════════════════════════════════════════════
+// ── Family SSO M2b-2b — centralized Google + ORCID broker (accounts.*) ──
+// ══════════════════════════════════════════════════════════════════
+// One family broker terminates Google/ORCID for every site. The client's family
+// PKCE (state + code_challenge) is preserved through the provider detour in a
+// provider-bound, single-use sso_oauth_state row (10-min TTL, datetime() arith).
+// On success we mint the SAME family code (mintCodeAndRedirect) + ekd_session as
+// the password path, so the SDK exchange is identical regardless of login method.
+// SECURITY: Google id_token is RS256-verified against Google JWKS (aud/iss/exp/
+// email_verified) — not merely userinfo-trusted. ORCID accounts are linked ONLY
+// by stored orcid_id, NEVER by ORCID-supplied email (account-takeover ban).
+// The api.* handleGoogleCallback/handleOrcidCallback stay byte-for-byte (M3).
+
+// Google JWKS, cached at module scope (~1h). Fail-closed: a fetch error throws,
+// the callers treat a null verify as auth failure.
+let _googleJwks = null, _googleJwksAt = 0;
+const GOOGLE_JWKS_TTL_MS = 3600 * 1000;
+async function getGoogleJwks(force) {
+  const now = Date.now();
+  if (!force && _googleJwks && (now - _googleJwksAt) < GOOGLE_JWKS_TTL_MS) return _googleJwks;
+  const r = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  if (!r.ok) throw new Error('google_jwks_fetch_' + r.status);
+  const data = await r.json();
+  _googleJwks = (data && data.keys) || [];
+  _googleJwksAt = now;
+  return _googleJwks;
 }
+function b64urlToBytes(s) {
+  s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+// RS256-verify a Google id_token + full claim checks. Returns {sub,email} or null.
+async function verifyGoogleIdToken(env, idToken) {
+  try {
+    const parts = String(idToken || '').split('.');
+    if (parts.length !== 3) return null;
+    const [h, p, s] = parts;
+    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(h)));
+    if (header.alg !== 'RS256') return null;
+    let jwks = await getGoogleJwks();
+    let jwk = jwks.find((k) => k.kid === header.kid && (k.alg === 'RS256' || !k.alg));
+    if (!jwk) {
+      // kid not in cache → Google likely rotated keys; force one refetch.
+      jwks = await getGoogleJwks(true);
+      jwk = jwks.find((k) => k.kid === header.kid && (k.alg === 'RS256' || !k.alg));
+    }
+    if (!jwk) return null;
+    const key = await crypto.subtle.importKey(
+      'jwk', { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5', key, b64urlToBytes(s), new TextEncoder().encode(h + '.' + p));
+    if (!ok) return null;
+    const c = JSON.parse(new TextDecoder().decode(b64urlToBytes(p)));
+    if (c.iss !== 'accounts.google.com' && c.iss !== 'https://accounts.google.com') return null;
+    if (c.aud !== env.GOOGLE_CLIENT_ID) return null;
+    if (!c.exp || (c.exp * 1000) <= Date.now()) return null;
+    if (c.email_verified !== true && c.email_verified !== 'true') return null;
+    if (!c.sub || !c.email) return null;
+    return { sub: String(c.sub), email: String(c.email).toLowerCase() };
+  } catch (e) {
+    console.error(JSON.stringify({ evt: 'google_idtoken_verify_error', msg: e && e.message }));
+    return null;
+  }
+}
+// Atomic single-use consume, provider-bound (mix-up defense) + TTL. Returns the
+// row or null. Mirrors the sso_codes burn (changes===1 gate).
+async function consumeOauthState(env, brokerState, expectedProvider) {
+  if (!brokerState) return null;
+  const claim = await env.DB.prepare(
+    "UPDATE sso_oauth_state SET used=1 WHERE state=? AND used=0 AND provider=? AND expires_at>datetime('now')"
+  ).bind(brokerState, expectedProvider).run();
+  if (!claim.meta || claim.meta.changes !== 1) return null;
+  return await env.DB.prepare('SELECT * FROM sso_oauth_state WHERE state=?').bind(brokerState).first();
+}
+// Generic broker error page. The internal reason is logged, NEVER shown (no
+// leak); the user gets a clear next step. no-store, framed-denied, no-referrer.
+function oauthErrorPage(reason) {
+  console.log(JSON.stringify({ evt: 'broker_error', reason }));
+  return new Response(
+    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Sign-in problem</title><div style="font-family:system-ui,sans-serif;max-width:420px;margin:3rem auto;padding:0 1rem;text-align:center;color:#e5e7eb">' +
+    '<h1 style="color:#d4a843;font-size:1.15rem">We couldn’t complete sign-in</h1>' +
+    '<p style="color:#9ca3af">Something went wrong. Please close this window and try again, or sign in with your email and password.</p></div>',
+    { status: 400, headers: {
+      'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    } });
+}
+// Broker success tail: recover the (active) registry row for the stored client
+// origin, then mint the family code + ekd_session — same 303 shape as the
+// password path. family_state/family_code_challenge come from the client's /start.
+async function brokerLoginRedirect(env, userId, st, ip, ua) {
+  const reg = await getRegistry(env);
+  const client = reg.get(st.client_origin);
+  if (!client || client.status !== 'active' || !client.redirect_exact) return oauthErrorPage('client_unavailable');
+  const idp = await createIdpSession(env, userId, ip, ua);
+  const resp = await mintCodeAndRedirect(env, userId, st.client_origin, client.redirect_exact, st.family_state, st.family_code_challenge, 303);
+  resp.headers.append('Set-Cookie', idp.cookie);
+  return resp;
+}
+
+// GET /v1/auth/{google,orcid}/start — validate the family authorize params (no
+// provider hit on failure), stash provider-bound single-use state, 303 to the
+// provider. Google uses PKCE S256; ORCID uses the proven /authenticate scope.
+async function startFamilyOAuth(request, env, provider, ip, url) {
+  const p = {
+    clientId: url.searchParams.get('client_id') || '',
+    redirectUri: url.searchParams.get('redirect_uri') || '',
+    state: url.searchParams.get('state') || '',
+    codeChallenge: url.searchParams.get('code_challenge') || '',
+    method: url.searchParams.get('code_challenge_method') || '',
+  };
+  const v = await validateAuthorizeParams(env, p);
+  if (!v.ok) return new Response('Invalid request', { status: v.status, headers: { 'Cache-Control': 'no-store' } });
+  // ENFORCED per-IP cap (distinct bucket) BEFORE the persistent sso_oauth_state
+  // write + outbound provider token exchange this seeds. Unlike the password
+  // authorize path, /start writes pre-authentication, so shadow mode is not safe.
+  const rl = await rateLimit(env, 'oauth_start_ip', ip, AUTHZ_IP_MAX, 60, true);
+  if (!rl.ok) return new Response('Too many requests', { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': String(rl.retryAfter || 60) } });
+  const brokerState = generateToken() + generateToken(); // 256-bit opaque
+  let verifier = null, nonce = null, providerUrl;
+  if (provider === 'google') {
+    verifier = generateToken() + generateToken();
+    const challenge = await pkceS256(verifier);
+    const g = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    g.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+    g.searchParams.set('response_type', 'code');
+    g.searchParams.set('scope', 'openid email profile');
+    g.searchParams.set('redirect_uri', OAUTH_REDIRECT_GOOGLE_ACCOUNTS);
+    g.searchParams.set('code_challenge', challenge);
+    g.searchParams.set('code_challenge_method', 'S256');
+    g.searchParams.set('state', brokerState);
+    g.searchParams.set('prompt', 'select_account');
+    providerUrl = g.toString();
+  } else {
+    const o = new URL('https://orcid.org/oauth/authorize');
+    o.searchParams.set('client_id', env.ORCID_CLIENT_ID);
+    o.searchParams.set('response_type', 'code');
+    o.searchParams.set('scope', '/authenticate');
+    o.searchParams.set('redirect_uri', OAUTH_REDIRECT_ORCID_ACCOUNTS);
+    o.searchParams.set('state', brokerState);
+    providerUrl = o.toString();
+  }
+  await env.DB.prepare(
+    'INSERT INTO sso_oauth_state (state,provider,client_origin,family_state,family_code_challenge,provider_code_verifier,nonce,link_user_id,used,expires_at) ' +
+    "VALUES (?,?,?,?,?,?,?,NULL,0,datetime('now','+10 minutes'))"
+  ).bind(brokerState, provider, p.clientId, p.state, p.codeChallenge, verifier, nonce).run();
+  return new Response(null, { status: 303, headers: { 'Location': providerUrl, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' } });
+}
+
+// GET /v1/auth/google/callback — consume state, exchange code+PKCE, RS256-verify
+// id_token, link by google_id=sub (else pin to a verified-email match, else
+// create a verified account), then broker success tail.
+async function handleAccountsGoogleCallback(request, env, ip, ua, country) {
+  const u = new URL(request.url);
+  const code = u.searchParams.get('code');
+  const brokerState = u.searchParams.get('state') || '';
+  if (u.searchParams.get('error') || !code || !brokerState) return oauthErrorPage('provider_denied');
+  const st = await consumeOauthState(env, brokerState, 'google');
+  if (!st) return oauthErrorPage('state_invalid');
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: OAUTH_REDIRECT_GOOGLE_ACCOUNTS,
+      code_verifier: st.provider_code_verifier || '',
+    }).toString(),
+  });
+  if (!tokenRes.ok) return oauthErrorPage('token_exchange_failed');
+  const tokenData = await tokenRes.json();
+  const verified = await verifyGoogleIdToken(env, tokenData.id_token);
+  if (!verified) return oauthErrorPage('idtoken_invalid');
+  const sub = verified.sub, email = verified.email;
+
+  let user = await env.DB.prepare('SELECT * FROM users WHERE google_id=?').bind(sub).first();
+  if (!user) {
+    // No google_id match yet. Google has PROVEN this email (email_verified===true),
+    // but we adopt a pre-existing same-email row ONLY when it is safe to do so.
+    // The email owner may claim their email — they must never silently inherit an
+    // attacker-provisioned or foreign-identity account.
+    const byEmail = await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
+    if (byEmail) {
+      if (byEmail.google_id === sub) {
+        // Already ours (e.g. a concurrent callback pinned it first) — same identity.
+        user = byEmail;
+      } else if (Number(byEmail.email_verified) === 1 && !byEmail.google_id) {
+        // A row whose OWNER already verified this email and that is not linked to
+        // any Google identity: the verified email owner == the Google email owner.
+        // Race-guarded pin: only adopt when THIS call actually set google_id.
+        const link = await env.DB.prepare(
+          "UPDATE users SET google_id=? WHERE id=? AND (google_id IS NULL OR google_id='')"
+        ).bind(sub, byEmail.id).run();
+        if (link.meta && link.meta.changes === 1) {
+          user = await env.DB.prepare('SELECT * FROM users WHERE id=?').bind(byEmail.id).first();
+        } else {
+          return oauthErrorPage('account_link_conflict'); // lost a concurrent link race
+        }
+      } else {
+        // Unverified same-email row (possible pre-hijack squat) OR one bound to a
+        // DIFFERENT google_id (email reassigned by the provider). Never auto-merge
+        // or log in — fail closed. The owner can password-login or verify first.
+        return oauthErrorPage('account_link_conflict');
+      }
+    }
+  }
+  if (!user) {
+    // No same-email row at all → create. Google email is verified; family default
+    // newsletter_subscribed=0.
+    const apiKey = 'hfd_' + generateId();
+    const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+    const unsub = generateId();
+    const isAdmin = ADMIN_EMAILS.includes(email) ? 1 : 0;
+    const rndPw = generateId() + generateId();
+    const pwHash = await hashPassword(rndPw);
+    const name = email.split('@')[0];
+    await env.DB.prepare(
+      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, google_id, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, 0)'
+    ).bind(name, email, pwHash, '', country || '', '', apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, sub).run();
+    user = await env.DB.prepare('SELECT * FROM users WHERE google_id=?').bind(sub).first();
+    try {
+      await sendEmail(env, ADMIN_NOTIFY, 'New registration via Google (family SSO): ' + name,
+        adminNotificationEmail({ name, email, institution: '(via Google / accounts)', country, role: 'Not specified' }, ip, ua, country));
+    } catch (e) { /* non-fatal */ }
+  }
+  if (!user || !user.is_active) return oauthErrorPage('account_unavailable');
+  await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
+  await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
+  return await brokerLoginRedirect(env, user.id, st, ip, ua);
+}
+
+// GET /v1/auth/orcid/callback — consume state, exchange code (/authenticate),
+// link ONLY by stored orcid_id (NEVER by ORCID-supplied email). New ORCID with a
+// unique public email → create (email_verified=0); no/colliding email → honest
+// error (register with email or Google). Then broker success tail.
 async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
-  return new Response('Not implemented (M2b-2)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
+  const u = new URL(request.url);
+  const code = u.searchParams.get('code');
+  const brokerState = u.searchParams.get('state') || '';
+  if (u.searchParams.get('error') || !code || !brokerState) return oauthErrorPage('provider_denied');
+  const st = await consumeOauthState(env, brokerState, 'orcid');
+  if (!st) return oauthErrorPage('state_invalid');
+  const tokenRes = await fetch('https://orcid.org/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams({
+      client_id: env.ORCID_CLIENT_ID,
+      client_secret: env.ORCID_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: OAUTH_REDIRECT_ORCID_ACCOUNTS,
+    }).toString(),
+  });
+  if (!tokenRes.ok) return oauthErrorPage('token_exchange_failed');
+  const tokenData = await tokenRes.json();
+  const orcidId = tokenData.orcid;
+  if (!orcidId) return oauthErrorPage('orcid_missing');
+
+  // Link ONLY by stored orcid_id — the account-takeover ban (no email fallback).
+  let user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id=?').bind(orcidId).first();
+  if (!user) {
+    const profile = await fetchOrcidProfile(orcidId);
+    const profEmail = (profile && profile.emails && profile.emails[0]) ? String(profile.emails[0]).toLowerCase() : null;
+    // Create only with a public email that belongs to nobody else. Absent or
+    // colliding email → honest degrade (no takeover, no placeholder, no dup).
+    // The smooth orcid_prefill register-completion is deferred to M2b-3.
+    if (!profEmail) return oauthErrorPage('orcid_no_email');
+    const collision = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(profEmail).first();
+    if (collision) return oauthErrorPage('orcid_email_taken');
+    const name = (profile && profile.fullName) || (tokenData.name || 'ORCID User');
+    const inst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
+    const role = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
+    const ctry = (profile && profile.country) || country || '';
+    const profileJson = profile ? JSON.stringify(profile) : null;
+    const apiKey = 'hfd_' + generateId();
+    const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+    const unsub = generateId();
+    const isAdmin = ADMIN_EMAILS.includes(profEmail) ? 1 : 0;
+    const rndPw = generateId() + generateId();
+    const pwHash = await hashPassword(rndPw);
+    // ORCID email is UNVERIFIED by us (email_verified=0); family newsletter default 0.
+    await env.DB.prepare(
+      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1)'
+    ).bind(name, profEmail, pwHash, inst, ctry, role, apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, orcidId, profileJson).run();
+    user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id=?').bind(orcidId).first();
+    try {
+      await sendEmail(env, ADMIN_NOTIFY, 'New registration via ORCID (family SSO): ' + name,
+        adminNotificationEmail({ name, email: profEmail, institution: inst || '(via ORCID / accounts)', country: ctry, role: role || 'Not specified' }, ip, ua, country));
+    } catch (e) { /* non-fatal */ }
+  }
+  if (!user || !user.is_active) return oauthErrorPage('account_unavailable');
+  await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
+  await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
+  return await brokerLoginRedirect(env, user.id, st, ip, ua);
 }
 async function handleSdkAsset(path) {
   return new Response('Not implemented (M2b-3)', { status: 501, headers: { 'Cache-Control': 'no-store' } });
