@@ -58,6 +58,22 @@ const HOSTNAME_ALLOW = new Set([
   '127.0.0.1',
 ]);
 
+// §6 The IdP host. accounts.elkassabgidata.com is dispatched to its OWN
+// fail-closed explicit-allowlist router (handleAccountsHost) at the very top of
+// fetch(), BEFORE the api.* gate — so it can never fall through to the data or
+// admin path table. It is intentionally NOT in HOSTNAME_ALLOW. Only these paths
+// (+ the /sdk/ and /.well-known/ prefixes) serve on it; everything else 404s.
+const ACCOUNTS_HOST = 'accounts.elkassabgidata.com';
+const IDP_ORIGIN = 'https://accounts.elkassabgidata.com';
+const ACCOUNTS_ALLOW = new Set([
+  '/authorize',
+  '/token/exchange',
+  '/token/refresh',
+  '/logout',
+  '/v1/auth/google/callback',
+  '/v1/auth/orcid/callback',
+]);
+
 // hf-owned origins that legitimately use the first-party hfd_session cookie and
 // may receive credentialed CORS. Every OTHER family origin uses Authorization:
 // Bearer and must NEVER get Access-Control-Allow-Credentials (§8).
@@ -300,6 +316,13 @@ export default {
     const ip = request.headers.get('cf-connecting-ip') || 'unknown';
     const ua = request.headers.get('user-agent') || 'unknown';
     const country = request.headers.get('cf-ipcountry') || 'unknown';
+
+    // §6 IdP host: dispatch accounts.elkassabgidata.com to its own fail-closed
+    // router BEFORE the api.* gate/routing, so it can never reach the data/admin
+    // table. The api.* path table below stays byte-for-byte unchanged.
+    if (url.hostname === ACCOUNTS_HOST) {
+      return await handleAccountsHost(request, env, url, path, ip, ua, country);
+    }
 
     // §6 fail-closed hostname gate — before any routing. Only HOSTNAME_ALLOW
     // hosts serve; the *.workers.dev bypass and every other host 404.
@@ -1486,6 +1509,105 @@ async function requireAuth(request, env) {
   return user;
 }
 
+// ══════════════════════════════════════
+// ── Family SSO M2 — shared crypto + token helpers (single source of truth) ──
+// ══════════════════════════════════════
+// These are deterministic Web-Crypto helpers used ONLY for the family SSO
+// (M2) credentials. Do NOT confuse with hashPassword (PBKDF2, salted, one-way,
+// unusable as a lookup key) or generateId (UUID hex, web-session-only).
+
+// SHA-256 hex — the at-rest hash for every M2 credential (ekd_session, edl_at,
+// one-time code, oauth state). A raw token is stored ONLY as its sha256, so a
+// replayed raw token misses the lookup (null → fail closed).
+async function sha256Hex(s) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+function b64url(bytes) {
+  let s = '';
+  for (const x of bytes) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// 128-bit base64url — the raw factory for all M2 tokens. Its charset can never
+// be captured by getSessionUser's /hfd_session=([a-f0-9]+)/ cookie regex, so an
+// M2 token can't even be parsed as a web session id (defense in depth over the
+// kind predicate).
+function generateToken() {
+  return b64url(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+// PKCE S256: base64url(sha256(verifier)) — compared against the code_challenge.
+async function pkceS256(verifier) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return b64url(new Uint8Array(b));
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+
+function extractBearer(request) {
+  const auth = request.headers.get('Authorization') || request.headers.get('authorization') || '';
+  return auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+}
+
+// §7 scope-aware family-token validator (data plane). Accepts a family_access
+// edl_at (Bearer, stored hashed) and returns a REDUCED-SCOPE user with api_key
+// stripped. Rejects unless: the hashed token maps to a live family_access
+// session, the user is active, the token's audience is an ACTIVE registered
+// origin, AND the audience equals the request Origin (revocation/audit binding).
+// Never authenticates a web/full session — that stays getSessionUser (kind
+// predicate). Family tokens are ONLY ever passed to requireDataAuth (data
+// routes); mutation/admin routes keep requireAuth, which rejects them.
+async function validateFamilyToken(request, env) {
+  const raw = extractBearer(request);
+  if (!raw) return null;
+  const idHash = await sha256Hex(raw);
+  const row = await env.DB.prepare(
+    "SELECT u.*, s.user_id AS user_id, s.id AS session_id, s.kind AS session_kind, " +
+    "s.audience AS session_audience, s.expires_at AS session_expires_at " +
+    "FROM sessions s JOIN users u ON s.user_id = u.id " +
+    "WHERE s.id = ? AND s.kind = 'family_access' AND s.expires_at > datetime('now')"
+  ).bind(idHash).first();
+  if (!row || !row.is_active) return null;
+  const origin = request.headers.get('Origin') || '';
+  if (!row.session_audience || row.session_audience !== origin) return null;
+  const reg = await getRegistry(env);
+  const client = reg.get(origin);
+  if (!client || client.status !== 'active') return null;
+  return { ...row, api_key: null, isFamilyToken: true };
+}
+
+// Data-route auth: a full session/api_key (full scope, keeps api_key) OR a
+// family token (reduced scope). Used ONLY by data handlers — never mutation/admin.
+async function requireDataAuth(request, env) {
+  return (await requireAuth(request, env)) || (await validateFamilyToken(request, env));
+}
+
+// §6 fail-closed IdP router for accounts.elkassabgidata.com. Serves ONLY the
+// explicit allowlist (+ /sdk/ and /.well-known/ prefixes); everything else 404s
+// and can never reach the data/admin table. In M2a the allowlisted endpoints
+// are not built yet → 501; M2b replaces these stubs with the real /authorize,
+// token endpoints, OAuth callbacks, and SDK. This host never serves /v1/admin,
+// /v1/download, /v1/bars, /v1/auth/me, or any mutation route.
+async function handleAccountsHost(request, env, url, path, ip, ua, country) {
+  const onAllowlist =
+    ACCOUNTS_ALLOW.has(path) ||
+    path.startsWith('/sdk/') ||
+    path.startsWith('/.well-known/');
+  if (!onAllowlist) return new Response('Not found', { status: 404 });
+  // Surface exists and fail-closes; the IdP logic ships in M2b.
+  return new Response('Not implemented', {
+    status: 501,
+    headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
+  });
+}
+
 // Returns a specific, actionable 401 message explaining WHY auth failed —
 // distinguishes missing key / invalid key / inactive / expired so users
 // (esp. programmatic ones) know to regenerate rather than seeing a bare 401.
@@ -1697,8 +1819,27 @@ async function handleLogout(request, env, cors) {
 }
 
 async function handleMe(request, env, cors) {
-  const user = await requireAuth(request, env);
+  const user = await requireDataAuth(request, env);
   if (!user) return jsonRes({ error: 'Not authenticated' }, 401, cors);
+
+  // §7 Family (edl_at) tokens get a SCRUBBED profile — never api_key, nor any
+  // admin/VIP/2FA/counter field. Revealing api_key requires a full first-party
+  // session (validateFamilyToken already set api_key=null; this omits it and the
+  // sensitive fields entirely so nothing leaks even if that changed).
+  if (user.isFamilyToken) {
+    return jsonRes({
+      id: user.user_id || user.id,
+      name: user.name,
+      email: user.email,
+      institution: user.institution,
+      country: user.country,
+      role: user.role,
+      profile_complete: !!user.profile_complete,
+      orcid_id: user.orcid_id || null,
+      created_at: user.created_at,
+      isFamilyToken: true,
+    }, 200, cors);
+  }
 
   return jsonRes({
     id: user.user_id || user.id,
@@ -2250,7 +2391,7 @@ async function handleSymbolInfo(ticker, env, cors) {
 }
 
 async function handleBars(ticker, request, env, cors, ip) {
-  const user = await requireAuth(request, env);
+  const user = await requireDataAuth(request, env);
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data. Check your inbox.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
@@ -2283,7 +2424,7 @@ async function handleBars(ticker, request, env, cors, ip) {
 // Serve a derived per-ticker dataset: kind ∈ {'variables','quality'}.
 // R2 key {version}/{kind}/{ticker}.parquet. Same auth/rate-limit/logging as /v1/bars.
 async function handleDerived(ticker, kind, request, env, cors, ip) {
-  const user = await requireAuth(request, env);
+  const user = await requireDataAuth(request, env);
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
@@ -2322,6 +2463,7 @@ async function handleDownloadToken(ticker, request, env, cors) {
   let user = await getSessionUser(request, env);
   let issuedVia = 'web';
   if (!user) { user = await getUserByApiKey(request, env); issuedVia = 'api'; }
+  if (!user) { user = await validateFamilyToken(request, env); if (user) issuedVia = 'family'; }
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
   if (user.profile_complete === 0) return jsonRes({ error: 'Please complete your profile (institution, country, role) before downloading.' }, 403, cors);
@@ -2369,7 +2511,8 @@ async function handleDownload(ticker, request, env, cors, ip) {
     if (tokenRecord.ticker !== ticker) return jsonRes({ error: 'Token does not match ticker' }, 400, cors);
     user = await env.DB.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').bind(tokenRecord.user_id).first();
   } else {
-    user = await requireAuth(request, env);
+    // No signed token: a full session/api_key OR a family edl_at (data route).
+    user = await requireDataAuth(request, env);
   }
 
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);

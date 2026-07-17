@@ -66,11 +66,18 @@ jobs:
             echo "FAIL: $label expected ${mode}=${want}, last got $c"; exit 1
           }
 
+          ACC="https://accounts.elkassabgidata.com"
           # 1) Custom Domain serves the API (catches a detached custom domain).
           assert eq  "$API/v1/status == 200"                  200 "$API/v1/status"
           # 2) workers.dev bypass is closed (any non-200 = closed).
           assert ne  "$DEV/ != 200 (bypass closed)"           200 "$DEV/"
           # 3) §8 cross-site mutation guard is live (403 before auth).
           assert eq  "cross-site POST logout == 403"          403 -X POST -H "Sec-Fetch-Site: cross-site" "$API/v1/auth/logout"
+          # 4) §6 IdP host fail-closed: admin/data paths 404 on accounts.*,
+          #    allowlisted issuer paths are reachable (501 until M2b, not 404).
+          assert eq  "accounts/v1/admin/stats == 404 (isolated)"   404 "$ACC/v1/admin/stats"
+          assert eq  "accounts/v1/download/AAPL == 404 (isolated)" 404 "$ACC/v1/download/AAPL"
+          # 5) issuer surface is NOT served on the data host.
+          assert eq  "api/authorize == 404 (issuer not on data host)" 404 "$API/authorize"
 
-          echo "OK: reachability, bypass closure, and CSRF gate all verified."
+          echo "OK: reachability, bypass closure, CSRF gate, and IdP host isolation all verified."
