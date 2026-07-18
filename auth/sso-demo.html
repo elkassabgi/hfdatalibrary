@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>ElkassabgiData SSO — demo</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1729;color:#e5e7eb}
+  .card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:2rem;max-width:520px;width:92%}
+  h1{color:#d4a843;font-size:1.15rem;margin:.2rem 0 1rem}
+  button{background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.65rem 1.2rem;font-weight:700;cursor:pointer;margin:.2rem .3rem .2rem 0}
+  button.ghost{background:transparent;color:#d4a843;border:1px solid rgba(212,168,67,.5)}
+  pre{background:#0f1729;border:1px solid #2a3550;border-radius:8px;padding:.8rem;overflow:auto;font-size:.8rem;color:#9ca3af;white-space:pre-wrap;word-break:break-all}
+  .row{margin:.6rem 0}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>ElkassabgiData family sign-in — demo</h1>
+    <p style="color:#9ca3af;font-size:.9rem">Reference integration of the popup SSO SDK. One ElkassabgiData account across every library.</p>
+    <div class="row">
+      <button id="login">Log in</button>
+      <button id="register" class="ghost">Sign up</button>
+      <button id="call" class="ghost">Call data API</button>
+      <button id="logout" class="ghost">Log out</button>
+    </div>
+    <div class="row"><strong>Status:</strong> <span id="status">checking…</span></div>
+    <pre id="out">—</pre>
+  </div>
+
+  <script src="https://accounts.elkassabgidata.com/sdk/ekd-sso.js"></script>
+  <script>
+    var out = document.getElementById('out');
+    var statusEl = document.getElementById('status');
+    function log(x){ out.textContent = (typeof x === 'string') ? x : JSON.stringify(x, null, 2); }
+    function setStatus(s){ statusEl.textContent = s; }
+
+    EKD.init();
+    setStatus(EKD.isLoggedIn() ? 'session found — resuming…' : 'signed out');
+    EKD.on('login',  function(){ setStatus('signed in'); log('Signed in. Access token acquired (kept in memory).'); });
+    EKD.on('logout', function(){ setStatus('signed out'); log('Signed out.'); });
+
+    document.getElementById('login').onclick = function(){
+      log('Opening login popup…');
+      EKD.login().then(function(){ log('Login complete.'); }).catch(function(e){ log('Login failed: ' + (e && e.message)); });
+    };
+    document.getElementById('register').onclick = function(){
+      log('Opening sign-up popup…');
+      EKD.login({ tab: 'register' }).then(function(){ log('Registration complete.'); }).catch(function(e){ log('Sign-up failed: ' + (e && e.message)); });
+    };
+    document.getElementById('logout').onclick = function(){ EKD.logout(); };
+    document.getElementById('call').onclick = async function(){
+      var at = await EKD.getAccessToken();
+      if (!at) { log('No access token — log in first.'); return; }
+      log('Calling api.hfdatalibrary.com/v1/bars/AAPL with the family token…');
+      try {
+        var r = await fetch('https://api.hfdatalibrary.com/v1/bars/AAPL?limit=1', { headers: { 'Authorization': 'Bearer ' + at } });
+        log('HTTP ' + r.status + '\n' + (await r.text()).slice(0, 800));
+      } catch (e) { log('Fetch error: ' + (e && e.message)); }
+    };
+  </script>
+</body>
+</html>

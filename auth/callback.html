@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Signing in…</title>
+<style>
+  html,body{height:100%}
+  body{margin:0;display:flex;align-items:center;justify-content:center;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:#0f1729;color:#9ca3af}
+  .m{text-align:center}
+  .m strong{color:#d4a843}
+</style>
+</head>
+<body>
+  <div class="m"><p><strong>ElkassabgiData</strong><br>Completing sign-in… you can close this window.</p></div>
+  <script>
+  (function () {
+    // The IdP 303'd here with the family code + state in the URL FRAGMENT (never
+    // sent to any server). Hand it back to the opener (same origin) and close.
+    try {
+      var p = new URLSearchParams(location.hash.slice(1));
+      var msg = { type: 'ekd_auth', code: p.get('code') || '', state: p.get('state') || '' };
+      // Strip the code from the address bar / history immediately.
+      try { history.replaceState(null, '', location.pathname); } catch (e) {}
+      var delivered = false;
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(msg, location.origin); // same-origin only
+          delivered = true;
+        }
+      } catch (e) {}
+      // Fallback for opener-less contexts (e.g. COOP): same-origin BroadcastChannel.
+      if (!delivered && 'BroadcastChannel' in window) {
+        try { var bc = new BroadcastChannel('ekd_auth'); bc.postMessage(msg); bc.close(); } catch (e) {}
+      }
+    } catch (e) {}
+    setTimeout(function () { try { window.close(); } catch (e) {} }, 200);
+  })();
+  </script>
+</body>
+</html>
