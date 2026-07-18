@@ -3369,7 +3369,12 @@ async function handleAuthorizeGet(request, env, url) {
     'Referrer-Policy': 'same-origin',
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    // form-action includes https: because the consent form's SUCCESS is a 303 to
+    // the client's cross-origin callback (e.g. hfdatalibrary.com/auth/callback);
+    // CSP enforces form-action on the REDIRECT target, so 'self' alone silently
+    // blocks the redirect and the popup never reaches the callback. The real
+    // control is the server-side redirect_exact validation, not this directive.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; form-action 'self' https:; frame-ancestors 'none'; base-uri 'none'",
   };
   if (responseType !== 'code' || method !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) {
     return new Response('<h1>Invalid request</h1>', { status: 400, headers: secHeaders });
@@ -4051,7 +4056,9 @@ const authPageHeaders = {
     "frame-src https://challenges.cloudflare.com; " +
     "connect-src https://challenges.cloudflare.com; " +
     "style-src 'unsafe-inline'; img-src https: data:; " +
-    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    // https: so the login/register form's SUCCESS 303 to the client's cross-origin
+    // callback isn't blocked by form-action (enforced on redirect targets).
+    "form-action 'self' https:; frame-ancestors 'none'; base-uri 'none'",
 };
 
 // Same-origin form guard (copied from handleAuthorizePost). The login/register
