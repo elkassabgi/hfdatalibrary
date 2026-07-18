@@ -25,16 +25,13 @@
       var msg = { type: 'ekd_auth', code: p.get('code') || '', state: p.get('state') || '' };
       // Strip the code from the address bar / history immediately.
       try { history.replaceState(null, '', location.pathname); } catch (e) {}
-      var delivered = false;
+      // Deliver on BOTH channels every time (max reliability): postMessage to the
+      // opener AND a same-origin BroadcastChannel. The SDK de-dupes by state.
       try {
-        if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(msg, location.origin); // same-origin only
-          delivered = true;
-        }
+        if (window.opener && !window.opener.closed) window.opener.postMessage(msg, location.origin);
       } catch (e) {}
-      // Fallback for opener-less contexts (e.g. COOP): same-origin BroadcastChannel.
-      if (!delivered && 'BroadcastChannel' in window) {
-        try { var bc = new BroadcastChannel('ekd_auth'); bc.postMessage(msg); bc.close(); } catch (e) {}
+      if ('BroadcastChannel' in window) {
+        try { var bc = new BroadcastChannel('ekd_auth'); bc.postMessage(msg); setTimeout(function(){ try{ bc.close(); }catch(e){} }, 300); } catch (e) {}
       }
     } catch (e) {}
     setTimeout(function () { try { window.close(); } catch (e) {} }, 200);

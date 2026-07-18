@@ -34,30 +34,41 @@
   <script>
     var out = document.getElementById('out');
     var statusEl = document.getElementById('status');
-    function log(x){ out.textContent = (typeof x === 'string') ? x : JSON.stringify(x, null, 2); }
+    var lines = [];
+    function ts(){ try { return new Date().toISOString().slice(11,19); } catch(e){ return ''; } }
+    function log(x){ lines.push('['+ts()+'] ' + ((typeof x === 'string') ? x : JSON.stringify(x))); if (lines.length>40) lines.shift(); out.textContent = lines.join('\n'); }
     function setStatus(s){ statusEl.textContent = s; }
+
+    // Diagnostics: surface anything that goes wrong, and observe the two handoff
+    // channels directly (so we can see whether the code even reaches this page).
+    window.addEventListener('error', function(e){ log('JS ERROR: ' + (e.message || e) + (e.filename ? (' @ '+e.filename+':'+e.lineno) : '')); });
+    window.addEventListener('unhandledrejection', function(e){ log('UNHANDLED REJECTION: ' + (e.reason && (e.reason.message || e.reason))); });
+    window.addEventListener('message', function(ev){ if (ev.data && ev.data.type==='ekd_auth') log('◀ postMessage from ' + ev.origin + ' — code:' + (ev.data.code?'yes':'no') + ' state:' + String(ev.data.state||'').slice(0,6)); });
+    try { var dbg = new BroadcastChannel('ekd_auth'); dbg.onmessage = function(ev){ if (ev.data && ev.data.type==='ekd_auth') log('◀ BroadcastChannel — code:' + (ev.data.code?'yes':'no')); }; } catch(e){}
 
     EKD.init();
     setStatus(EKD.isLoggedIn() ? 'session found — resuming…' : 'signed out');
-    EKD.on('login',  function(){ setStatus('signed in'); log('Signed in. Access token acquired (kept in memory).'); });
-    EKD.on('logout', function(){ setStatus('signed out'); log('Signed out.'); });
+    log('SDK ready. clientId=' + EKD.clientId + ' isLoggedIn=' + EKD.isLoggedIn());
+    EKD.on('login',  function(){ setStatus('signed in'); log('✔ SDK event: LOGIN (token acquired)'); });
+    EKD.on('logout', function(){ setStatus('signed out'); log('SDK event: logout'); });
 
     document.getElementById('login').onclick = function(){
-      log('Opening login popup…');
-      EKD.login().then(function(){ log('Login complete.'); }).catch(function(e){ log('Login failed: ' + (e && e.message)); });
+      log('→ EKD.login() — opening popup');
+      EKD.login().then(function(){ log('✔ login() RESOLVED — signed in'); }).catch(function(e){ log('✘ login() REJECTED: ' + (e && e.message)); });
     };
     document.getElementById('register').onclick = function(){
-      log('Opening sign-up popup…');
-      EKD.login({ tab: 'register' }).then(function(){ log('Registration complete.'); }).catch(function(e){ log('Sign-up failed: ' + (e && e.message)); });
+      log('→ EKD.login({register}) — opening popup');
+      EKD.login({ tab: 'register' }).then(function(){ log('✔ register RESOLVED'); }).catch(function(e){ log('✘ register REJECTED: ' + (e && e.message)); });
     };
-    document.getElementById('logout').onclick = function(){ EKD.logout(); };
+    document.getElementById('logout').onclick = function(){ log('→ EKD.logout()'); EKD.logout(); };
     document.getElementById('call').onclick = async function(){
+      log('→ getAccessToken()');
       var at = await EKD.getAccessToken();
       if (!at) { log('No access token — log in first.'); return; }
-      log('Calling api.hfdatalibrary.com/v1/bars/AAPL with the family token…');
+      log('Got token. Calling /v1/bars/AAPL…');
       try {
         var r = await fetch('https://api.hfdatalibrary.com/v1/bars/AAPL?limit=1', { headers: { 'Authorization': 'Bearer ' + at } });
-        log('HTTP ' + r.status + '\n' + (await r.text()).slice(0, 800));
+        log('data API → HTTP ' + r.status);
       } catch (e) { log('Fetch error: ' + (e && e.message)); }
     };
   </script>
