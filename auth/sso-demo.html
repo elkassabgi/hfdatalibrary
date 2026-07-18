@@ -46,11 +46,18 @@
     window.addEventListener('message', function(ev){ if (ev.data && ev.data.type==='ekd_auth') log('◀ postMessage from ' + ev.origin + ' — code:' + (ev.data.code?'yes':'no') + ' state:' + String(ev.data.state||'').slice(0,6)); });
     try { var dbg = new BroadcastChannel('ekd_auth'); dbg.onmessage = function(ev){ if (ev.data && ev.data.type==='ekd_auth') log('◀ BroadcastChannel — code:' + (ev.data.code?'yes':'no')); }; } catch(e){}
 
+    // Show the buttons that make sense for the current state.
+    function renderButtons(){
+      var li = EKD.isLoggedIn();
+      ['login','register'].forEach(function(id){ document.getElementById(id).style.display = li ? 'none' : ''; });
+      ['logout','call'].forEach(function(id){ document.getElementById(id).style.display = li ? '' : 'none'; });
+    }
     EKD.init();
     setStatus(EKD.isLoggedIn() ? 'session found — resuming…' : 'signed out');
+    renderButtons();
     log('SDK ready. clientId=' + EKD.clientId + ' isLoggedIn=' + EKD.isLoggedIn());
-    EKD.on('login',  function(){ setStatus('signed in'); log('✔ SDK event: LOGIN (token acquired)'); });
-    EKD.on('logout', function(){ setStatus('signed out'); log('SDK event: logout'); });
+    EKD.on('login',  function(){ setStatus('signed in'); renderButtons(); log('✔ SDK event: LOGIN (token acquired)'); });
+    EKD.on('logout', function(){ setStatus('signed out'); renderButtons(); log('SDK event: logout'); });
 
     document.getElementById('login').onclick = function(){
       log('→ EKD.login() — opening popup');
