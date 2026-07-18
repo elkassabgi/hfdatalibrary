@@ -3451,15 +3451,26 @@ async function handleAuthorizePost(request, env, ip, ua) {
 }
 
 // Shared code-mint + redirect (used by consent POST and OAuth callbacks).
-async function mintCodeAndRedirect(env, userId, clientOrigin, redirectExact, state, codeChallenge, status) {
+// Mint a single-use PKCE code bound to (user, client, state, challenge) and return
+// the exact callback destination (code+state in the URL fragment). Shared by the
+// 303 redirect path and the post-register verify-notice interstitial's Continue link.
+async function mintSsoCode(env, userId, clientOrigin, redirectExact, state, codeChallenge, ttlSec) {
+  // Default 60s (CODE_TTL_SEC) for the auto-followed 303 paths (popup navigates
+  // sub-second). Callers that put a human-paced click between mint and consume
+  // (the verify-notice interstitial) pass a longer, RFC-6749-compliant TTL.
+  const ttl = Number.isFinite(ttlSec) ? Math.max(1, Math.floor(ttlSec)) : CODE_TTL_SEC;
   const rawCode = generateToken();
   const codeHash = await sha256Hex(rawCode);
   const consentToken = generateToken();
   await env.DB.prepare(
     "INSERT INTO sso_codes (code_hash,user_id,client_origin,state,code_challenge,consent_token,used,expires_at) " +
-    "VALUES (?,?,?,?,?,?,0,datetime('now','+" + CODE_TTL_SEC + " seconds'))"
+    "VALUES (?,?,?,?,?,?,0,datetime('now','+" + ttl + " seconds'))"
   ).bind(codeHash, userId, clientOrigin, state, codeChallenge, consentToken).run();
-  const dest = redirectExact + '#code=' + encodeURIComponent(rawCode) + '&state=' + encodeURIComponent(state);
+  return redirectExact + '#code=' + encodeURIComponent(rawCode) + '&state=' + encodeURIComponent(state);
+}
+
+async function mintCodeAndRedirect(env, userId, clientOrigin, redirectExact, state, codeChallenge, status) {
+  const dest = await mintSsoCode(env, userId, clientOrigin, redirectExact, state, codeChallenge);
   return new Response(null, {
     status: status || 303,
     headers: { 'Location': dest, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' },
@@ -4197,6 +4208,45 @@ async function loginAndRedirect(env, userId, ip, ua, p) {
   return resp;
 }
 
+// Post-registration interstitial for accounts that must verify their email before
+// downloading (every non-admin sign-up). Signs the user in exactly as
+// loginAndRedirect does — IdP session cookie + a fresh single-use SSO code — but,
+// instead of the silent 303, renders a "check your inbox (and spam folder)" notice
+// whose Continue link carries that same code to the site's callback. Closing the
+// popup without continuing is harmless: the account exists, the email is sent, and
+// the IdP session makes the next site login one click.
+async function registerVerifyNotice(env, userId, ip, ua, p, email) {
+  if (p && p.orcidPrefill) await maybeLinkOrcid(env, userId, p.orcidPrefill);
+  const idp = await createIdpSession(env, userId, ip, ua);
+  // 10-min code TTL: the user may detour to their inbox/spam (as the notice invites)
+  // before clicking Continue, so the sub-second 60s default would expire the handoff.
+  const dest = await mintSsoCode(env, userId, p.clientId, p.row.redirect_exact, p.state, p.codeChallenge, 600);
+  const resp = new Response(renderVerifyNoticePage(p.row.brand_name, email, dest), { status: 200, headers: authPageHeaders });
+  resp.headers.append('Set-Cookie', idp.cookie);
+  return resp;
+}
+
+function renderVerifyNoticePage(brandName, email, dest) {
+  const brand = htmlEncode(brandName || 'ElkassabgiData');
+  const em = htmlEncode(email || '');
+  const href = htmlEncode(dest);
+  const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}" +
+    ".card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.6rem;max-width:440px;width:92%}" +
+    "h1{font-size:1.15rem;color:#d4a843;text-align:center;margin:.2rem 0 1rem}" +
+    "p{font-size:.92rem;line-height:1.5;color:#cbd5e1;margin:.6rem 0}" +
+    ".ok{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:8px;padding:.55rem .75rem;margin-bottom:.4rem;font-size:.9rem;text-align:center}" +
+    ".warn{background:rgba(212,168,67,.12);border:1px solid rgba(212,168,67,.45);color:#f1d18b;border-radius:8px;padding:.6rem .8rem;margin:.9rem 0;font-size:.86rem;line-height:1.5}" +
+    "a.btn{display:block;text-align:center;background:#d4a843;color:#0f1729;border-radius:8px;padding:.7rem;font-weight:700;font-size:1rem;text-decoration:none;margin-top:1rem}";
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Verify your email &middot; ' + brand + '</title><style>' + S + '</style></head><body><div class="card">' +
+    '<h1>One more step &mdash; verify your email</h1>' +
+    '<div class="ok">&#10003; Your ' + brand + ' account was created.</div>' +
+    '<p>We just emailed a verification link to <strong>' + em + '</strong>. Click it to confirm your address &mdash; you’ll need to verify before you can download data.</p>' +
+    '<div class="warn">&#9888;&#65039; Don’t see it within a minute? <strong>Check your spam or junk folder</strong> &mdash; the message sometimes lands there. Marking it &ldquo;not spam,&rdquo; or adding ' + htmlEncode(FROM_EMAIL) + ' to your contacts, keeps future emails in your inbox.</div>' +
+    '<a class="btn" href="' + href + '">Continue to ' + brand + '</a>' +
+    '</div></body></html>';
+}
+
 // ── Auth page (login/register tabs) + 2FA page ──
 function hiddenAuthParams(p) {
   return '<input type="hidden" name="client_id" value="' + htmlEncode(p.clientId) + '">' +
@@ -4412,5 +4462,9 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
     try { await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) { /* non-blocking */ }
   }
   try { await sendEmail(env, ADMIN_NOTIFY, `New registration: ${name} (${institution})`, adminNotificationEmail({ name, email: email.toLowerCase(), institution, country: userCountry, role }, ip, ua, country)); } catch (e) { /* non-blocking */ }
-  return await loginAndRedirect(env, user.id, ip, ua, p);
+  // Admins are auto-verified (email_verified=1) → straight into the site. Everyone
+  // else must confirm their email before downloading, so instead of the silent 303
+  // we show a "check your inbox — and your spam folder" notice with a Continue link.
+  if (isAdmin) return await loginAndRedirect(env, user.id, ip, ua, p);
+  return await registerVerifyNotice(env, user.id, ip, ua, p, email.toLowerCase());
 }
