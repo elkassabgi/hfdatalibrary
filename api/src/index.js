@@ -73,6 +73,9 @@ const ACCOUNTS_ALLOW = new Set([
   '/token/exchange',
   '/token/refresh',
   '/logout',
+  '/account',
+  '/account/regenerate-key',
+  '/account/logout',
   '/v1/auth/google/start',
   '/v1/auth/orcid/start',
   '/v1/auth/google/callback',
@@ -1655,6 +1658,10 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/login' || path === '/login/2fa' || path === '/register') return new Response('Not found', { status: 404 });
     if (path === '/v1/auth/google/start' && method === 'GET') return await startFamilyOAuth(request, env, 'google', ip, url);
     if (path === '/v1/auth/orcid/start'  && method === 'GET') return await startFamilyOAuth(request, env, 'orcid', ip, url);
+    if (path === '/account' && method === 'GET') return await handleAccountGet(request, env);
+    if (path === '/account/regenerate-key' && method === 'POST') return await handleAccountRegenerate(request, env, ip, ua);
+    if (path === '/account/logout' && method === 'POST') return await handleAccountLogout(request, env);
+    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
@@ -3577,6 +3584,110 @@ function renderSignInPrompt(row, p) {
     '<title>Sign in to ElkassabgiData</title><style>body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}' +
     '.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:2rem;max-width:380px;text-align:center}h1{font-size:1.1rem;color:#d4a843}p{color:#9ca3af}</style></head><body>' +
     '<div class="card"><h1>Sign in to continue to ' + brand + '</h1><p>One ElkassabgiData account works across every library. Sign-in and registration arrive here shortly.</p></div></body></html>';
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ── Family SSO — account surface on accounts.elkassabgidata.com ──
+// ══════════════════════════════════════════════════════════════════
+// The first-party home for a signed-in ElkassabgiData account: view/copy the API
+// key, regenerate it, see the profile, log out. Authed by the ekd_session cookie
+// (getIdpSessionUser, kind='idp_master') — SAME origin, so the api_key never
+// crosses to a family site (the scope-split the whole design protects). NO client
+// JS: the key sits in a readonly field, and regenerate/logout are same-origin form
+// POSTs — zero XSS surface on a page that shows a secret. api.* handlers unchanged.
+const accountPageHeaders = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+};
+
+function renderSignedOutPage() {
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>ElkassabgiData account</title><style>body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}' +
+    '.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:2rem;max-width:400px;text-align:center}h1{font-size:1.1rem;color:#d4a843}p{color:#9ca3af}</style></head><body>' +
+    '<div class="card"><h1>You are not signed in</h1><p>Open any ElkassabgiData library (hfdatalibrary.com, econdatalibrary.com) and choose <strong>Log in</strong> to access your account and API key.</p></div></body></html>';
+}
+
+function renderAccountPage(user, opts) {
+  opts = opts || {};
+  const name = htmlEncode(user.name || user.email || 'your account');
+  const email = htmlEncode(user.email || '');
+  const key = htmlEncode(user.api_key || '');
+  const exp = user.api_key_expires_at ? htmlEncode(String(user.api_key_expires_at).slice(0, 10)) : 'no expiry';
+  const inst = htmlEncode(user.institution || '—');
+  const country = htmlEncode(user.country || '—');
+  const role = htmlEncode(user.role || '—');
+  const orcid = user.orcid_id ? '<span class="lk">ORCID linked</span>' : '';
+  const google = user.google_id ? '<span class="lk">Google linked</span>' : '';
+  const notice = opts.notice ? '<div class="ok">' + htmlEncode(opts.notice) + '</div>' : '';
+  const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;padding:2rem 1rem;display:flex;justify-content:center}" +
+    ".card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.8rem;max-width:560px;width:100%}" +
+    "h1{font-size:1.2rem;color:#d4a843;margin:.2rem 0 .3rem}.sub{color:#9ca3af;font-size:.9rem;margin-bottom:1.3rem}" +
+    "h2{font-size:.95rem;color:#e5e7eb;margin:1.4rem 0 .5rem;border-top:1px solid #2a3550;padding-top:1.1rem}" +
+    ".key{width:100%;box-sizing:border-box;padding:.6rem;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#d4a843;font-family:ui-monospace,Consolas,monospace;font-size:.95rem}" +
+    ".hint{color:#6b7280;font-size:.8rem;margin:.35rem 0 0}.exp{color:#9ca3af;font-size:.82rem;margin:.4rem 0 0}" +
+    "dl{display:grid;grid-template-columns:auto 1fr;gap:.35rem 1rem;margin:.2rem 0;font-size:.9rem}dt{color:#9ca3af}dd{margin:0;color:#e5e7eb}" +
+    "button{background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.55rem 1.1rem;font-weight:700;cursor:pointer;font-size:.9rem}" +
+    "button.ghost{background:transparent;color:#d4a843;border:1px solid rgba(212,168,67,.5)}" +
+    ".row{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.8rem}" +
+    ".ok{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:8px;padding:.6rem .8rem;font-size:.85rem;margin-bottom:1rem}" +
+    ".lk{display:inline-block;background:#0f1729;border:1px solid #2a3550;color:#9ca3af;border-radius:6px;padding:.15rem .5rem;font-size:.78rem;margin-right:.4rem}";
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="robots" content="noindex,nofollow"><title>Your ElkassabgiData account</title><style>' + S + '</style></head><body>' +
+    '<div class="card">' + notice +
+    '<h1>Your ElkassabgiData account</h1><div class="sub">Signed in as <strong style="color:#e5e7eb">' + name + '</strong> &middot; ' + email + '</div>' +
+    '<h2>API key</h2>' +
+    '<input class="key" readonly value="' + key + '" aria-label="Your API key" onfocus="this.select()">' +
+    '<p class="hint">Use this in the <span style="font-family:ui-monospace,Consolas,monospace">X-API-Key</span> header (or <span style="font-family:ui-monospace,Consolas,monospace">?api_key=</span>) to download data from any ElkassabgiData library. Click the field to select it, then copy.</p>' +
+    '<p class="exp">Valid until <strong>' + exp + '</strong>. One key works across every library.</p>' +
+    '<form method="POST" action="/account/regenerate-key" class="row"><button type="submit" class="ghost">Regenerate key</button></form>' +
+    '<p class="hint">Regenerating issues a new key value and invalidates the old one — update any scripts.</p>' +
+    '<h2>Profile</h2><dl><dt>Institution</dt><dd>' + inst + '</dd><dt>Country</dt><dd>' + country + '</dd><dt>Role</dt><dd>' + role + '</dd></dl>' +
+    (orcid || google ? '<p style="margin-top:.6rem">' + orcid + google + '</p>' : '') +
+    '<h2>Session</h2><form method="POST" action="/account/logout" class="row"><button type="submit">Log out everywhere</button></form>' +
+    '</div></body></html>';
+}
+
+// The `onfocus="this.select()"` above is a benign inline handler; CSP has no
+// script-src (default-src 'none'), so it is inert if the browser blocks inline
+// handlers — the field is still selectable manually. No secret depends on JS.
+async function handleAccountGet(request, env) {
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 200, headers: accountPageHeaders });
+  return new Response(renderAccountPage(user, {}), { status: 200, headers: accountPageHeaders });
+}
+async function handleAccountRegenerate(request, env, ip, ua) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  const newKey = 'hfd_' + generateId();
+  const newExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+  await env.DB.prepare('UPDATE users SET api_key = ?, api_key_expires_at = ? WHERE id = ?')
+    .bind(newKey, newExpires, user.id).run();
+  const fresh = await getIdpSessionUser(request, env);
+  return new Response(renderAccountPage(fresh || { ...user, api_key: newKey, api_key_expires_at: newExpires }, { notice: 'Your API key was regenerated. The previous key no longer works.' }), { status: 200, headers: accountPageHeaders });
+}
+async function handleAccountLogout(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (user) {
+    // Log out EVERYWHERE: drop the SSO session + every live family access token,
+    // and revoke every refresh chain for this account.
+    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND kind IN ('idp_master','family_access')").bind(user.id).run();
+    await env.DB.prepare("UPDATE sso_refresh_tokens SET revoked = 1 WHERE user_id = ?").bind(user.id).run();
+  } else {
+    // No valid session — still clear whatever ekd_session cookie is present.
+    const cookie = request.headers.get('cookie') || '';
+    const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
+    if (cm) { const idHash = await sha256Hex(cm[1]); await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(idHash).run(); }
+  }
+  const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
+  return new Response(renderSignedOutPage(), { status: 200, headers: { ...accountPageHeaders, 'Set-Cookie': clear } });
 }
 
 // ══════════════════════════════════════════════════════════════════
