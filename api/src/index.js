@@ -356,6 +356,16 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
+    // robots.txt: the API host has no indexable content — its /v1/* endpoints
+    // intentionally 401 without auth. Disallow all crawling so Search Console stops
+    // reporting those expected 401s as an indexing problem (WNC-20237597). No CORS
+    // needed (crawler top-level fetch). Cacheable.
+    if (path === '/robots.txt') {
+      return new Response('User-agent: *\nDisallow: /\n', {
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' },
+      });
+    }
+
     // §8/§9 ENFORCEMENT: the registry now drives CORS. Allowed origins are the
     // hf-owned set (credentialed — they use the hfd_session cookie) plus every
     // active sso_clients row (family sites, allowed but NEVER credentialed — the
