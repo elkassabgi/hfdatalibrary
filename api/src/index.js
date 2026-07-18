@@ -3393,8 +3393,15 @@ async function handleAuthorizeGet(request, env, url) {
     // and 303s back with the code (the auth submission is the consent). The SDK
     // popup passes hint=register to open straight to the sign-up tab.
     const hint = q.get('hint') === 'register' ? 'register' : 'login';
+    // ORCID link-or-register bounce: a valid signed prefill carries the verified
+    // orcid_id — default to the login tab (link to an existing account) with a
+    // banner offering "or create a new account".
+    const orcidTok = q.get('orcid_prefill') || '';
+    const orcidPre = orcidTok ? await verifyOrcidPrefill(env, orcidTok) : null;
+    const p = { clientId, redirectUri, state, codeChallenge, method };
+    if (orcidPre) p.orcidPrefill = orcidTok;
     return new Response(
-      renderAuthPage(row, { clientId, redirectUri, state, codeChallenge, method }, { tab: hint, error: '', loginEmail: '' }),
+      renderAuthPage(row, p, { tab: orcidPre ? 'login' : hint, error: '', loginEmail: '', orcid: orcidPre }),
       { status: 200, headers: authPageHeaders }
     );
   }
@@ -3946,6 +3953,46 @@ async function handleAccountsGoogleCallback(request, env, ip, ua, country) {
 // link ONLY by stored orcid_id (NEVER by ORCID-supplied email). New ORCID with a
 // unique public email → create (email_verified=0); no/colliding email → honest
 // error (register with email or Google). Then broker success tail.
+// ── ORCID link-or-register seam ──
+// ORCID's /authenticate scope never returns email, so a NEW ORCID (no orcid_id
+// match, no unique public email) can't be auto-created. Instead of dead-ending,
+// carry the VERIFIED orcid_id to the auth page in a short-lived HMAC-signed token
+// (10 min): the user signs in (link the ORCID to their existing account) or
+// registers with an email (create + set orcid_id). A valid token proves ORCID auth
+// was completed, so it also stands in for the register CAPTCHA (ORCID = the human check).
+async function mintOrcidPrefill(env, orcidId, name) {
+  if (!env.CONSENT_HMAC_SECRET) return '';
+  const expMs = Date.now() + 10 * 60 * 1000;
+  const nameB64 = b64url(new TextEncoder().encode((name || '').slice(0, 100)));
+  const bodyStr = orcidId + '.' + nameB64 + '.' + expMs;
+  const sig = await hmacSign(env.CONSENT_HMAC_SECRET, bodyStr);
+  return bodyStr + '.' + sig;
+}
+async function verifyOrcidPrefill(env, token) {
+  if (!env.CONSENT_HMAC_SECRET || !token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 4) return null;
+  const orcidId = parts[0], nameB64 = parts[1], expMsStr = parts[2], sig = parts[3];
+  if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(orcidId)) return null;
+  const expMs = parseInt(expMsStr, 10);
+  if (!expMs || Date.now() > expMs) return null;
+  const expected = await hmacSign(env.CONSENT_HMAC_SECRET, orcidId + '.' + nameB64 + '.' + expMsStr);
+  if (!constantTimeEqual(sig, expected)) return null;
+  let name = '';
+  try { name = new TextDecoder().decode(b64urlToBytes(nameB64)); } catch (e) {}
+  return { orcidId, name };
+}
+// Link a verified orcid_id to an account ONLY if that account has none AND no other
+// account already owns it (atomic single statement → no cross-account takeover/dupe).
+async function maybeLinkOrcid(env, userId, token) {
+  const pre = await verifyOrcidPrefill(env, token);
+  if (!pre) return;
+  await env.DB.prepare(
+    "UPDATE users SET orcid_id = ? WHERE id = ? AND (orcid_id IS NULL OR orcid_id = '') " +
+    "AND NOT EXISTS (SELECT 1 FROM users u2 WHERE u2.orcid_id = ? AND u2.id != ?)"
+  ).bind(pre.orcidId, userId, pre.orcidId, userId).run();
+}
+
 async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
   const u = new URL(request.url);
   const code = u.searchParams.get('code');
@@ -3974,32 +4021,51 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
   if (!user) {
     const profile = await fetchOrcidProfile(orcidId);
     const profEmail = (profile && profile.emails && profile.emails[0]) ? String(profile.emails[0]).toLowerCase() : null;
-    // Create only with a public email that belongs to nobody else. Absent or
-    // colliding email → honest degrade (no takeover, no placeholder, no dup).
-    // The smooth orcid_prefill register-completion is deferred to M2b-3.
-    if (!profEmail) return oauthErrorPage('orcid_no_email');
-    const collision = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(profEmail).first();
-    if (collision) return oauthErrorPage('orcid_email_taken');
     const name = (profile && profile.fullName) || (tokenData.name || 'ORCID User');
-    const inst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
-    const role = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
-    const ctry = (profile && profile.country) || country || '';
-    const profileJson = profile ? JSON.stringify(profile) : null;
-    const apiKey = 'hfd_' + generateId();
-    const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
-    const unsub = generateId();
-    const isAdmin = ADMIN_EMAILS.includes(profEmail) ? 1 : 0;
-    const rndPw = generateId() + generateId();
-    const pwHash = await hashPassword(rndPw);
-    // ORCID email is UNVERIFIED by us (email_verified=0); family newsletter default 0.
-    await env.DB.prepare(
-      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1)'
-    ).bind(name, profEmail, pwHash, inst, ctry, role, apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, orcidId, profileJson).run();
-    user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id=?').bind(orcidId).first();
-    try {
-      await sendEmail(env, ADMIN_NOTIFY, 'New registration via ORCID (family SSO): ' + name,
-        adminNotificationEmail({ name, email: profEmail, institution: inst || '(via ORCID / accounts)', country: ctry, role: role || 'Not specified' }, ip, ua, country));
-    } catch (e) { /* non-fatal */ }
+    // Frictionless auto-create ONLY when ORCID gave a UNIQUE public email.
+    if (profEmail && !(await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(profEmail).first())) {
+      const inst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
+      const role = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
+      const ctry = (profile && profile.country) || country || '';
+      const profileJson = profile ? JSON.stringify(profile) : null;
+      const apiKey = 'hfd_' + generateId();
+      const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+      const unsub = generateId();
+      const isAdmin = ADMIN_EMAILS.includes(profEmail) ? 1 : 0;
+      const rndPw = generateId() + generateId();
+      const pwHash = await hashPassword(rndPw);
+      // ORCID email is UNVERIFIED by us (email_verified=0); family newsletter default 0.
+      let created = false;
+      try {
+        await env.DB.prepare(
+          'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1)'
+        ).bind(name, profEmail, pwHash, inst, ctry, role, apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, orcidId, profileJson).run();
+        created = true;
+      } catch (e) { /* concurrent same-orcid create won the UNIQUE index → use theirs */ }
+      user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id=?').bind(orcidId).first();
+      if (created && user) {
+        try {
+          await sendEmail(env, ADMIN_NOTIFY, 'New registration via ORCID (family SSO): ' + name,
+            adminNotificationEmail({ name, email: profEmail, institution: inst || '(via ORCID / accounts)', country: ctry, role: role || 'Not specified' }, ip, ua, country));
+        } catch (e) { /* non-fatal */ }
+      }
+    } else {
+      // No unique email (private or already taken) → link-or-register: bounce to the
+      // auth page carrying a signed prefill of the VERIFIED orcid_id. The user signs
+      // in to link it, or registers with an email.
+      const prefill = await mintOrcidPrefill(env, orcidId, name);
+      if (!prefill) return oauthErrorPage('orcid_link_unavailable');
+      const reg = await getRegistry(env);
+      const client = reg.get(st.client_origin);
+      if (!client || client.status !== 'active' || !client.redirect_exact) return oauthErrorPage('client_unavailable');
+      const dest = IDP_ORIGIN + '/authorize?response_type=code'
+        + '&client_id=' + encodeURIComponent(st.client_origin)
+        + '&redirect_uri=' + encodeURIComponent(client.redirect_exact)
+        + '&state=' + encodeURIComponent(st.family_state || '')
+        + '&code_challenge=' + encodeURIComponent(st.family_code_challenge || '')
+        + '&code_challenge_method=S256&orcid_prefill=' + encodeURIComponent(prefill);
+      return new Response(null, { status: 303, headers: { 'Location': dest, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' } });
+    }
   }
   if (!user || !user.is_active) return oauthErrorPage('account_unavailable');
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
@@ -4088,6 +4154,7 @@ function paramsFromForm(body) {
     state: body.get('state') || '',
     codeChallenge: body.get('code_challenge') || '',
     method: body.get('code_challenge_method') || '',
+    orcidPrefill: body.get('orcid_prefill') || '',
   };
 }
 
@@ -4105,6 +4172,9 @@ async function applyNewsletterPrefs(env, userId, prefs) {
 
 // Shared success tail: set ekd_session + 303 to the family callback with the code.
 async function loginAndRedirect(env, userId, ip, ua, p) {
+  // If this login/register completed an ORCID link-or-register, bind the verified
+  // orcid_id now (takeover-safe: only if this account has none and no other owns it).
+  if (p && p.orcidPrefill) await maybeLinkOrcid(env, userId, p.orcidPrefill);
   const idp = await createIdpSession(env, userId, ip, ua);
   const resp = await mintCodeAndRedirect(env, userId, p.clientId, p.row.redirect_exact, p.state, p.codeChallenge, 303);
   resp.headers.append('Set-Cookie', idp.cookie);
@@ -4117,7 +4187,8 @@ function hiddenAuthParams(p) {
     '<input type="hidden" name="redirect_uri" value="' + htmlEncode(p.redirectUri) + '">' +
     '<input type="hidden" name="state" value="' + htmlEncode(p.state) + '">' +
     '<input type="hidden" name="code_challenge" value="' + htmlEncode(p.codeChallenge) + '">' +
-    '<input type="hidden" name="code_challenge_method" value="S256">';
+    '<input type="hidden" name="code_challenge_method" value="S256">' +
+    (p.orcidPrefill ? '<input type="hidden" name="orcid_prefill" value="' + htmlEncode(p.orcidPrefill) + '">' : '');
 }
 
 function renderAuthPage(row, p, opts) {
@@ -4133,6 +4204,12 @@ function renderAuthPage(row, p, opts) {
   const news = NEWSLETTER_LISTS.map((l) =>
     '<label class="nl"><input type="checkbox" name="newsletter" value="' + l.key + '"' + (l.key === 'hf' ? ' checked' : '') + '> ' + htmlEncode(l.label) + '</label>'
   ).join('');
+  // ORCID link-or-register: banner + prefilled name + NO CAPTCHA (ORCID auth is the
+  // human check; the signed orcid_prefill token stands in for Turnstile).
+  const orcid = opts.orcid || null;
+  const orcidBanner = orcid ? '<div class="ok">&#10003; ORCID <strong>' + htmlEncode(orcid.orcidId) + '</strong> verified &mdash; <strong>Log in</strong> to link it to your ElkassabgiData account, or <strong>Sign up</strong> to create a new one.</div>' : '';
+  const regNameVal = orcid ? htmlEncode(orcid.name || '') : '';
+  const turnstileWidget = orcid ? '' : '<div class="cf-turnstile" data-sitekey="0x4AAAAAAC5ydfuRj9dEK0kY" data-response-field-name="turnstile_token" data-theme="auto"></div>';
   const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}" +
     ".card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.6rem;max-width:420px;width:92%}" +
     "h1{font-size:1.15rem;color:#d4a843;text-align:center;margin:.2rem 0 1rem}" +
@@ -4145,12 +4222,13 @@ function renderAuthPage(row, p, opts) {
     ".oauth a{display:block;text-align:center;padding:.55rem;margin:.4rem 0;border:1px solid #2a3550;border-radius:8px;color:#e5e7eb;text-decoration:none}" +
     ".err{background:#7f1d1d;color:#fee;padding:.5rem .7rem;border-radius:8px;margin-bottom:.8rem;font-size:.9rem}" +
     ".nl{display:block;font-size:.82rem;color:#cbd5e1;margin:.25rem 0}.nl input{width:auto;margin-right:.4rem}fieldset{border:1px solid #2a3550;border-radius:8px;margin:.6rem 0;padding:.5rem}legend{font-size:.8rem;color:#9ca3af}" +
-    ".muted{color:#9ca3af;font-size:.8rem;text-align:center;margin-top:.8rem}";
+    ".muted{color:#9ca3af;font-size:.8rem;text-align:center;margin-top:.8rem}" +
+    ".ok{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:8px;padding:.55rem .75rem;margin-bottom:.9rem;font-size:.85rem;line-height:1.4}";
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>Sign in to ElkassabgiData</title>' +
-    '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' +
+    (orcid ? '' : '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>') +
     '<style>' + S + '</style></head><body><div class="card">' +
-    '<h1>Continue to ' + brand + '</h1>' + err +
+    '<h1>Continue to ' + brand + '</h1>' + orcidBanner + err +
     '<input type="radio" name="authtab" id="tl" ' + loginChecked + '>' +
     '<input type="radio" name="authtab" id="tr" ' + regChecked + '>' +
     '<div class="tabs"><label for="tl">Log in</label><label for="tr">Sign up</label></div>' +
@@ -4163,14 +4241,14 @@ function renderAuthPage(row, p, opts) {
     '<a href="/v1/auth/orcid/start?' + oauthQ + '">Continue with ORCID</a></div></div>' +
     // register panel
     '<div class="panel" id="pr"><form method="POST" action="/register">' + hiddenAuthParams(p) +
-    '<input type="text" name="name" placeholder="Full name" required maxlength="100">' +
+    '<input type="text" name="name" placeholder="Full name" value="' + regNameVal + '" required maxlength="100">' +
     '<input type="email" name="email" placeholder="Email" required autocomplete="email">' +
     '<input type="password" name="password" placeholder="Password (min 10 chars)" required autocomplete="new-password">' +
     '<input type="text" name="institution" placeholder="Institution" required maxlength="200">' +
     '<input type="text" name="country" placeholder="Country" required maxlength="100">' +
     '<input type="text" name="role" placeholder="Role (e.g. Professor, Student)" required maxlength="100">' +
     '<fieldset><legend>Newsletters (optional)</legend>' + news + '</fieldset>' +
-    '<div class="cf-turnstile" data-sitekey="0x4AAAAAAC5ydfuRj9dEK0kY" data-response-field-name="turnstile_token" data-theme="auto"></div>' +
+    turnstileWidget +
     '<button type="submit">Create ElkassabgiData account</button></form>' +
     '<div class="oauth"><a href="/v1/auth/google/start?' + oauthQ + '">Sign up with Google</a>' +
     '<a href="/v1/auth/orcid/start?' + oauthQ + '">Sign up with ORCID</a></div></div>' +
@@ -4199,15 +4277,16 @@ async function handleAccountsLogin(request, env, ip, ua, country) {
   const v = await validateAuthorizeParams(env, p);
   if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
   p.row = v.row;
+  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, p.orcidPrefill) : null;
   const email = (body.get('email') || '').toLowerCase();
   const password = body.get('password') || '';
   const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
-    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Invalid email or password', loginEmail: email }), { status: 200, headers: authPageHeaders });
+    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Invalid email or password', loginEmail: email, orcid: orcidPre }), { status: 200, headers: authPageHeaders });
   }
   if (!user.is_active) {
-    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Account has been deactivated.', loginEmail: email }), { status: 200, headers: authPageHeaders });
+    return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Account has been deactivated.', loginEmail: email, orcid: orcidPre }), { status: 200, headers: authPageHeaders });
   }
   if (user.totp_enabled) {
     const pendingToken = generateId();
@@ -4262,9 +4341,12 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   const v = await validateAuthorizeParams(env, p);
   if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
   p.row = v.row;
-  const rerr = (msg, tab, extra) => new Response(renderAuthPage(v.row, p, Object.assign({ tab: tab || 'register', error: msg }, extra || {})), { status: 200, headers: authPageHeaders });
+  // ORCID link-or-register: a valid signed prefill proves ORCID auth (the human
+  // check), so it stands in for the CAPTCHA and re-renders the banner on error.
+  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, p.orcidPrefill) : null;
+  const rerr = (msg, tab, extra) => new Response(renderAuthPage(v.row, p, Object.assign({ tab: tab || 'register', error: msg, orcid: orcidPre }, extra || {})), { status: 200, headers: authPageHeaders });
 
-  if (!(await verifyTurnstile(env, body.get('turnstile_token'), ip))) return rerr('CAPTCHA verification failed. Please try again.');
+  if (!orcidPre && !(await verifyTurnstile(env, body.get('turnstile_token'), ip))) return rerr('CAPTCHA verification failed. Please try again.');
   const name = body.get('name') || '';
   const email = body.get('email') || '';
   const password = body.get('password') || '';
@@ -4283,15 +4365,27 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
   if (existing) return rerr('Email already registered — please log in.', 'login', { loginEmail: email.toLowerCase() });
+  if (orcidPre) {
+    const orcidTaken = await env.DB.prepare('SELECT id FROM users WHERE orcid_id = ?').bind(orcidPre.orcidId).first();
+    if (orcidTaken) return rerr('This ORCID is already linked to an ElkassabgiData account — please log in instead.', 'login');
+  }
 
   const passwordHash = await hashPassword(password);
   const apiKey = 'hfd_' + generateId();
   const unsubscribeToken = generateId();
   const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase()) ? 1 : 0;
   const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
-  await env.DB.prepare(
-    'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
-  ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, hfSelected ? 1 : 0, unsubscribeToken, ip, ua, null, null).run();
+  // Set orcid_id in the INSERT itself (not deferred) so the partial UNIQUE index on
+  // users.orcid_id makes concurrent same-token registrations COLLIDE — exactly one
+  // account per ORCID login, no CAPTCHA-skip amplification. A UNIQUE collision (email
+  // or orcid) fails closed to a login nudge instead of a 500.
+  try {
+    await env.DB.prepare(
+      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
+    ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, hfSelected ? 1 : 0, unsubscribeToken, ip, ua, orcidPre ? orcidPre.orcidId : null, null).run();
+  } catch (e) {
+    return rerr('That account could not be created — the email or ORCID may already be registered. Please log in.', 'login', { loginEmail: email.toLowerCase() });
+  }
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
   await applyNewsletterPrefs(env, user.id, prefs);
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, userCountry).run();
