@@ -76,6 +76,7 @@ const ACCOUNTS_ALLOW = new Set([
   '/account',
   '/account/regenerate-key',
   '/account/logout',
+  '/csp-report',
   '/v1/auth/google/start',
   '/v1/auth/orcid/start',
   '/v1/auth/google/callback',
@@ -1661,6 +1662,7 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/account' && method === 'GET') return await handleAccountGet(request, env);
     if (path === '/account/regenerate-key' && method === 'POST') return await handleAccountRegenerate(request, env, ip, ua);
     if (path === '/account/logout' && method === 'POST') return await handleAccountLogout(request, env);
+    if (path === '/csp-report' && method === 'POST') return await handleCspReport(request, env);
     if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
@@ -3709,6 +3711,16 @@ async function handleAccountLogout(request, env) {
   return new Response(renderSignedOutPage(), { status: 200, headers: { ...accountPageHeaders, 'Set-Cookie': clear } });
 }
 
+// Temporary CSP-violation sink (report-uri on the auth page) — logs exactly what a
+// browser's CSP blocked (e.g. a Turnstile connection), visible in `wrangler tail`.
+// Remove once the Turnstile connectivity is confirmed.
+async function handleCspReport(request, env) {
+  let body = '';
+  try { body = await request.text(); } catch (e) {}
+  console.log(JSON.stringify({ evt: 'csp_report', body: body.slice(0, 900) }));
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+}
+
 // ══════════════════════════════════════════════════════════════════
 // ── Family SSO M2b-2b — centralized Google + ORCID broker (accounts.*) ──
 // ══════════════════════════════════════════════════════════════════
@@ -4120,11 +4132,15 @@ const authPageHeaders = {
     "default-src 'none'; " +
     "script-src https://challenges.cloudflare.com; " +
     "frame-src https://challenges.cloudflare.com; " +
-    "connect-src https://challenges.cloudflare.com; " +
+    // 'self' in connect-src: the Turnstile widget can make a same-origin request as
+    // part of verification; without it the widget shows "unable to connect to the
+    // website" (the working hf download page allows connect-src 'self'). report-uri
+    // captures any remaining violation server-side for diagnosis.
+    "connect-src 'self' https://challenges.cloudflare.com; " +
     "style-src 'unsafe-inline'; img-src https: data:; " +
     // https: so the login/register form's SUCCESS 303 to the client's cross-origin
     // callback isn't blocked by form-action (enforced on redirect targets).
-    "form-action 'self' https:; frame-ancestors 'none'; base-uri 'none'",
+    "form-action 'self' https:; frame-ancestors 'none'; base-uri 'none'; report-uri /csp-report",
 };
 
 // Same-origin form guard (copied from handleAuthorizePost). The login/register
