@@ -5,14 +5,14 @@
 (function () {
   'use strict';
 
-  // ── Maintenance banner (auto-expires; remove after the 2026-07 data revision) ──
-  var MAINT_EXPIRES_UTC = Date.UTC(2026, 6, 14, 5, 0, 0); // 2026-07-14 05:00Z
-  var MAINT_MSG = 'Scheduled maintenance this weekend. The site and all downloads ' +
-                  'remain available; daily updates resume Tuesday.';
+  // ── Notice banner (auto-expires; adjust/remove MAINT_EXPIRES_UTC once the
+  //    scheduled API upgrade is complete) ──
+  var MAINT_EXPIRES_UTC = Date.UTC(2026, 7, 1, 0, 0, 0); // 2026-08-01 00:00Z
+  var MAINT_MSG = 'API access will be temporarily unavailable during a scheduled upgrade.';
   function injectMaintenanceBanner() {
     try {
       if (Date.now() > MAINT_EXPIRES_UTC) return;
-      if (sessionStorage.getItem('maint-dismissed') === '1') return;
+      if (sessionStorage.getItem('apinotice-dismissed') === '1') return;
       var bar = document.createElement('div');
       bar.id = 'maint-banner';
       bar.style.cssText = 'background:#1e3a5f;color:#fff;padding:0.6rem 2.2rem 0.6rem 1rem;' +
@@ -23,7 +23,7 @@
       x.setAttribute('aria-label', 'Dismiss');
       x.style.cssText = 'position:absolute;right:0.7rem;top:50%;transform:translateY(-50%);' +
         'background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;';
-      x.onclick = function () { bar.remove(); sessionStorage.setItem('maint-dismissed', '1'); };
+      x.onclick = function () { bar.remove(); sessionStorage.setItem('apinotice-dismissed', '1'); };
       bar.appendChild(x);
       document.body.insertBefore(bar, document.body.firstChild);
     } catch (e) { /* banner must never break the page */ }
