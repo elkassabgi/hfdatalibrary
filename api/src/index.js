@@ -1058,19 +1058,76 @@ async function verifyTurnstile(env, token, ip) {
 // ── Email Sending (Resend) ──
 // ══════════════════════════════════════
 
-async function sendEmail(env, to, subject, htmlBody, fromEmail = FROM_EMAIL, fromName = FROM_NAME) {
+// Strip HTML tags in guaranteed-linear time. For each "<"-delimited segment, drop
+// up to the first ">" (the tag) and keep the rest as text; an unterminated "<"
+// keeps its text. No regex backtracking, so it stays O(n) even on ">"-free input
+// (unlike /<[^>]+>/g, which is quadratic there). Behaviour matches the tag strip
+// for all well-formed HTML we send.
+function stripTagsLinear(s) {
+  const parts = String(s).split('<');
+  let out = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    const gt = parts[i].indexOf('>');
+    out += gt === -1 ? parts[i] : parts[i].slice(gt + 1);
+  }
+  return out;
+}
+
+// Derive a readable plaintext alternative from an HTML body. Sending HTML-only
+// mail (no text/plain part) is a well-known spam signal (e.g. SpamAssassin
+// MIME_HTML_ONLY); a multipart/alternative message with a real plaintext part
+// scores better and is a deliverability best practice. Pure string ops — never
+// throws on the inputs we build, but callers guard anyway so email never breaks.
+function htmlToText(html) {
+  // Cap the input: no legitimate email body approaches this. The cap plus bounded
+  // tag scans plus the linear strip below keep CPU provably small even on
+  // malformed admin-pasted HTML — a Workers CPU-time kill would bypass the
+  // callers' try/catch, so we must not rely on backtracking regexes over
+  // attacker-shaped input. Clipping the PLAINTEXT of an oversized body is fine;
+  // the HTML part is sent untouched.
+  let s = String(html);
+  if (s.length > 200000) s = s.slice(0, 200000);
+  // Drop <style>/<head> blocks (bounded lazy so an unclosed one can't scan far).
+  s = s.replace(/<style[\s\S]{0,50000}?<\/style>/gi, '').replace(/<head[\s\S]{0,50000}?<\/head>/gi, '');
+  // Preserve link URLs: "<a href=URL>label</a>" -> "label (URL)". The [^>] runs
+  // are BOUNDED so a run of unterminated "<a" can't drive quadratic CPU; real
+  // tags close well under 2000 chars, so no functional change for real HTML.
+  s = s.replace(/<a\b[^>]{0,2000}href="([^"]{0,2000})"[^>]{0,2000}>([\s\S]{0,20000}?)<\/a>/gi, (m, href, label) => {
+    const t = stripTagsLinear(label).trim();
+    return t && t !== href ? `${t} (${href})` : href;
+  });
+  // Block elements -> newlines.
+  s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h[1-6]|tr|li|table)>/gi, '\n');
+  // Strip the remaining tags in guaranteed-linear time (split, not a backtracking
+  // /<[^>]+>/ which is quadratic on ">"-free input).
+  s = stripTagsLinear(s);
+  return s
+    .replace(/&mdash;/g, '—').replace(/&middot;/g, '·')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (m, n) => { try { return String.fromCodePoint(+n); } catch (e) { return ' '; } })
+    .replace(/&[a-z]+;/gi, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function sendEmail(env, to, subject, htmlBody, fromEmail = FROM_EMAIL, fromName = FROM_NAME, textBody = null) {
+  // Always include a plaintext part (explicit or derived) so the message is
+  // multipart/alternative rather than HTML-only. Derivation is best-effort:
+  // if it ever fails, fall back to HTML-only rather than break the send.
+  let text = textBody;
+  if (!text) { try { text = htmlToText(htmlBody); } catch (e) { text = null; } }
+  const payload = { from: `${fromName} <${fromEmail}>`, to: [to], subject, html: htmlBody };
+  if (text) payload.text = text;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${env.RESEND_API_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      from: `${fromName} <${fromEmail}>`,
-      to: [to],
-      subject,
-      html: htmlBody
-    })
+    body: JSON.stringify(payload)
   });
   if (!response.ok) {
     console.error('Resend error:', await response.text());
@@ -1081,6 +1138,14 @@ async function sendEmail(env, to, subject, htmlBody, fromEmail = FROM_EMAIL, fro
 async function sendEmailBatch(env, items) {
   // items: array of full email objects {from, to, subject, html} — Resend's
   // batch endpoint accepts up to 100 per call. One retry on 429/network error.
+  // Add a derived plaintext part to any item that lacks one (multipart/alternative
+  // beats HTML-only for deliverability — see htmlToText/sendEmail).
+  const payloadItems = items.map((it) => {
+    if (it && it.html && !it.text) {
+      try { const t = htmlToText(it.html); if (t) return { ...it, text: t }; } catch (e) { /* html-only fallback */ }
+    }
+    return it;
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch('https://api.resend.com/emails/batch', {
@@ -1089,7 +1154,7 @@ async function sendEmailBatch(env, items) {
           'Authorization': `Bearer ${env.RESEND_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(items)
+        body: JSON.stringify(payloadItems)
       });
       if (response.ok) {
         const data = await response.json();
