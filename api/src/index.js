@@ -3361,7 +3361,12 @@ async function handleAuthorizeGet(request, env, url) {
   const secHeaders = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
+    // 'same-origin' (NOT 'no-referrer'): this page's consent form does a
+    // same-origin POST /authorize whose Origin header the server checks. Under
+    // 'no-referrer' the browser sends Origin: null on that POST → cross_site_blocked.
+    // 'same-origin' preserves Origin for same-origin submits; the code-carrying
+    // 303 keeps its own 'no-referrer'.
+    'Referrer-Policy': 'same-origin',
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -3598,7 +3603,9 @@ function renderSignInPrompt(row, p) {
 const accountPageHeaders = {
   'Content-Type': 'text/html; charset=utf-8',
   'Cache-Control': 'no-store',
-  'Referrer-Policy': 'no-referrer',
+  // 'same-origin' so the regenerate/logout same-origin form POSTs keep their
+  // Origin header (no-referrer would send Origin: null → cross_site_blocked).
+  'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy':
@@ -4033,7 +4040,9 @@ const NEWSLETTER_KEYS = new Set(NEWSLETTER_LISTS.map((l) => l.key));
 const authPageHeaders = {
   'Content-Type': 'text/html; charset=utf-8',
   'Cache-Control': 'no-store',
-  'Referrer-Policy': 'no-referrer',
+  // 'same-origin' so the login/register/2FA same-origin form POSTs keep their
+  // Origin header (no-referrer would send Origin: null → cross_site_blocked).
+  'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy':
