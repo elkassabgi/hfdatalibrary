@@ -77,6 +77,10 @@ const ACCOUNTS_ALLOW = new Set([
   '/account/regenerate-key',
   '/account/logout',
   '/account/update-profile',
+  '/account/change-password',
+  '/account/export',
+  '/account/resend-verification',
+  '/account/delete',
   '/csp-report',
   '/v1/auth/google/start',
   '/v1/auth/orcid/start',
@@ -1739,8 +1743,12 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/account/regenerate-key' && method === 'POST') return await handleAccountRegenerate(request, env, ip, ua);
     if (path === '/account/logout' && method === 'POST') return await handleAccountLogout(request, env);
     if (path === '/account/update-profile' && method === 'POST') return await handleAccountUpdateProfile(request, env);
+    if (path === '/account/change-password' && method === 'POST') return await handleAccountChangePassword(request, env);
+    if (path === '/account/export' && method === 'GET') return await handleAccountExport(request, env);
+    if (path === '/account/resend-verification' && method === 'POST') return await handleAccountResendVerification(request, env);
+    if (path === '/account/delete' && method === 'POST') return await handleAccountDelete(request, env);
     if (path === '/csp-report' && method === 'POST') return await handleCspReport(request, env);
-    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout' || path === '/account/update-profile') return new Response('Not found', { status: 404 });
+    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout' || path === '/account/update-profile' || path === '/account/change-password' || path === '/account/export' || path === '/account/resend-verification' || path === '/account/delete') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
@@ -3753,7 +3761,9 @@ function renderAccountPage(user, opts) {
     ".ok{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:8px;padding:.6rem .8rem;font-size:.85rem;margin-bottom:1rem}" +
     ".lk{display:inline-block;background:#0f1729;border:1px solid #2a3550;color:#9ca3af;border-radius:6px;padding:.15rem .5rem;font-size:.78rem;margin-right:.4rem}" +
     ".fl{display:block;font-size:.78rem;color:#9ca3af;margin:.55rem 0 .15rem}.fld{width:100%;box-sizing:border-box;padding:.5rem;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#e5e7eb;font-size:.9rem}" +
-    ".warn{background:rgba(212,168,67,.12);border:1px solid rgba(212,168,67,.4);color:#f0d090;border-radius:8px;padding:.55rem .75rem;margin:.3rem 0 .1rem;font-size:.82rem}";
+    ".warn{background:rgba(212,168,67,.12);border:1px solid rgba(212,168,67,.4);color:#f0d090;border-radius:8px;padding:.55rem .75rem;margin:.3rem 0 .1rem;font-size:.82rem}" +
+    ".btnlink{display:inline-block;text-decoration:none;background:transparent;color:#d4a843;border:1px solid rgba(212,168,67,.5);border-radius:8px;padding:.55rem 1.1rem;font-weight:700;font-size:.9rem}" +
+    ".danger h2{color:#f87171}.danger .warn{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.4);color:#fca5a5}.del{background:#dc2626;color:#fff}";
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<meta name="robots" content="noindex,nofollow"><title>Your ElkassabgiData account</title><style>' + S + '</style></head><body>' +
     '<div class="card">' + notice +
@@ -3773,7 +3783,27 @@ function renderAccountPage(user, opts) {
     '<label class="fl">Role<input class="fld" name="role" value="' + frole + '" maxlength="100" required></label>' +
     '<div class="row"><button type="submit" class="ghost">Save profile</button></div></form>' +
     (orcid || google ? '<p style="margin-top:.6rem">' + orcid + google + '</p>' : '') +
+    // resend verification — only when the email is unverified
+    (user.email_verified ? '' :
+      '<h2>Verify your email</h2><div class="warn">Your email isn\'t verified yet — verify it to download data.</div>' +
+      '<form method="POST" action="/account/resend-verification" class="row"><button type="submit" class="ghost">Resend verification email</button></form>') +
+    '<h2>Change password</h2>' +
+    '<form method="POST" action="/account/change-password">' +
+    '<label class="fl">Current password<input class="fld" type="password" name="current_password" autocomplete="current-password" required></label>' +
+    '<label class="fl">New password<input class="fld" type="password" name="new_password" autocomplete="new-password" required></label>' +
+    '<div class="row"><button type="submit" class="ghost">Change password</button></div></form>' +
+    '<p class="hint">Changing your password signs out your other devices.</p>' +
+    '<h2>Your data</h2><div class="row"><a href="/account/export" class="btnlink">Download my data (JSON)</a></div>' +
+    '<p class="hint">Everything on file: profile, login history and download history.</p>' +
     '<h2>Session</h2><form method="POST" action="/account/logout" class="row"><button type="submit">Log out everywhere</button></form>' +
+    '<div class="danger"><h2>Delete account</h2>' +
+    '<div class="warn">This permanently removes your account and personal data across every ElkassabgiData library. It cannot be undone.</div>' +
+    '<form method="POST" action="/account/delete">' +
+    '<label class="fl">Confirm your password<input class="fld" type="password" name="password" autocomplete="current-password" required></label>' +
+    '<label class="fl">Type DELETE to confirm<input class="fld" name="confirm" placeholder="DELETE" required></label>' +
+    '<div class="row"><button type="submit" class="del">Delete my account</button></div></form></div>' +
+    '<h2>About your ElkassabgiData account</h2>' +
+    '<p class="hint" style="line-height:1.6">One free account works across every ElkassabgiData library (hfdatalibrary.com, econdatalibrary.com, and more) &mdash; sign in once per site, and sessions last 30 days. Your API key above works everywhere via the <span style="font-family:ui-monospace,Consolas,monospace">X-API-Key</span> header. &ldquo;Log out everywhere&rdquo; ends every session at once. Forgot your password? Reset it at <a href="https://hfdatalibrary.com/pages/reset" style="color:#d4a843">hfdatalibrary.com/pages/reset</a>.</p>' +
     '</div></body></html>';
 }
 
@@ -3834,6 +3864,83 @@ async function handleAccountUpdateProfile(request, env) {
     .bind(name || user.name || '', institution, country, role, user.id).run();
   const fresh = await getIdpSessionUser(request, env);
   return new Response(renderAccountPage(fresh || user, { notice: 'Profile saved.' }), { status: 200, headers: accountPageHeaders });
+}
+
+// 1.3: change-password on accounts.* (mirrors api.* handleChangePassword; preserves THIS ekd_session).
+async function handleAccountChangePassword(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  let form;
+  try { form = await request.formData(); } catch { return new Response(renderAccountPage(user, { notice: 'Could not read the form — please try again.' }), { status: 400, headers: accountPageHeaders }); }
+  const current = (form.get('current_password') || '').toString();
+  const next = (form.get('new_password') || '').toString();
+  if (!current || !next) return new Response(renderAccountPage(user, { notice: 'Both your current and new password are required.' }), { status: 200, headers: accountPageHeaders });
+  const strength = checkPasswordStrength(next);
+  if (!strength.ok) return new Response(renderAccountPage(user, { notice: strength.error }), { status: 200, headers: accountPageHeaders });
+  const dbUser = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first();
+  if (!dbUser || !(await verifyPassword(current, dbUser.password_hash))) {
+    return new Response(renderAccountPage(user, { notice: 'Your current password is incorrect.' }), { status: 200, headers: accountPageHeaders });
+  }
+  const newHash = await hashPassword(next);
+  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, user.id).run();
+  // Sign out other devices; preserve THIS accounts.* session (user.session_id = the ekd_session hash).
+  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(user.id, user.session_id).run();
+  return new Response(renderAccountPage(user, { notice: 'Password changed. Your other devices have been signed out.' }), { status: 200, headers: accountPageHeaders });
+}
+
+// 1.3: GDPR export on accounts.* (mirrors api.* handleDataExport; GET read, no state change so no CSRF).
+async function handleAccountExport(request, env) {
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  const profile = await env.DB.prepare('SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, totp_enabled, newsletter_subscribed, created_at, last_login_at, login_count, download_count, total_bytes_downloaded FROM users WHERE id = ?').bind(user.id).first();
+  const logins = await env.DB.prepare('SELECT ip_address, user_agent, country, success, timestamp FROM login_history WHERE user_id = ? ORDER BY timestamp DESC').bind(user.id).all();
+  const downloads = await env.DB.prepare('SELECT ticker, version, endpoint, ip_address, bytes_served, timestamp FROM download_log WHERE user_id = ? ORDER BY timestamp DESC').bind(user.id).all();
+  const fname = 'elkassabgidata_' + (user.email || 'account') + '_' + new Date().toISOString().slice(0, 10) + '.json';
+  return new Response(JSON.stringify({ exported_at: new Date().toISOString(), profile, login_history: logins.results, download_history: downloads.results }, null, 2), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="' + fname + '"', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }
+  });
+}
+
+// 1.3: resend verification on accounts.* (mirrors api.* handleResendVerification).
+async function handleAccountResendVerification(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  if (user.email_verified) return new Response(renderAccountPage(user, { notice: 'Your email is already verified.' }), { status: 200, headers: accountPageHeaders });
+  const verifyToken = generateId();
+  const verifyExpires = new Date(Date.now() + 86400000).toISOString();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+  try { await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) {}
+  return new Response(renderAccountPage(user, { notice: 'Verification email sent — check your inbox (and spam).' }), { status: 200, headers: accountPageHeaders });
+}
+
+// 1.3: delete account on accounts.* (mirrors api.* handleDeleteAccount + revokes family sessions/tokens).
+async function handleAccountDelete(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  let form;
+  try { form = await request.formData(); } catch { return new Response(renderAccountPage(user, { notice: 'Could not read the form — please try again.' }), { status: 400, headers: accountPageHeaders }); }
+  const password = (form.get('password') || '').toString();
+  const confirm = (form.get('confirm') || '').toString();
+  if (confirm !== 'DELETE') return new Response(renderAccountPage(user, { notice: 'Type DELETE (all caps) in the confirm box to delete your account.' }), { status: 200, headers: accountPageHeaders });
+  const dbUser = await env.DB.prepare('SELECT password_hash, email FROM users WHERE id = ?').bind(user.id).first();
+  if (!dbUser || !(await verifyPassword(password, dbUser.password_hash))) {
+    return new Response(renderAccountPage(user, { notice: 'Incorrect password — your account was NOT deleted.' }), { status: 200, headers: accountPageHeaders });
+  }
+  // Remove every trace: family sessions/tokens + api.* rows + the user.
+  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM sso_refresh_tokens WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM login_history WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();
+  try { await sendEmail(env, ADMIN_NOTIFY, 'Account deleted: ' + dbUser.email, '<p>User <strong>' + htmlEncode(dbUser.email) + '</strong> self-deleted via accounts.elkassabgidata.com/account. All personal data removed.</p>'); } catch (e) {}
+  const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
+  return new Response(renderSignedOutPage(), { status: 200, headers: { ...accountPageHeaders, 'Set-Cookie': clear } });
 }
 
 // Temporary CSP-violation sink (report-uri on the auth page) — logs exactly what a
