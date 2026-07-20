@@ -76,6 +76,7 @@ const ACCOUNTS_ALLOW = new Set([
   '/account',
   '/account/regenerate-key',
   '/account/logout',
+  '/account/update-profile',
   '/csp-report',
   '/v1/auth/google/start',
   '/v1/auth/orcid/start',
@@ -1737,8 +1738,9 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/account' && method === 'GET') return await handleAccountGet(request, env);
     if (path === '/account/regenerate-key' && method === 'POST') return await handleAccountRegenerate(request, env, ip, ua);
     if (path === '/account/logout' && method === 'POST') return await handleAccountLogout(request, env);
+    if (path === '/account/update-profile' && method === 'POST') return await handleAccountUpdateProfile(request, env);
     if (path === '/csp-report' && method === 'POST') return await handleCspReport(request, env);
-    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout') return new Response('Not found', { status: 404 });
+    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout' || path === '/account/update-profile') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
@@ -3729,6 +3731,12 @@ function renderAccountPage(user, opts) {
   const inst = htmlEncode(user.institution || '—');
   const country = htmlEncode(user.country || '—');
   const role = htmlEncode(user.role || '—');
+  // Raw (un-dashed) values for the editable profile form fields.
+  const fname = htmlEncode(user.name || '');
+  const finst = htmlEncode(user.institution || '');
+  const fcountry = htmlEncode(user.country || '');
+  const frole = htmlEncode(user.role || '');
+  const profileIncomplete = !(user.institution && user.country && user.role);
   const orcid = user.orcid_id ? '<span class="lk">ORCID linked</span>' : '';
   const google = user.google_id ? '<span class="lk">Google linked</span>' : '';
   const notice = opts.notice ? '<div class="ok">' + htmlEncode(opts.notice) + '</div>' : '';
@@ -3743,7 +3751,9 @@ function renderAccountPage(user, opts) {
     "button.ghost{background:transparent;color:#d4a843;border:1px solid rgba(212,168,67,.5)}" +
     ".row{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.8rem}" +
     ".ok{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:8px;padding:.6rem .8rem;font-size:.85rem;margin-bottom:1rem}" +
-    ".lk{display:inline-block;background:#0f1729;border:1px solid #2a3550;color:#9ca3af;border-radius:6px;padding:.15rem .5rem;font-size:.78rem;margin-right:.4rem}";
+    ".lk{display:inline-block;background:#0f1729;border:1px solid #2a3550;color:#9ca3af;border-radius:6px;padding:.15rem .5rem;font-size:.78rem;margin-right:.4rem}" +
+    ".fl{display:block;font-size:.78rem;color:#9ca3af;margin:.55rem 0 .15rem}.fld{width:100%;box-sizing:border-box;padding:.5rem;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#e5e7eb;font-size:.9rem}" +
+    ".warn{background:rgba(212,168,67,.12);border:1px solid rgba(212,168,67,.4);color:#f0d090;border-radius:8px;padding:.55rem .75rem;margin:.3rem 0 .1rem;font-size:.82rem}";
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<meta name="robots" content="noindex,nofollow"><title>Your ElkassabgiData account</title><style>' + S + '</style></head><body>' +
     '<div class="card">' + notice +
@@ -3754,7 +3764,14 @@ function renderAccountPage(user, opts) {
     '<p class="exp">Valid until <strong>' + exp + '</strong>. One key works across every library.</p>' +
     '<form method="POST" action="/account/regenerate-key" class="row"><button type="submit" class="ghost">Regenerate key</button></form>' +
     '<p class="hint">Regenerating issues a new key value and invalidates the old one — update any scripts.</p>' +
-    '<h2>Profile</h2><dl><dt>Institution</dt><dd>' + inst + '</dd><dt>Country</dt><dd>' + country + '</dd><dt>Role</dt><dd>' + role + '</dd></dl>' +
+    '<h2>Profile</h2>' +
+    (profileIncomplete ? '<div class="warn">Complete your institution, country and role to download data.</div>' : '') +
+    '<form method="POST" action="/account/update-profile">' +
+    '<label class="fl">Name<input class="fld" name="name" value="' + fname + '" maxlength="100"></label>' +
+    '<label class="fl">Institution<input class="fld" name="institution" value="' + finst + '" maxlength="200" required></label>' +
+    '<label class="fl">Country<input class="fld" name="country" value="' + fcountry + '" maxlength="100" required></label>' +
+    '<label class="fl">Role<input class="fld" name="role" value="' + frole + '" maxlength="100" required></label>' +
+    '<div class="row"><button type="submit" class="ghost">Save profile</button></div></form>' +
     (orcid || google ? '<p style="margin-top:.6rem">' + orcid + google + '</p>' : '') +
     '<h2>Session</h2><form method="POST" action="/account/logout" class="row"><button type="submit">Log out everywhere</button></form>' +
     '</div></body></html>';
@@ -3795,6 +3812,28 @@ async function handleAccountLogout(request, env) {
   }
   const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
   return new Response(renderSignedOutPage(), { status: 200, headers: { ...accountPageHeaders, 'Set-Cookie': clear } });
+}
+
+// 1.3: update-profile on accounts.*/account. Mirrors the api.* handleUpdateProfile
+// logic (length caps, profile_complete recompute) but authed via the ekd_session
+// cookie (getIdpSessionUser) + CSRF via assertSameOriginForm, form input, HTML re-render.
+async function handleAccountUpdateProfile(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  let form;
+  try { form = await request.formData(); } catch { return new Response(renderAccountPage(user, { notice: 'Could not read the form — please try again.' }), { status: 400, headers: accountPageHeaders }); }
+  const name = (form.get('name') || '').toString().trim().slice(0, 100);
+  const institution = (form.get('institution') || '').toString().trim().slice(0, 200);
+  const country = (form.get('country') || '').toString().trim().slice(0, 100);
+  const role = (form.get('role') || '').toString().trim().slice(0, 100);
+  if (!institution || !country || !role) {
+    return new Response(renderAccountPage(user, { notice: 'Institution, country and role are all required.' }), { status: 200, headers: accountPageHeaders });
+  }
+  await env.DB.prepare('UPDATE users SET name = ?, institution = ?, country = ?, role = ?, profile_complete = 1 WHERE id = ?')
+    .bind(name || user.name || '', institution, country, role, user.id).run();
+  const fresh = await getIdpSessionUser(request, env);
+  return new Response(renderAccountPage(fresh || user, { notice: 'Profile saved.' }), { status: 200, headers: accountPageHeaders });
 }
 
 // Temporary CSP-violation sink (report-uri on the auth page) — logs exactly what a
