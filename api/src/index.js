@@ -88,7 +88,7 @@ const ACCOUNTS_ALLOW = new Set([
 // expiry validate for ~a full day).
 const EKD_SESSION_DAYS = 30;   // idp_master (ekd_session), 30d sliding
 const EDL_AT_TTL_SEC = 900;    // family access token, 15 min
-const EDL_RT_TTL_HOURS = 24;   // refresh token absolute cap (§18 decision)
+const EDL_RT_TTL_HOURS = 720;  // refresh-token absolute cap = 30 days (G-H LOCKED 2026-07-18; was 24 h — restores the pre-SSO 30-day persistence)
 const CODE_TTL_SEC = 60;       // one-time authorization code
 const GESTURE_TTL_SEC = 300;   // consent gesture HMAC token, 5 min
 const RT_GRACE_SEC = 10;       // benign multi-tab refresh race window
@@ -4378,6 +4378,7 @@ function renderAuthPage(row, p, opts) {
     '<input type="email" name="email" placeholder="Email" value="' + em + '" required autocomplete="email">' +
     '<input type="password" name="password" placeholder="Password" required autocomplete="current-password">' +
     '<button type="submit">Log in</button></form>' +
+    '<p style="text-align:center;margin:.5rem 0 0"><a href="https://hfdatalibrary.com/pages/reset" target="_blank" rel="noopener" style="color:#9ca3af;font-size:.8rem;text-decoration:none">Forgot password?</a></p>' +
     '<div class="oauth"><a href="/v1/auth/google/start?' + oauthQ + '">Continue with Google</a>' +
     '<a href="/v1/auth/orcid/start?' + oauthQ + '">Continue with ORCID</a></div></div>' +
     // register panel
