@@ -12,10 +12,12 @@
     background:#0f1729;color:#9ca3af}
   .m{text-align:center}
   .m strong{color:#d4a843}
+  .m a{color:#d4a843}
+  .ret{margin-top:.6rem;font-size:.85rem}
 </style>
 </head>
 <body>
-  <div class="m"><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in…</p></div>
+  <div class="m"><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in…</p><p class="ret"><a href="/">Return to the site</a></p></div>
   <script>
   (function () {
     var hasCode = false, hasOpener = false;
@@ -34,7 +36,6 @@
     // Diagnostic beacon → shows in the worker tail so we can confirm the callback
     // actually ran on the returning-user flow (temporary; remove after debugging).
     try { new Image().src = 'https://accounts.elkassabgidata.com/sdk/ekd-sso.js?cbdiag=1&code=' + (hasCode ? 1 : 0) + '&opener=' + (hasOpener ? 1 : 0) + '&t=' + Date.now(); } catch (e) {}
-    try { document.getElementById('msg').innerHTML = '<strong>ElkassabgiData</strong><br>callback ran · code:' + (hasCode ? 'yes' : 'NO') + ' · opener:' + (hasOpener ? 'yes' : 'no') + '<br>closing…'; } catch (e) {}
     setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
   })();
   </script>
