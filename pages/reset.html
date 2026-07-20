@@ -25,7 +25,21 @@
   <div class="container" style="max-width:400px;">
     <h2 style="text-align:center; margin-bottom:1.5rem;">Reset password</h2>
 
-    <div id="reset-form" class="register-form" style="max-width:100%;">
+    <!-- 1.1: reset-REQUEST form. Shown when there is NO ?token= — this replaces the
+         old dead "Invalid link. No reset token found." state so a bare /pages/reset
+         visit is a working "email me a link" flow. Posts to the M3-gated endpoint. -->
+    <div id="request-form" class="register-form" style="max-width:100%; display:none;">
+      <p style="font-size:0.9rem; color:var(--gray-600); margin-bottom:1rem;">This resets the password for your ElkassabgiData account &mdash; the single account used by hfdatalibrary.com, econdatalibrary.com, and all our libraries.</p>
+      <div class="form-group">
+        <label for="request-email">Email</label>
+        <input type="email" id="request-email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="requestReset()">Email me a reset link</button>
+      <div id="request-result" style="margin-top:1rem; display:none;"></div>
+    </div>
+
+    <!-- completion form: shown when arriving from the emailed link (?token=…). Behavior unchanged. -->
+    <div id="reset-form" class="register-form" style="max-width:100%; display:none;">
       <div class="form-group">
         <label for="new-password">New password</label>
         <input type="password" id="new-password" placeholder="Minimum 8 characters">
@@ -43,8 +57,39 @@
 <script>
 const token = new URLSearchParams(window.location.search).get('token');
 
-if (!token) {
-  document.getElementById('reset-form').innerHTML = '<p style="color:var(--red);">Invalid link. No reset token found.</p>';
+// No token => reset REQUEST (previously a dead "Invalid link" page); token present
+// => the completion form arrived from the emailed link. Reveal exactly one.
+if (token) {
+  document.getElementById('reset-form').style.display = '';
+} else {
+  document.getElementById('request-form').style.display = '';
+}
+
+async function requestReset() {
+  const email = document.getElementById('request-email').value.trim();
+  const result = document.getElementById('request-result');
+  if (!email || email.indexOf('@') === -1) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red);">Enter your email address.</p>';
+    return;
+  }
+  // The backend returns a neutral 200 whether or not the address exists (no
+  // account enumeration), so the page shows the SAME success either way — and
+  // even on a network error, to never leak existence. [§9 D83]
+  try {
+    await fetch('https://api.hfdatalibrary.com/v1/auth/reset-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+  } catch (e) { /* fall through to the same neutral message */ }
+  document.getElementById('request-form').innerHTML =
+    '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.5rem;">' +
+      '<strong style="color:#065f46;">Check your email</strong>' +
+      '<p style="color:#047857; margin-top:0.5rem;">If an account exists for that address, we&rsquo;ve emailed a password-reset link. ' +
+      'Don&rsquo;t see it within a minute? Check your spam or junk folder. ' +
+      'Once reset, click <a href="download#register">Sign in</a> &mdash; one account works across all ElkassabgiData libraries.</p>' +
+    '</div>';
 }
 
 async function resetPassword() {
