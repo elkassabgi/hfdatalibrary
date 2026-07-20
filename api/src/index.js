@@ -3937,6 +3937,12 @@ async function handleAccountDelete(request, env) {
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(user.id).run();
+  // sso_codes (one per popup login) + newsletter_prefs (one per registration) also FK->users;
+  // without clearing them the final users DELETE hits a FOREIGN KEY constraint and fails for any
+  // real user (surfaced live 2026-07-20 during the throwaway delete test). The api.* handler
+  // handleDeleteAccount has the same latent gap — noted for M3, not touched here (G-4/G-6).
+  await env.DB.prepare('DELETE FROM sso_codes WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM newsletter_prefs WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();
   try { await sendEmail(env, ADMIN_NOTIFY, 'Account deleted: ' + dbUser.email, '<p>User <strong>' + htmlEncode(dbUser.email) + '</strong> self-deleted via accounts.elkassabgidata.com/account. All personal data removed.</p>'); } catch (e) {}
   const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
