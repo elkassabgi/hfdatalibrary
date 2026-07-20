@@ -2206,6 +2206,13 @@ async function handleDeleteAccount(request, env, cors) {
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(userId).run();
+  // sso_refresh_tokens, sso_codes and newsletter_prefs also FK->users; without clearing them the
+  // users DELETE fails with a FOREIGN KEY constraint for any user who has logged in via the popup
+  // (sso_codes/sso_refresh_tokens) or set newsletter prefs at registration. Surfaced live
+  // 2026-07-20; the accounts.* handleAccountDelete was fixed the same way (commit e60005e).
+  await env.DB.prepare('DELETE FROM sso_refresh_tokens WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM sso_codes WHERE user_id = ?').bind(userId).run();
+  await env.DB.prepare('DELETE FROM newsletter_prefs WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
 
   // Notify admin
