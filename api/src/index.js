@@ -489,30 +489,30 @@ export default {
       if (path === '/v1/symbols')
         return await handleSymbols(env, cors);
 
-      const symbolMatch = path.match(/^\/v1\/symbols\/([A-Z0-9.]+)$/i);
+      const symbolMatch = path.match(/^\/v1\/symbols\/([A-Z0-9.-]+)$/i);
       if (symbolMatch)
         return await handleSymbolInfo(symbolMatch[1].toUpperCase(), env, cors);
 
-      const barsMatch = path.match(/^\/v1\/bars\/([A-Z0-9.]+)$/i);
+      const barsMatch = path.match(/^\/v1\/bars\/([A-Z0-9.-]+)$/i);
       if (barsMatch)
         return await handleBars(barsMatch[1].toUpperCase(), request, env, cors, ip);
 
       // Pre-computed academic variables (25 measures) and data-quality metrics
-      const varsMatch = path.match(/^\/v1\/variables\/([A-Z0-9.]+)$/i);
+      const varsMatch = path.match(/^\/v1\/variables\/([A-Z0-9.-]+)$/i);
       if (varsMatch)
         return await handleDerived(varsMatch[1].toUpperCase(), 'variables', request, env, cors, ip);
 
-      const qualMatch = path.match(/^\/v1\/quality\/([A-Z0-9.]+)$/i);
+      const qualMatch = path.match(/^\/v1\/quality\/([A-Z0-9.-]+)$/i);
       if (qualMatch)
         return await handleDerived(qualMatch[1].toUpperCase(), 'quality', request, env, cors, ip);
 
       // Request a signed download URL (short-lived token)
-      const dlRequestMatch = path.match(/^\/v1\/download-token\/([A-Z0-9.]+)$/i);
+      const dlRequestMatch = path.match(/^\/v1\/download-token\/([A-Z0-9.-]+)$/i);
       if (dlRequestMatch)
         return await handleDownloadToken(dlRequestMatch[1].toUpperCase(), request, env, cors);
 
       // Use a signed download URL
-      const dlMatch = path.match(/^\/v1\/download\/([A-Z0-9.]+)$/i);
+      const dlMatch = path.match(/^\/v1\/download\/([A-Z0-9.-]+)$/i);
       if (dlMatch)
         return await handleDownload(dlMatch[1].toUpperCase(), request, env, cors, ip);
 
