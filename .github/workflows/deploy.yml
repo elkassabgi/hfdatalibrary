@@ -5,6 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# SSO rollout §2.A prerequisite [D19/D22]: serialize main deploys so a rollback
+# push cannot race and lose to its own bad predecessor (Cloudflare makes the
+# LAST-CREATED deployment live). cancel-in-progress:false = queue in push order,
+# never cancel an in-flight deploy.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
 jobs:
   deploy-site:
     runs-on: ubuntu-latest
@@ -79,5 +87,15 @@ jobs:
           assert eq  "accounts/v1/download/AAPL == 404 (isolated)" 404 "$ACC/v1/download/AAPL"
           # 5) issuer surface is NOT served on the data host.
           assert eq  "api/authorize == 404 (issuer not on data host)" 404 "$API/authorize"
+          # 6) POSITIVE IdP liveness (SSO rollout §2.A prerequisite [D22]): today the
+          #    assertion checks only api.* reachability + accounts.* 404-isolation, so a
+          #    broken merge could redeploy a DEAD IdP with green CI. Assert the IdP door
+          #    actually serves: SDK + signed-out account page live; and /authorize with a
+          #    VALID client_id + WRONG redirect_uri returns the S18 "Redirect URI mismatch"
+          #    (400, recorded P0.8/2026-07-20), NOT a 5xx. deploy.yml is CI config, not an
+          #    api.* handler (G-4 intact).
+          assert eq  "accounts/sdk/ekd-sso.js == 200"               200 "$ACC/sdk/ekd-sso.js"
+          assert eq  "accounts/account == 200"                      200 "$ACC/account"
+          assert eq  "accounts/authorize mismatch == 400 (S18)"     400 "$ACC/authorize?client_id=https%3A%2F%2Fhfdatalibrary.com&redirect_uri=https%3A%2F%2Fexample.invalid%2Fx&state=probe&code_challenge=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&code_challenge_method=S256"
 
-          echo "OK: reachability, bypass closure, CSRF gate, and IdP host isolation all verified."
+          echo "OK: reachability, bypass closure, CSRF gate, IdP host isolation, and positive IdP liveness all verified."
