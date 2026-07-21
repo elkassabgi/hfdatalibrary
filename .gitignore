@@ -18,3 +18,10 @@ WEBSITE_PLAN.md
 data/cleaning_detail.csv
 data/variables/
 expansion-plan/
+
+# Internal planning/strategy docs — kept LOCAL ONLY, not for the public repo (2026-07-22)
+/WEBSITE_PLAN.md
+/SEO_STRATEGY.md
+/PARTNER_TOOLKIT_PLAN.md
+/TOOLKIT_IMPLEMENTATION_PLAN.md
+/IEX_PIPELINE_PLAN.md
