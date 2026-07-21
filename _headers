@@ -8,3 +8,9 @@
 
 /data/metadata.json
   Cache-Control: no-cache, no-store, must-revalidate
+
+# [SSO 3.1 / D23] Revalidate site.js every request (ETag 304s keep it cheap) so a
+# dual-mode nav change — or its rollback — propagates next-request, instead of being
+# bounded by the 4 h default max-age. All ~21 includes are version-less.
+/js/site.js
+  Cache-Control: no-cache
