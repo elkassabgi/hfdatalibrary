@@ -448,6 +448,17 @@
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
+    <!-- [Phase 3.3] Family SSO sign-in card — quick popup; the register/login grid below is the
+         retained dark-launch flow (untouched). -->
+    <div id="ekd-signin-card" style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:1.5rem 1.75rem; margin-bottom:2rem;">
+      <h3 style="margin:0 0 0.4rem;">Sign in with your ElkassabgiData account</h3>
+      <p style="color:var(--gray-600); font-size:0.92rem; margin:0 0 1.1rem;">One free account works across every ElkassabgiData library. Sign in with a quick popup &mdash; same email and password.</p>
+      <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+        <a id="ekd-signin-btn" href="#register" class="btn btn-primary">Sign in</a>
+        <a id="ekd-register-btn" href="#register" class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);">Create free account</a>
+      </div>
+    </div>
+
     <!-- Registration / Login -->
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: start;">
       <div>
@@ -579,6 +590,83 @@
 
 <script>
 const API = 'https://api.hfdatalibrary.com';
+const ACCOUNTS_BASE = 'https://accounts.elkassabgidata.com';
+
+// [Phase 3.3] Dual-mode download auth: a VALIDATED legacy hfd_session wins (channel='web'), else the
+// EKD family token (channel='family'). Purely additive — the old register/login grid below is untouched.
+function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function safeDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+// Load the EKD SDK for family sign-in; feature-detect everywhere. onload → init + re-run checkAuth so an
+// EKD user's currentUser resolves once the SDK is ready. onerror/absence → legacy-only, page still works.
+var EKD_READY = false;
+(function loadSdk() {
+  try {
+    var s = document.createElement('script');
+    s.src = ACCOUNTS_BASE + '/sdk/ekd-sso.js';
+    s.onload = function () {
+      try {
+        if (window.EKD) {
+          EKD_READY = true;
+          window.EKD.init();                                   // clientId = this origin, callback /auth/callback
+          window.EKD.on('login',  function () { checkAuth(); });
+          window.EKD.on('logout', function () { checkAuth(); });
+        }
+      } catch (e) {}
+      checkAuth();
+    };
+    s.onerror = function () {};
+    document.head.appendChild(s);
+  } catch (e) {}
+})();
+
+// Fresh Bearer per download call (D38: edl_at is 15-min — resolve per request). Legacy-first, else family.
+async function getDownloadAuth() {
+  var legacy = safeGet('hfd_session');
+  if (legacy) return { token: legacy, kind: 'legacy' };
+  if (window.EKD) { try { var at = await window.EKD.getAccessToken(); if (at) return { token: at, kind: 'family' }; } catch (e) {} }
+  return null;
+}
+
+// D38: a download 401. family → the session is dead — do NOT loop getAccessToken; clear state + offer Sign
+// in (EKD.login mints fresh tokens with no reload — that IS recovery). legacy → purge per G-13.
+function handleDownloadAuthDead(kind) {
+  currentUser = null;
+  if (kind === 'family') {
+    alert('Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
+  } else {
+    safeDel('hfd_session'); sessionToken = null;
+    alert('Your session expired. Please sign in again to download.');
+  }
+  var el = document.getElementById('ekd-signin-card'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// §9 popup-rejection copy (D40): specific for blocked/closed, generic for everything else.
+function showSigninError(err) {
+  var m = (err && err.message) || 'exchange_failed';
+  alert(m === 'popup_blocked'
+    ? 'Your browser blocked the sign-in window. Allow popups for this site, then click Sign in again.'
+    : m === 'popup_closed'
+      ? 'The sign-in window was closed. If you just registered, check your email (and spam) to verify your address, then click Sign in.'
+      : 'Sign-in didn’t complete. Click Sign in to try again — if you just registered, one click is all it takes.');
+}
+
+// Surface a download 403 (email-unverified / profile-incomplete) VERBATIM + the §9 tail.
+function downloadForbidden(msg) {
+  alert((msg || 'Access denied.') +
+    '\n\nDon’t see it? Check your spam or junk folder.' +
+    '\nManage your account at accounts.elkassabgidata.com/account — or sign in below with the same email and password.');
+}
+
+// Wire the sign-in card buttons — synchronous EKD.login (G-12a); the #register href is the no-JS fallback.
+function wireEkdCard() {
+  var si = document.getElementById('ekd-signin-btn');
+  var rg = document.getElementById('ekd-register-btn');
+  if (si) si.addEventListener('click', function (e) { if (!window.EKD) return; e.preventDefault(); window.EKD.login().catch(showSigninError); });
+  if (rg) rg.addEventListener('click', function (e) { if (!window.EKD) return; e.preventDefault(); window.EKD.login({ tab: 'register' }).catch(showSigninError); });
+}
+document.addEventListener('DOMContentLoaded', wireEkdCard);
 
 // Family-aware registration: a visitor arriving from another ElkassabgiData site
 // carries ?from=econ / ?from=elkassabgidata. Accounts are shared family-wide, so
@@ -737,20 +825,29 @@ let oauthPendingId = null;
   }
 })();
 
-// Fetch current user on page load (for search/download to work)
+// Resolve the download identity on load / post-login: a VALIDATED legacy hfd_session wins, else the EKD
+// family session. Sets currentUser (drives the search gate + the "registration required" banner).
+// [D02/G-13] purge the legacy session ONLY on 401; KEEP it on any 5xx / network blip — a brief api.*
+// hiccup must never client-side-log-out a legacy user.
 async function checkAuth() {
-  if (!sessionToken) { currentUser = null; return; }
-  try {
-    const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + sessionToken } });
-    if (r.ok) {
-      currentUser = await r.json();
-      // Hide the "Registration required" banner for logged-in users
-      const banner = document.getElementById('free-access-banner');
-      if (banner) banner.style.display = 'none';
-    } else {
-      localStorage.removeItem('hfd_session'); sessionToken = null; currentUser = null;
-    }
-  } catch (e) { currentUser = null; }
+  currentUser = null;
+  const legacy = safeGet('hfd_session');
+  if (legacy) {
+    try {
+      const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
+      if (r.ok) currentUser = await r.json();
+      else if (r.status === 401) { safeDel('hfd_session'); sessionToken = null; }
+      // 5xx / non-401 → keep hfd_session, fall through (transient)
+    } catch (e) { /* network → keep, fall through */ }
+  }
+  if (!currentUser && window.EKD) {
+    try {
+      const at = await window.EKD.getAccessToken();
+      if (at) { const r2 = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } }); if (r2.ok) currentUser = await r2.json(); }
+    } catch (e) {}
+  }
+  const banner = document.getElementById('free-access-banner');
+  if (banner) banner.style.display = currentUser ? 'none' : '';
 }
 checkAuth();
 
@@ -837,7 +934,12 @@ function renderBundle() {
 }
 
 async function downloadBundle(format) {
-  if (!sessionToken) { alert('Please log in first.'); return; }
+  const auth = await getDownloadAuth();
+  if (!auth) {
+    var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    alert('Please sign in to download — one free account works across every library.');
+    return;
+  }
   if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
   if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('bundle-version').value;
@@ -847,11 +949,13 @@ async function downloadBundle(format) {
   const bar = document.getElementById('bundle-bar');
   const status = document.getElementById('bundle-status');
   progress.style.display = 'block';
-  let completed = 0, failed = 0;
+  let completed = 0, failed = 0, authDead = null;
   for (const ticker of tickers) {
+    const a2 = await getDownloadAuth();                        // fresh per ticker (D38: 15-min edl_at)
+    if (!a2) { authDead = auth.kind; break; }
     try {
       const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
-        headers: { 'Authorization': 'Bearer ' + sessionToken }
+        headers: { 'Authorization': 'Bearer ' + a2.token }
       });
       const data = await r.json();
       if (r.ok && data.url) {
@@ -862,11 +966,17 @@ async function downloadBundle(format) {
         a.click();
         a.remove();
         await new Promise(resolve => setTimeout(resolve, 300));
-      } else { failed++; }
+      } else if (r.status === 401) { authDead = a2.kind; break; }   // D38: session died mid-bundle → stop + recover
+      else { failed++; }
     } catch (e) { failed++; }
     completed++;
     bar.style.width = ((completed / tickers.length) * 100) + '%';
     status.textContent = completed + ' / ' + tickers.length + ' downloaded' + (failed > 0 ? ' (' + failed + ' failed)' : '');
+  }
+  if (authDead) {
+    status.textContent = 'Sign-in ended — ' + (completed - failed) + ' downloaded before it stopped.';
+    handleDownloadAuthDead(authDead);
+    return;
   }
   status.textContent = 'Done! ' + (completed - failed) + ' files downloaded.' + (failed > 0 ? ' ' + failed + ' failed.' : '');
 }
@@ -974,17 +1084,26 @@ function handleRoleChange() {
 
 // ── Signed download — request a short-lived token and open it ──
 async function downloadViaToken(ticker, format) {
-  if (!sessionToken) { alert('Please log in first.'); return; }
+  const auth = await getDownloadAuth();
+  if (!auth) {
+    var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    alert('Please sign in to download — one free account works across every library.');
+    return;
+  }
   if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('version-select').value;
   const timeframe = document.getElementById('timeframe-select').value;
   try {
     const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
-      headers: { 'Authorization': 'Bearer ' + sessionToken }
+      headers: { 'Authorization': 'Bearer ' + auth.token }
     });
     const data = await r.json();
     if (r.ok && data.url) {
       window.location.href = data.url;
+    } else if (r.status === 401) {
+      handleDownloadAuthDead(auth.kind);                     // D38: dead session → recover, no retry loop
+    } else if (r.status === 403) {
+      downloadForbidden(data.error);                          // verify-email / complete-profile, verbatim + §9 tail
     } else {
       alert(data.error || 'Failed to get download link');
     }
@@ -998,8 +1117,9 @@ async function searchTicker() {
   const results = document.getElementById('search-results');
   results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Searching...</p>';
 
+  if (!currentUser) { await checkAuth(); }                      // re-resolve (EKD may have loaded since page load)
   if (!currentUser) {
-    results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Please <a href="#register">register or log in</a> to download data.</p>';
+    results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Please <a href="#ekd-signin-card">sign in</a> to download data &mdash; one free account works across every library.</p>';
     return;
   }
 

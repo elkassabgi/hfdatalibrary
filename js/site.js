@@ -127,89 +127,246 @@
     }
   }
 
-  // ── User Widget in Navbar ──
+  // ── User identity in the navbar — DUAL-MODE (legacy hfd_session ∪ EKD family SSO) ──
+  // [Phase 3.2] Purely additive. A VALIDATED legacy hfd_session ALWAYS wins (existing users keep
+  // their exact nav + in-site account link); otherwise the EKD popup provides family sign-in. ONE
+  // precedence helper owns the nav (D42) and re-runs on SDK login/logout + bfcache (D34). Nothing
+  // here removes the old login — the retained old form is the dark launch.
   const API_BASE = 'https://api.hfdatalibrary.com';
+  const ACCOUNTS_BASE = 'https://accounts.elkassabgidata.com';
   const isSubpage2 = window.location.pathname.includes('/pages/');
   const downloadUrl = isSubpage2 ? 'download' : 'pages/download';
+  const accountUrl = isSubpage2 ? 'account' : 'pages/account';
+  const adminUrl = isSubpage2 ? 'admin' : 'pages/admin';
 
-  async function buildUserWidget() {
-    const navLinks = document.querySelector('.nav-links');
+  // G-11a: storage may throw (private mode / blocked) — never let it break the page.
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function safeDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  // G-11b/D56: every profile-derived value is escaped before it touches innerHTML.
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  var EKD_READY = false, sdkSettled = false, paintGen = 0, paintedSignedIn = false, loggingOut = false;
+
+  // Load the SDK for site.js's OWN use; feature-detect everywhere. onerror / a 4 s timeout still
+  // "settles" so the optimistic chip can never hang if accounts.* is blocked or slow.
+  function settleSdk() { if (!sdkSettled) { sdkSettled = true; paintUserWidget(); } }
+  (function loadSdk() {
+    try {
+      var s = document.createElement('script');
+      s.src = ACCOUNTS_BASE + '/sdk/ekd-sso.js';
+      s.onload = function () {
+        try {
+          if (window.EKD) {
+            EKD_READY = true;
+            window.EKD.init();                                          // clientId = this origin, callback /auth/callback
+            // D42: SDK events NEVER paint directly — they re-run the single nav owner.
+            window.EKD.on('login',  function () { safeDel('ekd_notice_demoted'); paintUserWidget(); });
+            window.EKD.on('logout', function () { paintUserWidget(); });
+          }
+        } catch (e) {}
+        settleSdk();
+      };
+      s.onerror = function () { settleSdk(); };
+      document.head.appendChild(s);
+      setTimeout(settleSdk, 4000);
+    } catch (e) { settleSdk(); }
+  })();
+
+  // Flash-fix: before the SDK settles, if a session token is stored show a neutral chip (not
+  // "Sign in") so a returning user never flashes signed-out → signed-in.
+  function optimisticPaint() {
+    var navLinks = document.querySelector('.nav-links');
+    if (!navLinks || document.getElementById('nav-user-widget')) return;
+    if (!(safeGet('hfd_session') || safeGet('ekd_rt'))) return;         // truly signed-out → paintUserWidget draws "Sign in"
+    var li = document.createElement('li');
+    li.id = 'nav-user-widget';
+    li.style.marginLeft = '0.75rem';
+    li.innerHTML = '<span style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.75rem; color:rgba(255,255,255,0.7); font-size:0.85rem;">&#8230;</span>';
+    navLinks.appendChild(li);
+  }
+
+  // The single nav owner. Precedence: validated-legacy → EKD family → signed-out.
+  async function paintUserWidget() {
+    var navLinks = document.querySelector('.nav-links');
     if (!navLinks) return;
+    var gen = ++paintGen;                                              // adversarial#1: only the newest paint renders
+    var user = null, mode = null;
 
-    const sessionToken = localStorage.getItem('hfd_session');
-    let user = null;
-
-    if (sessionToken) {
+    // (1) VALIDATED-LEGACY wins — unchanged UX for existing users.
+    var legacy = safeGet('hfd_session');
+    if (legacy) {
       try {
-        const r = await fetch(API_BASE + '/v1/auth/me', {
-          headers: { 'Authorization': 'Bearer ' + sessionToken }
-        });
-        if (r.ok) user = await r.json();
+        var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
+        if (r.ok) { user = await r.json(); mode = 'legacy'; }
+        else if (r.status === 401) { safeDel('hfd_session'); }         // D02/G-13: dead session → purge, fall through
+        // D02: any 5xx / non-401 → KEEP hfd_session, fall through to signed-out THIS pageview only (never delete).
+      } catch (e) { /* D02: network/timeout → KEEP, fall through (transient) */ }
+    }
+
+    // (2) else EKD family session.
+    if (!user && EKD_READY && window.EKD) {
+      try {
+        var at = await window.EKD.getAccessToken();
+        if (at) {
+          var r2 = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } });
+          if (r2.ok) { user = await r2.json(); mode = 'ekd'; }
+        }
       } catch (e) {}
     }
 
-    // Remove existing widget if any
-    const existing = document.getElementById('nav-user-widget');
-    if (existing) existing.remove();
+    if (gen !== paintGen) return;                                      // superseded by a newer paint
+    // EKD state still pending (SDK not settled) + a stored rt → keep the optimistic chip; the SDK
+    // settle re-runs this and resolves the real name (avoids …→"Sign in"→name).
+    if (!user && !sdkSettled && safeGet('ekd_rt')) return;
+    renderWidget(navLinks, user, mode);
+  }
 
-    const li = document.createElement('li');
+  function renderWidget(navLinks, user, mode) {
+    var existing = document.getElementById('nav-user-widget');
+    if (existing) existing.remove();
+    var li = document.createElement('li');
     li.id = 'nav-user-widget';
     li.style.marginLeft = '0.75rem';
 
     if (user) {
-      const vipBadge = user.is_vip
+      paintedSignedIn = true;
+      var vipBadge = user.is_vip
         ? '<span style="display:inline-block; background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332; font-size:0.6rem; font-weight:700; padding:0.1em 0.4em; border-radius:3px; margin-left:0.25rem; letter-spacing:0.05em; text-transform:uppercase;">&#9733;</span>'
         : '';
-      const firstName = (user.name || '').split(' ')[0];
+      var firstName = esc((user.name || '').split(' ')[0]);
+      var initial = esc((user.name || 'U')[0].toUpperCase());
+      var acctHref = mode === 'ekd' ? (ACCOUNTS_BASE + '/account') : accountUrl;
+      var acctAttr = mode === 'ekd' ? ' target="_blank" rel="noopener"' : '';
+      var logoutLabel = mode === 'ekd' ? 'Log out (this site)' : 'Log out';
+      var logoutNote = mode === 'ekd'
+        ? '<div style="padding:0 1rem 0.45rem; font-size:0.72rem; color:var(--gray-500); line-height:1.35;">To log out of every library, use &ldquo;Log out everywhere&rdquo; on your account page.</div>'
+        : '';
       li.style.position = 'relative';
       li.innerHTML =
-        '<div style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.6rem; color:#fff; font-size:0.85rem; cursor:pointer; white-space:nowrap;" onclick="document.getElementById(\'user-dropdown\').style.display = document.getElementById(\'user-dropdown\').style.display === \'block\' ? \'none\' : \'block\'">' +
-          '<span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background:var(--gold); color:var(--navy); border-radius:50%; font-weight:700; font-size:0.7rem;">' + (user.name || 'U')[0].toUpperCase() + '</span>' +
+        '<div style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.6rem; color:#fff; font-size:0.85rem; cursor:pointer; white-space:nowrap;" onclick="var d=document.getElementById(\'user-dropdown\'); d.style.display = d.style.display===\'block\'?\'none\':\'block\'">' +
+          '<span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background:var(--gold); color:var(--navy); border-radius:50%; font-weight:700; font-size:0.7rem;">' + initial + '</span>' +
           '<span>' + firstName + '</span>' + vipBadge +
           '<span style="font-size:0.65rem; opacity:0.7;">&#9660;</span>' +
         '</div>' +
         '<div id="user-dropdown" style="display:none; position:absolute; top:calc(100% + 0.5rem); right:0; background:#fff; border:1px solid var(--gray-200); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0.5rem 0; min-width:220px; z-index:101;">' +
           '<div style="padding:0.75rem 1rem; border-bottom:1px solid var(--gray-100);">' +
-            '<div style="font-weight:600; color:var(--navy);">' + user.name + '</div>' +
-            '<div style="font-size:0.8rem; color:var(--gray-500);">' + user.email + '</div>' +
+            '<div style="font-weight:600; color:var(--navy);">' + esc(user.name) + '</div>' +
+            '<div style="font-size:0.8rem; color:var(--gray-500);">' + esc(user.email) + '</div>' +
           '</div>' +
-          '<a href="' + (isSubpage2 ? 'account' : 'pages/account') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
+          '<a href="' + acctHref + '"' + acctAttr + ' style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
           '<a href="' + downloadUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Downloads</a>' +
-          (user.is_admin ? '<a href="' + (isSubpage2 ? 'admin' : 'pages/admin') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
-          '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">Log out</div>' +
+          (user.is_admin ? '<a href="' + adminUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
+          '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">' + logoutLabel + '</div>' +
+          logoutNote +
         '</div>';
     } else {
+      // signed-out: EKD popup Sign-in (synchronous, G-12a) + a secondary "More sign-in options" link
+      // keeping Google/ORCID/password reachable until G-C is a WITNESSED live popup OAuth login.
       li.innerHTML =
-        '<a href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600; white-space:nowrap;">Sign in</a>';
+        '<span style="display:inline-flex; align-items:center; gap:0.55rem; white-space:nowrap;">' +
+          '<a id="nav-signin" href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600;">Sign in</a>' +
+          '<a href="' + downloadUrl + '#register" style="color:rgba(255,255,255,0.72); font-size:0.72rem;">More sign-in options</a>' +
+        '</span>';
     }
 
     navLinks.appendChild(li);
 
-    // Expose logout
-    window.__hfdLogout = async function() {
-      const t = localStorage.getItem('hfd_session');
-      if (t) {
-        try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {}
-      }
-      localStorage.removeItem('hfd_session');
+    // logout: clears BOTH the legacy session and the EKD family session.
+    window.__hfdLogout = async function () {
+      loggingOut = true;                                               // suppress the demotion notice on INTENTIONAL logout
+      var t = safeGet('hfd_session');
+      if (t) { try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {} }
+      safeDel('hfd_session');
+      try { if (window.EKD) await window.EKD.logout(); } catch (e) {}
       window.location.reload();
     };
 
-    // VIP site-wide banner
+    if (user) {
+      if (mode === 'legacy') maybeShowTransitionNotice();             // D87 one-time upgrade notice
+    } else if (paintedSignedIn && !loggingOut) {
+      paintedSignedIn = false;
+      showDemotionNotice();                                            // D36 one-time NEUTRAL "session ended" notice
+    }
+
+    // signed-out Sign-in click → popup (synchronous G-12a); rejection copy per §9/D40.
+    if (!user) {
+      var btn = document.getElementById('nav-signin');
+      if (btn && EKD_READY && window.EKD) {
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.EKD.login().catch(function (err) { showSigninError(err); });
+        });
+      }
+    }
+
+    // VIP site-wide banner (unchanged behavior).
     if (user && user.is_vip) {
-      const existingBanner = document.getElementById('vip-banner');
-      if (!existingBanner) {
-        const banner = document.createElement('div');
+      if (!document.getElementById('vip-banner')) {
+        var banner = document.createElement('div');
         banner.id = 'vip-banner';
         banner.style.cssText = 'background:linear-gradient(90deg,#1a2332 0%,#2a3a5a 50%,#1a2332 100%); color:#d4a843; padding:0.4rem 0; text-align:center; font-size:0.8rem; font-weight:500; letter-spacing:0.05em; border-bottom:1px solid #d4a843;';
         banner.innerHTML = '&#9733; VIP MEMBER &#9733; &nbsp;&nbsp; You have access to premium features and priority support.';
-        const navbar = document.querySelector('.navbar');
+        var navbar = document.querySelector('.navbar');
         if (navbar) navbar.parentNode.insertBefore(banner, navbar.nextSibling);
       }
+    } else {
+      var vb = document.getElementById('vip-banner'); if (vb) vb.remove();
     }
   }
 
-  buildUserWidget();
+  // ── §9 notices (exact copy pack) ──
+  function showSigninError(err) {
+    var m = (err && err.message) || 'exchange_failed';
+    var msg = (m === 'popup_blocked')
+      ? 'Your browser blocked the sign-in window. Allow popups for this site, then click Sign in again.'
+      : (m === 'popup_closed')
+        ? 'The sign-in window was closed. If you just registered, check your email (and spam) to verify your address, then click Sign in.'
+        : 'Sign-in didn’t complete. Click Sign in to try again — if you just registered, one click is all it takes.';
+    showToast(msg);
+  }
+  function showDemotionNotice() {
+    var last = safeGet('ekd_notice_demoted');
+    if (last && (Date.now() - Number(last)) < 7 * 864e5) return;       // 7-day suppression (D36)
+    safeSet('ekd_notice_demoted', String(Date.now()));
+    showToast('Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
+  }
+  function maybeShowTransitionNotice() {
+    if (safeGet('ekd_notice_transition') === '1') return;
+    if (document.getElementById('ekd-transition-banner')) return;
+    try {
+      var bar = document.createElement('div');
+      bar.id = 'ekd-transition-banner';
+      bar.style.cssText = 'background:#243b53; color:#e8eef6; padding:0.6rem 2.4rem 0.6rem 1rem; font-size:0.84rem; line-height:1.5; text-align:center; position:relative; z-index:1400;';
+      bar.innerHTML = 'Sign-in has been upgraded &mdash; one ElkassabgiData account now works across all our libraries. You&rsquo;re still signed in; nothing changes today. Next time, use the <strong>Sign in</strong> button (a quick popup) &mdash; same email and password.';
+      var x = document.createElement('button');
+      x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
+      x.style.cssText = 'position:absolute; right:0.7rem; top:50%; transform:translateY(-50%); background:none; border:none; color:#e8eef6; font-size:1.15rem; cursor:pointer;';
+      x.onclick = function () { bar.remove(); safeSet('ekd_notice_transition', '1'); };
+      bar.appendChild(x);
+      document.body.insertBefore(bar, document.body.firstChild);
+    } catch (e) {}
+  }
+  function showToast(text) {
+    try {
+      var t = document.createElement('div');
+      t.setAttribute('role', 'status');
+      t.style.cssText = 'position:fixed; top:80px; right:1.5rem; max-width:340px; background:#1e3a5f; color:#fff; padding:0.85rem 2.3rem 0.85rem 1rem; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:9999; font-size:0.86rem; line-height:1.45;';
+      t.textContent = text;
+      var x = document.createElement('button');
+      x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
+      x.style.cssText = 'position:absolute; right:0.6rem; top:0.45rem; background:none; border:none; color:#fff; font-size:1.1rem; cursor:pointer;';
+      x.onclick = function () { t.remove(); };
+      t.appendChild(x);
+      document.body.appendChild(t);
+      setTimeout(function () { if (t.parentNode) { t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 400); } }, 8000);
+    } catch (e) {}
+  }
+
+  // Initial paint: optimistic chip (sync, flash-fix) → real state (async) → bfcache re-run (D34/S21).
+  optimisticPaint();
+  paintUserWidget();
+  window.addEventListener('pageshow', function (e) { if (e.persisted) paintUserWidget(); });
 
   // Populate all elements with data-meta attribute
   function populateData(meta) {
