@@ -2,7 +2,7 @@
 
 Turns the raw data into ``universe -> load_panel -> backtest`` recipes with the
 dataset's honesty guardrails (survivorship, IEX source break, 1-minute-not-tick)
-enforced in code. See TOOLKIT_IMPLEMENTATION_PLAN.md.
+enforced in code.
 
 Quick start::
 
