@@ -363,6 +363,10 @@
     } catch (e) {}
   }
 
+  // Let same-page login flows (e.g. download.html's old email/password form) repaint the nav WITHOUT
+  // a reload — they call checkAuth() after setting hfd_session, which then invokes this.
+  window.__hfdPaintNav = paintUserWidget;
+
   // Initial paint: optimistic chip (sync, flash-fix) → real state (async) → bfcache re-run (D34/S21).
   optimisticPaint();
   paintUserWidget();

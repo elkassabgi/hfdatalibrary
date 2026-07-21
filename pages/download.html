@@ -848,6 +848,7 @@ async function checkAuth() {
   }
   const banner = document.getElementById('free-access-banner');
   if (banner) banner.style.display = currentUser ? 'none' : '';
+  if (window.__hfdPaintNav) window.__hfdPaintNav();            // repaint the site.js nav (old-form login shows the name without a reload)
 }
 checkAuth();
 
