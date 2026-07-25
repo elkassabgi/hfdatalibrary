@@ -613,3 +613,33 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - **Then I made it worse.** Fixing 148 files with a regex whose replacement was `'\\1ROOT\\2=\\3...'` passed through a shell heredoc: Python received single backslashes and read `\1 \2 \3` as the **control characters** `\x01\x02\x03`, writing non-printable bytes into every file. All 148 failed to compile. Recovered with `git checkout -- jobs/` (they were committed), then redone as a standalone script doing literal line replacement with no backreferences: 149 files, 208 compile clean.
 - **The fix:** `ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` everywhere; stray tree merged back into E: (robocopy 670/670, 0 failed) and renamed aside; crawlers restarted and **verified writing to E:** (gus_dbw's checkpoint landed on E: after the restart, and D: was not recreated).
 - **Rule:** [R56] **After moving a project, verify the OUTPUT PATH, not just that the process runs.** A relocated job can be alive, logging correctly, and reporting real row counts while writing to the old location — `os.makedirs` will happily recreate a directory you just renamed, so a rename gives you NO protection and no error. The migration checklist must include: run one unit, then confirm files appear at the new path AND that the old path was not recreated. Grep for absolute paths in every module the pipeline imports, not just the launcher you edited — re-pointing the supervisor proves nothing about the jobs it launches. Prefer `__file__`-derived roots so the question cannot arise. Separately: **never do escape-sensitive rewriting through a shell heredoc** — regex backreferences (`\1`) become control characters when the shell strips a backslash layer; write the transform to a real file, use literal replacement where possible, and compile every touched file before trusting the edit. Bulk edits are safe only because the files were committed first.
+
+### M-20260725-11: Four wrong statements in a row about the SEC inventory, each from a check that could not support the claim
+- **What happened:** Asked what EDGAR data we hold, I asserted — and had to retract — four separate things inside one conversation:
+  1. **"`sec_edgar` has 0 parquets, it's missing."** I had globbed `data/clean_full/sec_edgar/*.parquet`. The data is partitioned under `clean_grouped/` (17,274 objects, 0.67 GB) and is catalogued AND served. I had looked in one of two possible layouts and reported absence.
+  2. **"The catalog advertises 123M rows that would 404."** The `.csv` endpoint returned **401 auth_required** — but so did `frankfurter`, a source that certainly has data. 401 is the auth gate; it carries no information about whether data exists. I nearly reported a serving outage from an authentication prompt.
+  3. **"The raw folder contains only form13f."** I had run `find -maxdepth 1 -type d`, which lists **directories only**, so it silently skipped `companyfacts.zip` (1.3 GB, 19,814 companies) and `submissions.zip` (1.5 GB, 976,223 filers) sitting at the top level. Ahmed pushed back — "how is that possible, I can download the 10-K from their website" — and he was right.
+  4. **"edgar_13f/insider/pointers have no served CSVs."** I tested three series IDs I had **invented**, because those sources have 0 catalog entries and therefore no real IDs to test. A miss on a fabricated key proves nothing.
+- **Wrong assumption, in every case the same one:** that a convenient check answers the question actually asked. A glob of one directory answers "is it *here*", not "does it exist". A `-type d` listing answers "what directories", not "what files". A 401 answers "am I authenticated", not "does the object exist". A HEAD on a guessed key answers nothing at all.
+- **What worked:** the only reliable moves were (a) listing R2's top-level prefixes to see the real layout, (b) re-running each negative check against a **known-positive control** (`frankfurter`), and (c) reading the provider's own metadata — CBS's period *titles*, SEC's `submissions.zip` fields — instead of inferring from names. The correct answer, once actually established: fundamentals + full filing index + 13F are held; the filing **documents** are not (21,848,951 filings, 20.7 TB, exactly summed from the index's own `size` field).
+- **Rule:** [R57] **State the inventory only from a check that could have found the thing.** Before reporting something absent, ask what the query would return if it *were* present — then run it against a case known to be present. Specifically: never conclude "missing" from a single-directory glob when the store has more than one layout (`clean_full/` vs `clean_grouped/`); never read an auth or permission response as evidence about existence; never use a directory-only listing to characterise contents; and never test with an identifier you constructed yourself — if you have no real key, that absence IS the finding. Retracting four claims in one conversation is not four small slips, it is one habit: reaching for the fastest command rather than the one that answers the question.
+
+---
+
+## Synthesis — 2026-07-25: eleven entries, one habit
+
+R47–R57 all came from a single session, and they are variations on one failure: **I verified that something RAN rather than that it did the RIGHT THING**, and I trusted measurements without first asking whether the measurement could detect what I was looking for.
+
+- a `grep` that matched timestamp digits (R47)
+- a memory fix aimed at the wrong allocator (R48)
+- a process filter that matched my own shell (R49)
+- CI runs that were green because they executed nothing (R50)
+- a health gate firing on correct data (R51)
+- a 900-key sample scoring identically on a broken and a fixed rule (R52)
+- a timeout that could never fire (R53)
+- an 8-second sample used to declare a healthy 4-minute-cadence crawler dead (R54)
+- a parser silently discarding 100% of 23 tables while looking busy (R55)
+- crawlers restarted after a migration, healthy and logging, writing to the wrong drive (R56)
+- four inventory claims from checks that could not support them (R57)
+
+**The standing correction:** before reporting a result, name what the check would show if the opposite were true. If the answer is "the same thing", the check is worthless. Run it against a known-good control, read the log the system is already writing, and prefer the provider's own labels over inference. Alive is not working; green is not proven; running is not writing.
