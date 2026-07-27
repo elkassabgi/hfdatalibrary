@@ -1573,7 +1573,46 @@ async function getSessionUser(request, env) {
   if (!session || !session.is_active) return null;
   // Defense in depth: assert kind even though the query already filters it.
   if (session.session_kind && session.session_kind !== 'web') return null;
+  await touchApiKeyExpiry(env, session);
   return session;
+}
+
+/** Slide api_key_expires_at forward for a user who is demonstrably still active.
+ *
+ *  WHY: API_KEY_DAYS is applied ONCE, at registration, and nothing renewed it —
+ *  not login, not SSO, not /v1/auth/me. The only renewal was the user manually
+ *  clicking "regenerate", which nobody does until something breaks. Measured
+ *  2026-07-27: 180 of 493 accounts (36.5%) were already expired, and every one of
+ *  them saw their key displayed on the download page and then got
+ *  "invalid_key" — signed in, key visible, download refused. More lapsed daily.
+ *
+ *  Placed in getSessionUser because that is the single chokepoint every
+ *  authenticated path funnels through (password login, Google, ORCID, the family
+ *  SSO redirect, /v1/auth/me). Refreshing at each call site instead would mean
+ *  finding them all, and missing one silently reinstates the lockout for that path.
+ *
+ *  The WHERE clause is what keeps this cheap: it only writes when the key is
+ *  actually near or past expiry, so an active session costs a no-op UPDATE
+ *  (0 rows) rather than a write per request.
+ *
+ *  Deliberately keeps the EXISTING key value. Rotating on login would invalidate
+ *  every key already saved in a user's script, notebook or MCP config — a silent
+ *  break far worse than the one being fixed.
+ *
+ *  Never throws: authentication must not fail because a housekeeping write did.
+ */
+async function touchApiKeyExpiry(env, session) {
+  try {
+    const userId = session.user_id || session.id;
+    if (!userId) return;
+    const next = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+    await env.DB.prepare(
+      'UPDATE users SET api_key_expires_at = ? WHERE id = ? AND ' +
+      "(api_key_expires_at IS NULL OR api_key_expires_at < datetime('now', ?))"
+    ).bind(next, userId, '+' + Math.ceil(API_KEY_DAYS / 2) + ' days').run();
+  } catch (_e) {
+    // Non-fatal by design — a failed refresh must never log the user out.
+  }
 }
 
 // Cross-site SSO: read the first-party hfd_session cookie and redirect back to an
