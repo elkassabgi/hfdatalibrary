@@ -1517,7 +1517,18 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   parquet**. The same check then caught a SECOND gap the first pass would have left: the 07-26
   merge had added **10 new tables** that were never catalogued, so they had CSVs and no catalog
   row. Re-catalogued (3,447 rows, 100% titled), pushed to D1, verified both directions
-  (MISSING 0, ORPHANED 0) and confirmed a live body. *owid — still open: 56 of 64 series.* Its last real run (~2026-07-26) merged rows and then failed `csv_derive` for **1,415 of 3,437** tables; `owid` failed **56 of 64**. So the parquets moved and the served CSVs did not. This is the `fao_oa` class documented in `make_servable`: presence checks all pass while users download old values.
+  (MISSING 0, ORPHANED 0) and confirmed a live body. *owid — IN PROGRESS, and bigger than the digest said.* Measured state: catalog **64**, CSVs in
+  R2 **40**, so **24 catalogued series have NO CSV at all** (a hard 404/501 for users, not merely
+  stale) and **32 of the 40 present are OLDER than the parquet**. Only 8 of 64 are both present
+  and current — which is what "csv_derive failed 56/64" actually decomposes into.
+  **Separately, and larger: owid has 3,787 parquets in `clean_full/owid/` against 64 catalog
+  rows.** The source is substantially under-catalogued. NOT yet quantified in series — the
+  parquets have not been read, so how many distinct series those 3,787 files hold is UNKNOWN and
+  must be counted before any figure is quoted (see R146: a scope number needs a query).
+  Fix in flight: sync R2 -> local behind a row-count guard (multi-file layout means
+  `make_servable` skips its never-shrink sync and would otherwise derive from a stale local
+  store), then `make_servable owid`, whose `have` set already treats a CSV older than the
+  parquet as absent. Its last real run (~2026-07-26) merged rows and then failed `csv_derive` for **1,415 of 3,437** tables; `owid` failed **56 of 64**. So the parquets moved and the served CSVs did not. This is the `fao_oa` class documented in `make_servable`: presence checks all pass while users download old values.
   - Fix: republish the flow-grain CSVs **from the R2 parquets** (R2 is authoritative for serving; local diverges in BOTH directions — `majandus` larger on R2, `Lepetatud_tabelid` larger locally — and local is not served). `tools/derive_pxweb_flowgrain.py` reads the LOCAL store, so it needs an R2 read path or a sync first. Verify both directions after.
   - **The health gate ranks this class wrongly**: `csv_derive failed N/M` after a successful merge passes as `partial`, while a source with merely nothing new goes RED. Failing to publish what you just fetched is a serving defect. Fix the ranking so it cannot pass quietly.
 - **B. `bcrp` RED-DATA.** Runs clean in 5 s, 0 d since success, latest obs `2026-07-22` — **7 days stale on a DAILY cadence**. Establish whether upstream has not published or our date-tail logic misses observations.
