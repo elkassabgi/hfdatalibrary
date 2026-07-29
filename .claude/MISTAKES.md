@@ -1507,7 +1507,17 @@ Ahmed asked for an adversarial check. Three reviewers were told to REFUTE, not c
 
 Not a mistake — the actionable residue of three deleted write-ups, kept here because this is the file that gets re-read.
 
-**A. `stat_estonia` + `owid` serve stale CSVs (highest priority).** Its last real run (~2026-07-26) merged rows and then failed `csv_derive` for **1,415 of 3,437** tables; `owid` failed **56 of 64**. So the parquets moved and the served CSVs did not. This is the `fao_oa` class documented in `make_servable`: presence checks all pass while users download old values.
+**A. `stat_estonia` FIXED 2026-07-29; `owid` still open.**
+  *stat_estonia — DONE.* 1,415 of 3,437 tables were serving CSVs older than their parquets.
+  Which store was authoritative had to be settled first, and BYTES gave the wrong answer:
+  `Lepetatud_tabelid` is larger locally in bytes but R2 holds MORE ROWS (7,775,126 vs
+  7,765,386), as does `majandus` (2,557,706 vs 2,543,749). Compression makes size a bad proxy —
+  compare row counts. Synced R2 -> local behind a row-count guard that would have refused a
+  shrink, republished all 3,447 table CSVs, and verified: **0 CSVs older than the newest
+  parquet**. The same check then caught a SECOND gap the first pass would have left: the 07-26
+  merge had added **10 new tables** that were never catalogued, so they had CSVs and no catalog
+  row. Re-catalogued (3,447 rows, 100% titled), pushed to D1, verified both directions
+  (MISSING 0, ORPHANED 0) and confirmed a live body. *owid — still open: 56 of 64 series.* Its last real run (~2026-07-26) merged rows and then failed `csv_derive` for **1,415 of 3,437** tables; `owid` failed **56 of 64**. So the parquets moved and the served CSVs did not. This is the `fao_oa` class documented in `make_servable`: presence checks all pass while users download old values.
   - Fix: republish the flow-grain CSVs **from the R2 parquets** (R2 is authoritative for serving; local diverges in BOTH directions — `majandus` larger on R2, `Lepetatud_tabelid` larger locally — and local is not served). `tools/derive_pxweb_flowgrain.py` reads the LOCAL store, so it needs an R2 read path or a sync first. Verify both directions after.
   - **The health gate ranks this class wrongly**: `csv_derive failed N/M` after a successful merge passes as `partial`, while a source with merely nothing new goes RED. Failing to publish what you just fetched is a serving defect. Fix the ranking so it cannot pass quietly.
 - **B. `bcrp` RED-DATA.** Runs clean in 5 s, 0 d since success, latest obs `2026-07-22` — **7 days stale on a DAILY cadence**. Establish whether upstream has not published or our date-tail logic misses observations.
