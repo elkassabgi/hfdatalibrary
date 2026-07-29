@@ -1515,4 +1515,21 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **E. Auto-update coverage.** 201 served sources / 4,740,072 series; **58 refresh on a schedule** (updater-daily `live:true`, the updater-heavy matrix `un_wpp/bundesbank/cepii_gravity/eia`, and sec-edgar-daily). Of the rest: **25 sources / 204,509 series are promote-ready** (fetcher resolves; needs `live:true` + a forced proof run — `insee_bdm` 101,848 monthly and `adb` 53,458 lead), **14 have no fetcher** (incl. `imf_fsi` 73,288), and **1 is broken** (`ksh`). Regenerate with a script if the table is wanted again; do not keep it as a loose file.
 - **F. `un_wpp` titles.** 334,236 rows titled with their own key — the ONLY real title defect (verified: `cso` 0, `ons_uk` 0, `insee_melodi` 5/139). The COUNTRY name is recoverable for free: `jobs/ingest_un_wpp.py` reads `Location` at line 100 and discards it at line 128 because ISO3 is set. The INDICATOR long name is genuinely absent from WPP's CSVs and must not be invented. Fix sets `title`/`geography` from published labels and leaves ids untouched.
 - **G. 18 served sources have no site page** (3,260,484 series, `wid`'s 2,465,197 among them). NOT an access failure — `catalog.html` searches the live API, so all are findable and downloadable. It is the landing/SEO surface. `audit_site.py` check F now catches it permanently.
+- **I. `ksh` retirement — APPROVED BY AHMED, THEN BLOCKED ON A FINDING. Do not delete yet.**
+  Ahmed approved "recover the 21 ksh-only tables into `ksh_stadat`, then retire `ksh`". Checking
+  the 21 against KSH's own STADAT catalogue cache splits them:
+  - **5 still published** (`fol0003`, `gsz0087`, `mez0121`, `mez0122`, `sza0071` — 184 series):
+    recoverable, and their absence from `ksh_stadat` is a coverage gap in ITS catalog walk.
+  - **16 absent from KSH's catalogue** (~719 series): `gsz0011, mez0046, mez0095, mun0078,
+    mun0081-0086, mun0089, mun0090, sza0043-0046`. **KSH no longer publishes these.**
+  So retiring `ksh` as approved would permanently destroy ~719 series that are **NOT
+  re-crawlable**. The standing rule that deletion is recoverable holds only while we can
+  re-fetch; it does not hold here, so this is the exception that must be raised rather than
+  assumed away.
+  Options, for Ahmed: (a) migrate the 16 retired tables' DATA into `ksh_stadat` as clearly
+  labelled discontinued series, then retire the `ksh` source id — preserves everything, costs a
+  re-key of 719 series; (b) keep `ksh` alive purely as the home for those 16 and fix its broken
+  import; (c) accept the loss. Recommendation: (a).
+  Note `ksh`'s fetcher is broken regardless — it imports `jobs/ingest_ksh_hungary.py`, which does
+  not exist — so (b) means writing that parser.
 - **H. `imf_fsi`.** IMF split `FSI` into `FSIC` / `FSIBSIS` / `FSICDM`; three 17-line wrappers over `_imf_direct.py` cover it. They would be NEW source ids serving beside the frozen `imf_fsi` (precedented: `imf_cofer` + `imf_cofer_direct`). Ahmed has given a general go-ahead.
