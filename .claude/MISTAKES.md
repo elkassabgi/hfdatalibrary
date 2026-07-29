@@ -1533,7 +1533,14 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   parquet as absent. Its last real run (~2026-07-26) merged rows and then failed `csv_derive` for **1,415 of 3,437** tables; `owid` failed **56 of 64**. So the parquets moved and the served CSVs did not. This is the `fao_oa` class documented in `make_servable`: presence checks all pass while users download old values.
   - Fix: republish the flow-grain CSVs **from the R2 parquets** (R2 is authoritative for serving; local diverges in BOTH directions — `majandus` larger on R2, `Lepetatud_tabelid` larger locally — and local is not served). `tools/derive_pxweb_flowgrain.py` reads the LOCAL store, so it needs an R2 read path or a sync first. Verify both directions after.
   - **The health gate ranks this class wrongly**: `csv_derive failed N/M` after a successful merge passes as `partial`, while a source with merely nothing new goes RED. Failing to publish what you just fetched is a serving defect. Fix the ranking so it cannot pass quietly.
-- **B. `bcrp` RED-DATA.** Runs clean in 5 s, 0 d since success, latest obs `2026-07-22` — **7 days stale on a DAILY cadence**. Establish whether upstream has not published or our date-tail logic misses observations.
+- **B. `bcrp` RED-DATA — RESOLVED 2026-07-29: it was a FALSE ALARM.** Measured against BCRP's own
+  API (PD04638PD/PD04639PD/PD04640PD, 2026-07-01..07-31): every series' last value-bearing
+  observation is **22.Jul.26**, matching ours exactly, with 'n.d.' for every later day. We are
+  level with the publisher; BCRP has published nothing since the 22nd. Declared as
+  `upstream_verified` in registry.yaml — an assertion with an expiry, not a mute. **Hazard:**
+  `gen_registry.py` has no handling for `upstream_verified`, so regenerating registry.yaml would
+  silently drop this and the six existing declarations.
+- **B-OLD (superseded).** Runs clean in 5 s, 0 d since success, latest obs `2026-07-22` — **7 days stale on a DAILY cadence**. Establish whether upstream has not published or our date-tail logic misses observations.
 - **C. `riksbank` ATTENTION.** Fetched +1,698 rows then `csv coherence partial: 28 changed keys unmapped` — same publish-side gap, smaller.
 - **D. `wid` RED-UNRUN is expected to clear.** It was `PROTECTED, not attempted (in-flight FIRSTPASS_DIRS backfill)`. Now unpinned, with the R130 resume fix and a 60-min cap; the next cron is its first real attempt.
 - **E. Auto-update coverage.** 201 served sources / 4,740,072 series; **58 refresh on a schedule** (updater-daily `live:true`, the updater-heavy matrix `un_wpp/bundesbank/cepii_gravity/eia`, and sec-edgar-daily). Of the rest: **25 sources / 204,509 series are promote-ready** (fetcher resolves; needs `live:true` + a forced proof run — `insee_bdm` 101,848 monthly and `adb` 53,458 lead), **14 have no fetcher** (incl. `imf_fsi` 73,288), and **1 is broken** (`ksh`). Regenerate with a script if the table is wanted again; do not keep it as a loose file.
