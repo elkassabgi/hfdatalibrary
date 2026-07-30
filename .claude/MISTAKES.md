@@ -2069,3 +2069,16 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **It found a second gap on its first run:** `numpy` is imported directly by `vdem.py` and was undeclared. It works today only because pandas and pyarrow drag it in — a direct import satisfied by someone else's dependency is luck, not a contract.
 - **The habit:** "it imports on my machine" is not evidence about CI, and a comment describing a past incident is not protection against repeating it. Turn the comment into a check.
 - **Rules:** R178.
+
+### M-20260730-85: two ways snb would have corrupted the store, both caught by comparing against it
+
+- **Near-misses, not shipped** — but both would have been silent, and one produced a convincing wrong number I briefly believed.
+- **(1) A 25% "reproduction rate" that was an artifact of my own query.** Checking whether SNB's API could rebuild our 762 keys, I took the `/dimensions/en` endpoint's item ids (`D0_0`, `D0_1`) and formed their cartesian product. Result: **191 of 762 (25.07%)**, with several cubes at literally 0. I was one step from filing snb as "needs a crosswalk, like the FAO family".
+  - It is a DIFFERENT ID SPACE. The data CSV's dimension columns carry the real codes — `M0`, `EUR1`, `GBP1` — and our keys are built from those. Parsing the CSV reproduces **762 of 762 (100.00%)**. The 25% measured nothing about SNB; it measured me comparing two incomparable spaces, which is R141 exactly.
+  - What exposed it was looking at one raw CSV instead of iterating on the summary statistic.
+- **(2) A date convention that would have doubled the data.** The store is NOT uniform: annual is period END (`1987` -> 1987-12-31) while monthly and quarterly are period START (`1914-01` -> 1914-01-01, `2001-Q1` -> 2001-01-01). My first `_to_date` used period-end for everything, so every monthly observation would have been written as 1914-01-**31** beside the stored 1914-01-01 — a PARALLEL date space for every monthly series, doubling rows instead of extending them, with the never-shrink guard powerless because the table only grows.
+  - Caught by comparing full (series_key, obs_date) SETS against the existing store per cube, not by eyeballing a few dates — my first eyeball comparison was itself misaligned, because CSV rows repeat a date across series while I was listing DISTINCT store dates.
+  - Final check: **303,358 of 303,358 stored rows reproduced, 100.00%**, all 12 cubes.
+- **(3) A docstring that disagreed with its code.** I wrote that new upstream series were "deliberately not published". The code published them — 764 cursors against 762 known series, because snbiprogq gained 2. Publishing them is right for a snapshot source; claiming otherwise was not. Now they are published, counted and LOGGED BY NAME, because a series in the parquet with no catalog row is hosted and invisible.
+- **The habit:** before trusting a reproduction rate, check that both sides speak the same id space — a low score is as likely to be a broken comparison as a real gap. And when writing into an existing store, derive its conventions FROM it, per frequency, by set equality; a convention that is uniform in your head can be inconsistent on disk.
+- **Rules:** R179.
