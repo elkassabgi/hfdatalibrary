@@ -9,8 +9,12 @@ continue?" — the queue is the answer. Append newly discovered work.
 its `ALL='[...]'` literal, sec_edgar from its own workflow). Hand-derivation drifted three
 different ways in a single day — R166.
 
-**2026-07-30: 104 of 202 sources / 4,362,129 of 5,050,206 series scheduled** (51.5% / 86.4%).
-Registry: 137 sources, 110 live.
+**2026-07-30: 106 of 202 sources / 4,375,807 of 5,050,206 series scheduled** (52.5% / 86.6%).
+Registry: 139 sources, 113 live.
+
+NOTE the tool now requires an ADAPTER before counting a source as scheduled. updater-heavy ran
+green at 05:50 with all four matrix jobs reporting "0 unit(s) processed" — two of them printed
+`PENDING <src> — no adapter built`. Matrix membership is not a schedule.
 
 ---
 
@@ -58,8 +62,9 @@ template mints a parallel id space beside the live series and reports success.
 - [ ] **worldbank** (692) — the last pre-migration source: legacy `data/clean/` tree, one parquet
       per series, identity in the FILENAME, no key column. Migrate to `clean_full` first.
 - [ ] **imf_fsi** (73,288) — blocked, legacy host 403s.
-- [ ] Small non-DBnomics: comtrade 713, snb 762, usda 25, census 22, noaa 10, fhfa 61, bea 240
-      (BEA's own API — its DBnomics namesake is a NAME COLLISION, R171).
+- [ ] Small non-DBnomics remaining: usda 25, census 22, noaa 10, bea 240 (BEA's own API — its
+      DBnomics namesake is a NAME COLLISION, R171). comtrade is BLOCKED (see above); snb, fhfa,
+      maddison and boc are DONE.
 - [ ] `worldbank_extra` — BLOCKED on a data repair: no series_key column and `country` is BLANK
       for all ~120k GEM + ~134k aggregate rows, so (indicator, country, obs_date) is not unique.
       Needs a re-key into a WDI-style layout BEFORE any fetcher can merge safely. Do not paper over.
@@ -90,8 +95,20 @@ template mints a parallel id space beside the live series and reports success.
       comparison, not a sample: 4,421 upstream codes vs 4,421 published, 4,421 exact, 0 either way.
 - [x] **maddison** live — parse EXTRACTED from `main()` into `parse_xlsx` so ingest and fetcher
       share ONE parser; it reproduces the store exactly (36,905 obs / 338 series).
+- [x] **boc** live — 12,862 series / 2.73M obs with NO ingest script and NO registry entry.
+      Valet's series names ARE our keys: 12,862 of 12,862 exact. Live run +8,843 rows.
+- [x] **snb** live — 762 series across 12 cubes, gated on each cube's own PublishingDate.
+      Keys 762/762 and rows 303,358/303,358 verified against the store. +1,091 rows.
+- [x] **fhfa** live — 18 parquets / 3,227,580 obs; its ingest was already safe to re-run.
+- [x] **series_cursors** added to every bulk fetcher (R174) and then BOUNDED across files
+      (R175/R176) — without cursors the orchestrator withholds the vintage and the source
+      republishes forever with stale CSVs; unbounded, ilostat's 30.8M series would have OOM'd.
+- [x] **Dependency preflight** — `lxml` was undeclared, so freshly-promoted fed_board would have
+      reported "no adapter built" and silently never run (third repeat of that class).
+      `tools/audit_updater_deps.py` now walks the import graph on every push.
 - [x] Tools: `audit_schedule_coverage.py`, `audit_upstream_liveness.py`,
-      `audit_vintage_stability.py`, `derive_csv_bulk.py`, `preflight_registry.py`.
+      `audit_vintage_stability.py`, `audit_updater_deps.py`, `derive_csv_bulk.py`,
+      `preflight_registry.py`.
 
 ## Build rules (hard-won — see `.claude/MISTAKES.md`)
 
