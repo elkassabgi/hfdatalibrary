@@ -18,24 +18,26 @@ green at 05:50 with all four matrix jobs reporting "0 unit(s) processed" — two
 
 ---
 
-## The remaining 98 are NOT 98 fetchers — establish which KIND of work first (R170)
+## The remaining 96 are NOT 96 fetchers — establish which KIND of work first (R170)
 
-`python tools/audit_upstream_liveness.py` buckets them by whether the upstream still moves:
+`python tools/audit_upstream_liveness.py` — re-measured 2026-07-30 08:07 UTC,
+**96 sources / 674,399 series** still unscheduled:
 
-| provider | sources | series | newest DBnomics index | what it means |
+| provider | sources | series | newest DBnomics index | route |
 |---|---|---|---|---|
-| IMF | 28 | 398,777 | 2025-08-31 | use the `_imf_direct` route, not DBnomics |
-| UNCTAD | 38 | 127,413 | **2023-06-30** | mirror dead — re-derivation, not a fetcher |
-| FAO | 18 | 87,579 | **2024-05-09** | mirror dead |
-| UNESCO | 4 | 57,530 | **2022-04-04** | mirror dead; UIS API lacks their codes |
-| WHO | 3 | 34,788 | 2026-07-24 | **DONE 2026-07-30** |
-| BOC | 1 | 12,862 | 2025-02-15 | judgement call |
-| 8 others | 8 | 3,953 | not DBnomics | ordinary fetcher work |
+| IMF | 28 | 398,777 | 2025-08-31 | the `_imf_direct` family, NOT DBnomics — biggest remaining block |
+| UNCTAD | 38 | 127,413 | **2023-06-30** | mirror dead — re-derivation + id crosswalk |
+| FAO | 18 | 87,579 | **2024-05-09** | element crosswalk reaches 79%; rest restructured — Ahmed's call |
+| UNESCO | 4 | 57,530 | **2022-04-04** | mirror dead; UIS API exposes too few codes |
+| 8 others | 8 | 3,100 | mostly not DBnomics | hf_equities 1,391 · comtrade 713 · worldbank 692 · bea 240 · usda 25 · census 22 · noaa 10 · eia 7 |
 
-A source whose mirror is frozen cannot be fixed by writing an updater against that mirror — it
-would run nightly, succeed, and transfer nothing. Fixing it means re-deriving from the real
-publisher AND reproducing our published ids exactly, and that step fails SILENTLY: a wrong key
-template mints a parallel id space beside the live series and reports success.
+88 of the 96 sit in those four families. A source whose mirror is frozen cannot be fixed by
+writing an updater against that mirror — it would run nightly, succeed, and transfer nothing.
+Fixing it means re-deriving from the real publisher AND reproducing our published ids exactly,
+and that step fails SILENTLY: a wrong key template mints a parallel id space beside the live
+series and reports success.
+
+DONE since the last table: WHO (3 / 34,788), BOC (1 / 12,862), SNB (1 / 762).
 
 ## Open
 
