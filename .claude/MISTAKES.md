@@ -2115,3 +2115,14 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **What caught it** was the habit of checking the live URL instead of trusting the push. A deploy is not done because the tool that precedes it succeeded.
 - **Fixed the note, not just the instance:** the memory now says econ needs the wrangler step and that "pushed" is not "published" for this site.
 - **Rules:** R182.
+
+### M-20260730-89: the same escape bug, twice in one session — and a page promising a download that 404s
+
+- **The page.** `cepii_gravity.html` shipped with a **"Download"** call to action for a database the API cannot serve. Verified against the live worker with a real key: `boc` returns **200** (2,235 bytes, citation header intact) and `cepii_gravity` returns **404** — it is catalogued locally but absent from the worker's `SUPPORTED_SOURCES`, and live D1 holds 0 rows for it. Exactly the IEP shape: a searchable page whose Download button fails on every click.
+- **Scope checked, not assumed:** every published dataset page cross-referenced against `SUPPORTED_SOURCES` — **1 of 203**. Contained, and worth fixing anyway because the fix prevents recurrence.
+- **Fixed:** `gen_site.load_resolvable()` parses the worker's own resolver list, and a page for a source that is not in it shows *"not downloadable yet — the API returns 404 for it until that completes, so we are not offering a button that would fail"* instead of the CTA. Empty set means unknown, and then nothing is downgraded: silence beats a wrong "unavailable" badge on a database that works.
+- **AND I HIT THE ESCAPE BUG AGAIN, in the same file, hours after R181.** Writing that helper through a shell heredoc, `\n` inside `r"//[^\n]*"` became a REAL NEWLINE, splitting the string across two lines. R181 was `\b` becoming a backspace in this very same file.
+  - The one good thing: this time it failed LOUDLY — `SyntaxError: unterminated string literal` — because a raw newline cannot hide inside a string literal, whereas a backspace renders as nothing and silently broke a working regex. Same cause, opposite visibility.
+  - Repaired with the **Edit tool**, which takes literal text and cannot mangle escapes, and simplified the pattern to `r"//.*"` (re.sub is per-line without DOTALL) so there is no escape to get wrong.
+- **The habit, now twice-earned:** do not write regexes containing backslash escapes through a shell heredoc. Use Edit for literal content, or choose a pattern with no escapes at all. And after any generated write, check the bytes — `ast.parse` catches the loud half, `cat -A` catches the silent half.
+- **Rules:** R183.
