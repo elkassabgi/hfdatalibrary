@@ -2335,3 +2335,32 @@ you just said it does. `grep import verify_derive_parity.py` would have taken tw
 **Fixed** by making it true: derive_csv_bulk now owns csv_key()/csv_key_prefix() as the
 single definition, uses them for its own listing and writes, and the verifier imports
 csv_key_prefix. One definition, so writer and checker cannot drift.
+
+## R192 — I nearly certified an encoding bug with a control that failed for an unrelated reason
+
+**Context.** Before adding `cepii_gravity` to the worker's SUPPORTED_SOURCES I checked
+whether the worker's key spelling matches the derive's. It does not: the worker used
+`encodeURIComponent`, the objects are written with Python `quote(safe="")`, and the two
+differ on `! ' ( ) *`. 60,993 catalogued series contain one.
+
+**The near-miss.** To confirm the defect was user-visible I hit the live API with an
+affected `un_wpp` id and got 404 — and I had already begun treating that as the proof. It
+was not. My "control" (a plain id from the same source) ALSO 404ed, because the id I picked
+was not in D1 at all. Both requests were failing at the CATALOG lookup, before any R2 key
+was constructed. The 404 said `unknown series id`; the encoding defect cannot produce that
+error at all. I had a result that agreed with my hypothesis and was caused by something else.
+
+**What actually established it.** A within-source control: for gcb, oxcgrt and un_wpp,
+take one id WITH a special character and one WITHOUT, from the same source, both known to
+be catalogued. Plain -> HTTP 200 with a real CSV body. Special -> HTTP 502
+`data_unavailable`, "the at-rest object for this series is not published yet". Same source,
+same auth, same code path, differing by a parenthesis — and a direct R2 probe showing the
+object present under the other spelling. THAT is a control.
+
+**The rule.** A failing probe is only evidence if the control passes. If both arms fail, the
+experiment measured nothing, no matter how well the failure matches the theory — and a
+matching failure is the most persuasive kind of noise. Pick the control from the same source
+and confirm it is green BEFORE reading anything into the affected arm. Note also that the
+error CODE was diagnostic and I skimmed it: `unknown series id` (404, catalog) and
+`data_unavailable` (502, object) are different failures, and the distinction was sitting in
+the response body the whole time.
