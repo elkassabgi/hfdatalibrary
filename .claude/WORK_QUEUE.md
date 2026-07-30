@@ -72,7 +72,18 @@ DONE since the last table: WHO (3 / 34,788), BOC (1 / 12,862), SNB (1 / 762).
       5.1% / 0% / 1.3% / 0% of their indicator codes. Needs a different route.
 - [ ] **worldbank** (692) — the last pre-migration source: legacy `data/clean/` tree, one parquet
       per series, identity in the FILENAME, no key column. Migrate to `clean_full` first.
-- [ ] **imf_fsi** (73,288) — blocked, legacy host 403s.
+- [ ] **imf_fsi** (73,288) — NOT simply blocked; re-measured 2026-07-30 and the framing was
+      stale. The LEGACY host is genuinely dead (`dataservices.imf.org` -> ConnectionError), but
+      **api.imf.org is alive** (dataflow list 200, 444,501 B, 222 flows) and the FSI data is
+      there, SPLIT ACROSS THREE RENAMED FLOWS: `FSIC` (Core and Additional Indicators),
+      `FSIBSIS` (Balance Sheet, Income Statement) and `FSICDM` (Concentration and Distribution
+      Measures). `/data/FSI` 404s because the old flow name is gone, not the data.
+      Those are EXACTLY the three wrappers built this morning — imf_fsic_direct,
+      imf_fsibsis_direct, imf_fsicdm_direct — which have never run yet (0 catalog rows).
+      NEXT: check whether the legacy key shape (`imf_fsi:FSI:A.5Y.FSANL_PT`) is reproducible
+      from those flows, the same way tools/prove_faostat_repair.py scores id reproduction, and
+      REFUSE a partial template — a wrong one mints a parallel id space and reports success.
+      73,288 series makes this the largest single recoverable source outside the frozen families.
 - [ ] Small non-DBnomics remaining: usda 25, census 22, noaa 10, bea 240 (BEA's own API — its
       DBnomics namesake is a NAME COLLISION, R171). comtrade is BLOCKED (see above); snb, fhfa,
       maddison and boc are DONE.
