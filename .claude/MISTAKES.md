@@ -2166,3 +2166,44 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Fixed:** read the key from `write_dataset`'s actual `return` statement. Re-proved: `ok, +119,105 new rows, 2,905 cursors`, then `no_change` on the manifest gate.
 - **The habit:** when consuming another function's return value, open its `return` and read the keys. A `.get("plausible") or .get("also_plausible") or 0` chain is a guess with a silent default — and the default is the dangerous part, because 0 flows straight into a status that looks calm.
 - **Rules:** R186.
+
+## R187 — I predicted a benign cause for a red run; it was a TOTAL OUTAGE, and the OOM guard could not see it
+
+**What I said.** Dispatched run 30523814247 came back `failure` and I had already written, twice,
+that this was expected: "its health gate will be red simply because twelve sources promoted today
+have never run once — that is the gate working, not the fetchers failing."
+
+**What actually happened.** The health gate never ran. NOTHING ran. The full log carries exactly
+ONE orchestrator banner — `[orchestrator] >>> abs/_all (strategy=sdmx_delta, cadence=monthly)` at
+07:42:52 — and ZERO completion lines. The `[mem]` instrumentation shows memory climbing
+monotonically 1,211MB -> 15,700MB at 299 MB/min for 48.5 minutes until the runner died with 288MB
+free. `abs` is the FIRST source alphabetically. It ate the entire runner before any other source
+was reached, on every run.
+
+**Three separate traps, all of which nearly hid it:**
+
+1. **`failure` is not one thing.** The step conclusion was `cancelled`, not `failed`. I would have
+   read that as "someone cancelled it" or "concurrency" — the workflow declares
+   `cancel-in-progress: false` and `timeout-minutes: 300`, and the run died at 49.4 min, so BOTH
+   plausible explanations were ruled out by config. Only the log had the answer.
+
+2. **`gh run view --log-failed` returns EMPTY for a cancelled step.** Cancelled is excluded from
+   the failed-log view. I ran it, got 0 lines, and that is a perfect setup for concluding "no
+   errors in the log". Had I stopped there I would have reported a clean log on a total outage.
+   For anything not `conclusion=failure`, use `--log`, never `--log-failed`.
+
+3. **The OOM guard the workflow already has CANNOT catch this.** The step wraps the updater and
+   explicitly handles `rc=137/143` with "updater was KILLED — out of memory on the runner". It
+   never fired, because the runner itself was destroyed: bash never got to report an exit code, so
+   GitHub reported "The operation was canceled." A guard keyed on the child's exit status is blind
+   to the parent being killed. The ONLY reason this was diagnosable is the `[mem] used=/avail=`
+   sampler printing every 15s.
+
+**The damage.** Not "36 sources red". Zero sources updated, and the state push is skipped on
+non-zero exit (queue #21), so ~49 minutes of work was discarded each run. Every fetcher promoted
+to live today has never executed once in CI. Runs on 2026-07-29 failed the same way.
+
+**The rule.** A prediction about WHY something is red is a hypothesis, not a finding, and stating
+it confidently twice does not make it a diagnosis (this is R180 again, in the same session). Read
+the log before explaining the colour — and when the conclusion is `cancelled`, suspect the runner,
+not the code's exit path. Ledger R54 said "read the log first"; I read the exit code first.
