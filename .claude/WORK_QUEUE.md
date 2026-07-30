@@ -155,3 +155,36 @@ staleness bomb (R159) · every early exit must answer "does this status let the 
 a budget is a deferral, never a completion (R172) · bump `EXPECTED_SOURCE_COUNT` with a dated
 changelog line (R168) · prove a gate FAILS, not just that it passes (R142) · never publish an id
 space you have not reproduced exactly, and a matching provider NAME is not provenance (R171).
+
+
+## P0 — THE DAILY UPDATER WAS A TOTAL OUTAGE (found + fixed 2026-07-30)
+
+- [x] **abs OOMed the runner on source #1, so NOTHING ever ran.** Run 30523814247: one
+      orchestrator banner (abs/_all), zero completions, memory 1,211MB -> 15,700MB at
+      299 MB/min for 48.5 min, runner destroyed with 288 MB free. A recurrence —
+      orchestrate.py:451 records batch 30312217406 doing the same (49 min, 15,654 MB),
+      after which the ">>>" banner was added so a future OOM could NAME its culprit. That
+      is what identified abs; the memory fix was never done. Now done: CURSOR_CAP on the
+      run-global fold, a stream fold replacing the per-flow dict, Arrow pool release per
+      flow, and an AQUEDUCT_ABS_BUDGET_MIN self-budget (the orchestrator's run budget is
+      only checked BETWEEN sources, so a source that never RETURNS is unbounded).
+      MEASURED: abs holds 976,632,535 rows / 376,332,763 distinct series -> ~94 GB of
+      cursors. PROVEN: 800,000 synthetic series -> exactly 50,000 cursors, RSS +49 MB.
+
+- [x] **Swept the class, not the instance** (tools/audit_cursor_blowup.py, new). Two more
+      genuine per-series folds found and bounded: **vdem** (1,465,759 series) and **owid**
+      (1,048,968) — not runner-killers at ~0.3 GB each, but each cursor is a state.db row
+      and a _catalog_ids_for query, both linear. Added `merge_cursor_map` to _common for
+      in-memory folds (merge_cursors only bounded parquet-derived sets).
+      The audit's first cut FALSE-POSITIVED on statcan (56.8 BILLION rows), istat and ecb:
+      all three key cursors per PID/flow/file, so they are bounded by the FILE count. The
+      trigger is now the FOLD SHAPE, not the store size.
+
+- [ ] **statcan would have been next.** It sorts after abs and holds 56,845,456,057 rows;
+      it never ran only because abs died first. Its per-file fold means cursors are fine,
+      but nothing has ever exercised it end-to-end — watch it on the first clean run.
+
+- [ ] **abs cataloguing gap (NOT a memory issue).** The store holds 376,332,763 distinct
+      series; the catalog credits abs with **18**. Whatever abs serves, it is not what it
+      holds. Decide whether to catalogue at flow grain (like the 9 PxWeb sources) or leave
+      it — but do not leave the discrepancy undocumented.
