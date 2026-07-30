@@ -1947,3 +1947,14 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **The check is proven to FAIL, not just to pass.** I set the constant back to 125, confirmed exit 1 with the specific message, then restored it — because a gate only ever observed passing is not known to be a gate (R142).
 - **The habit:** when a validation's failure mode is *total*, its alarm must fire at the moment of the change, not at the next scheduled run. And when several runs are red, read what each one actually DID before theorising about a common cause — two of these three were a dry run and a healthy run.
 - **Rules:** R168.
+
+### M-20260730-74: I reached for more threads when the algorithm was the problem — then rebuilt the same mistake inside its own test
+
+- **The job:** 991,707 missing `cepii_gravity` CSVs. `core/derive_csv.py` resolves each series independently, so I added `--workers 16` and launched it.
+- **It barely moved.** Under 5,000 objects in ten minutes. My first instinct — "R2 is throttling" — was wrong: the log showed **zero** PUT retries. The bottleneck was local. Each `_series_csv_bytes()` call runs a predicate scan over the whole 93 MB / 69,666,545-row parquet, so the work is 1,143,250 full scans. Threads cannot fix that; they contend on the same file. 63 ms/series measured = 17.4 h serial, and parallelism bought almost nothing.
+- **I also polled R2 to measure the rate and got `ServiceUnavailable: Reduce your concurrent request rate`** — listing 155k keys while 16 workers hammered the same bucket. That is R140 again: stop polling the thing you are already saturating; read the job's own log, which costs nothing.
+- **Fixed properly:** `tools/derive_csv_bulk.py` streams the parquet ONCE through DuckDB in `ORDER BY series_key, obs_date` (spills to disk, flat memory) and flushes each series when the key changes. One pass instead of 1.14M scans.
+- **The gate that makes it safe:** byte-exactness against the resolver is the whole contract, so `--verify N` byte-compares N RANDOM series (not the first N) and REFUSES to run on any mismatch. Result: **300/300 identical**, and the parquet's distinct-series count is exactly 1,143,250 — the catalog number.
+- **And the mistake inside the fix:** my first `--verify` ran one query PER sampled key — 300 complete passes over 69.6M rows to check 300 series. I had reintroduced the exact quadratic cost the tool exists to remove, inside the test for that tool. It ran ten minutes with no output before I looked at what it was actually doing. Now one scan covers the whole sample.
+- **The habit:** when something is slow, measure WHERE before adding concurrency — "add workers" is a fix for contention, not for a bad algorithm, and it hides the real shape of the problem. Then check that the verification you bolt on does not inherit the same flaw as the thing it verifies.
+- **Rules:** R169.
