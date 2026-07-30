@@ -2554,3 +2554,31 @@ the last row of each key run. Proven equivalent to the old implementation on 40 
 duplicate-heavy tables with 0 mismatches, and it now completes LBS.parquet — 36,379,671 rows
 in, 36,379,671 out, exit 0. It fixes the class in the CLOUD too, so some of the 16 databases
 I routed to the workstation may not have needed to move at all.
+
+## R198 — I reported a healthy run as 403 minutes old and was one sentence from calling it hung
+
+**What I told the owner.** Asked for status on the in-flight cloud run, I reported it had been
+going **403 minutes**. The job's own cap is 300 minutes, so that number means "this should
+already have been killed" — I was composing the "it looks hung, I should investigate or
+cancel it" follow-up when I re-checked.
+
+**The bug, in my own status code.** PowerShell parses an ISO timestamp ending in `Z` into
+LOCAL time. I then subtracted it from `[DateTime]::UtcNow`:
+
+    $elapsed = ($nowUtc - [datetime]$run.startedAt).TotalMinutes    # WRONG: mixes zones
+
+This machine is UTC-5, so every elapsed figure came out five hours too large. The run was
+**104 minutes** old and entirely healthy. Both numbers in the same output — "now 21:53Z" and
+"created 15:10" — were sitting next to each other, and 15:10 was local time printed beside a
+UTC clock without me noticing the mismatch.
+
+**What the wrong number would have cost.** Cancelling a run that was, for the first time all
+day, actually updating data — it had already written over a thousand objects by then. The
+whole point of the day's work was getting that run to complete.
+
+**The rule.** Never subtract two timestamps whose zones you have not both pinned. Parse
+explicitly to UTC (`[DateTime]::Parse(x).ToUniversalTime()`) and print the zone on every
+timestamp so a mismatch is visible in the output rather than hidden in the arithmetic. And
+when a derived number implies something impossible — 403 minutes under a 300-minute cap, a
+run that should not exist — suspect the DERIVATION before the system. The impossible reading
+was evidence about my formula, not about the run.
