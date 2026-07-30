@@ -1640,6 +1640,27 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   rows, D1 rows, R2 CSVs. Step 4 is the destructive one and must not run before 2 and 3 verify.
   Note `ksh`'s fetcher is broken regardless — it imports `jobs/ingest_ksh_hungary.py`, which does
   not exist — so (b) means writing that parser.
+- **K. The 12 remaining registered-no-fetcher sources — buildability survey (2026-07-29).**
+  Do not re-derive. Two checks decide the work per source (R159: how does the ingest DISCOVER
+  work; R160: is any claimed upstream capability real), plus a third: does the ingest expose a
+  reusable parser, or is everything buried in `main()` — reusing it is the duplication
+  invariant, so a source with no helpers needs an ingest refactor first.
+
+  | source | series | reusable helpers | note |
+  |---|---:|---:|---|
+  | `comtrade` | 713 | 3 — `fetch_totals`, `fetch_bilateral_totals`, `parse_record` | clean interface |
+  | `bis` | 49 | 3 — `download`, `parse_period`, `ingest_zip` | cleanest, smallest surface |
+  | `fed_board` | 21 | 8 — incl. **`discover_releases`** | already designed for discovery |
+  | `ilostat` | 80 | 9 — `download_toc`, `read_toc`, `build_table` | TOC-based discovery |
+  | `noaa` | 10 | 12 — `enumerate_ids`, `enumerate_all`, `download` | enumerable |
+  | `zillow` | 52 | 11 — `refresh_catalog`, `load_catalog` | catalog refresh exists |
+  | `usda` | 25 | 12 — `parse_value`, `cube_parts` | buildable |
+  | `fhfa` | 61 | 12 — `download`, `_write_cube` | buildable |
+  | `imf` | 131 | 13 — `fetch_dataflows`, `fetch_dim_order` | buildable |
+  | `bea` | 240 | 27 — large surface | more work |
+  | `census` | 22 | 30 — large surface | more work |
+  | **`maddison`** | 338 | **0 — everything inside `main()`** | **needs an ingest refactor before any fetcher**; its URLs also pin `mpd2020.xlsx` and Dataverse datafile id `421302`, so a new Maddison release would never be seen (R159 shape, slow-burning: the dataset moves every ~3 years) |
+
 - **J. `imf_gfs*` family — 6 sources / 213,200 series, all SERVED, none registered.** The single
   largest un-harnessed block. Analysed 2026-07-29; **do not re-derive this, and do not guess the
   mapping.**
