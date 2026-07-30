@@ -2364,3 +2364,41 @@ and confirm it is green BEFORE reading anything into the affected arm. Note also
 error CODE was diagnostic and I skimmed it: `unknown series id` (404, catalog) and
 `data_unavailable` (502, object) are different failures, and the distinction was sitting in
 the response body the whole time.
+
+## R193 — I almost reported "bis fixed, verified in CI" on a run where bis never executed
+
+**What happened.** After fixing the bis Arrow abort I dispatched `-f source=bis` and the
+step came back `Run updater -> success`. Every surrounding step was green too: state
+pushed, freshness synced, heartbeat committed. I had already written the sentence in my
+head. The actual step output was three lines:
+
+    === 1 unit(s) processed ===
+      locked           bis/_all
+    updater exit code: 0
+
+`locked` — bis still held a LEASE from the previous run, the one that died with SIGABRT at
+11:14 and therefore never released it (claim_lease ttl_s=3600, claimed 11:11:03, so held
+until ~12:11). The fetcher did not run. Not one line of the code I had just changed was
+executed. The updater exited 0 because skipping a locked unit is correct behaviour, and
+"exit 0" plus a green step is indistinguishable from "the fix works".
+
+**Why it was nearly convincing.** This is the R50 vacuous-green shape, and the workflow file
+WARNS ABOUT IT IN A COMMENT six lines above the command I ran: "a plain --source run still
+honours the cadence gate, so proving a source that isn't due prints '0 unit(s) processed'
+and the run goes green having exercised no fetcher code at all — a green light that means
+nothing (R35)". I read that comment earlier the same session while auditing the step's `if:`
+conditions. The mechanism differed — a stale lease rather than the cadence gate — which was
+apparently enough for me not to recognise it.
+
+**The rule.** A verification run must prove the CODE RAN, not that the job was green. Before
+reading any verdict, find positive evidence of execution: the fetcher's own log lines, a
+non-zero row/unit count, a memory curve, a `<<<` completion with a duration. Here the
+evidence was flatly absent — no `[bis]` lines, no `<<<`, and zero memory samples — and I was
+reading the step conclusion instead of the step output. "0 units processed" and "1 unit
+locked" are both green and both mean nothing happened.
+
+**Also a real operational finding, not just my error:** a run that ABORTS leaves its lease
+held for the full hour, so the crashed source is blocked from retry for up to 60 minutes.
+That is defensible (it protects against a second writer) but it means the fastest possible
+retry after a crash is an hour, and any verification attempted inside that window silently
+measures nothing.
