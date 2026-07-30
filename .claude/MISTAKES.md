@@ -2093,3 +2093,15 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **The habit:** a diagnosis written into a plan gets treated as established by whoever reads it next — including me. Label a hypothesis as one, and where it is cheap to test, test it BEFORE it becomes the justification for a refactor. Here the test cost one scoring pass and saved a wrong rebuild of a shared base.
 - **Also worth keeping:** the negative result is now recorded in the task and the commit, so nobody spends another 12M-row pass rediscovering that the union is useless.
 - **Rules:** R180.
+
+### M-20260730-87: a `\b` became a literal BACKSPACE, and the site nearly told visitors three live databases were not updating
+
+- **What the page would have said.** The new per-database "Automated refresh" line marked **bundesbank, un_wpp and sec_edgar as "not yet wired"** — on a public page, about three databases that are refreshed every single day. A false statement about our own service, in the exact place a visitor looks to decide whether to trust the data.
+- **Two causes stacked.**
+  1. My first rule only checked `registry.yaml live: true`. Three mechanisms actually refresh sources: the live tier, the **updater-heavy matrix** (bundesbank, un_wpp), and **sec-edgar-daily.yml** (sec_edgar). Fixed by mirroring `tools/audit_schedule_coverage.scheduled_sources()` so the site, the runner and the audit cannot disagree.
+  2. After that fix, sec_edgar was STILL false. Everything I inspected looked right — the regex matched standalone, the path existed, the registry entry was there, control flow had one return — and the function still returned False.
+- **`cat -A` found it: the written regex was `r"^Hsec_edgar(?:_xbrl)?^H"`.** `^H` is a literal **backspace byte (0x08)**. My `\b` word-boundary had been interpreted as the escape sequence for backspace somewhere in the write path, so the pattern was `\x08sec_edgar…\x08` and matched nothing. Two stray bytes in the file. Same family as R154, where bash ate an em-dash and produced a false 404.
+- **What actually caught it** was not reading the code — I read it four times and it looked correct every time. It was refusing to accept a value I could not explain: sec_edgar SHOULD be wired, it said False, and I kept going until the bytes explained why. Reading source cannot reveal a character that renders as nothing; `cat -A` can.
+- **Fixed:** stripped the 0x08 bytes; the pattern is now a plain substring match. Verified: 116 of 139 wired, with sec_edgar / bundesbank / un_wpp true and cepii_gravity / eia / comtrade false.
+- **The habit:** when generating code with escapes through a shell heredoc, assume the escapes are wrong until a byte-level check says otherwise — and when a computed value contradicts what you know to be true, do not re-read the logic a fifth time, look at the bytes.
+- **Rules:** R181.
