@@ -2156,3 +2156,13 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **The tell was internal contradiction:** a run cannot be executing step 7 and have failed steps 8-15. That is what stopped me repeating it as fact — the same reflex as R163, where a status contradicting my conclusion outranked my conclusion.
 - **The habit:** when filtering on a status field, check what the API uses for "not yet" — `None`, `''`, `null` and a missing key are four different things, and a negated membership test quietly swallows all of them. Print the raw values once before trusting a derived verdict.
 - **Rules:** R185.
+
+### M-20260730-93: I guessed a return key, and the source published 119,105 rows while reporting "no_change"
+
+- **Building the eia fetcher I wrote** `n_rows = stats.get("rows") or stats.get("n_rows") or 0` — two plausible names, neither of them the real one. `jobs.ingest_eia.write_dataset` returns **`n_obs`**.
+- **What the smoke run showed:** `run1: status='no_change'` — while the parquet went from ABSENT to **119,105 rows** and 2,905 cursors were produced. The data landed perfectly and the status said nothing happened.
+- **Why that is not cosmetic.** `tally.added` stayed 0, so `finalize` returned `no_change`, and `orchestrate._derive_changed_csvs` only runs on `"ok"`. Those 2,905 series would have been published to R2 with their per-series CSVs never derived — fresh parquet, stale downloads. R174 arriving from a completely different direction, on the very next fetcher I wrote after fixing R174.
+- **Caught because the two-run smoke prints the status**, and "no_change" next to a file that had just been created from nothing is a contradiction I could not explain away. Had I only checked "did rows land", it would have passed.
+- **Fixed:** read the key from `write_dataset`'s actual `return` statement. Re-proved: `ok, +119,105 new rows, 2,905 cursors`, then `no_change` on the manifest gate.
+- **The habit:** when consuming another function's return value, open its `return` and read the keys. A `.get("plausible") or .get("also_plausible") or 0` chain is a guess with a silent default — and the default is the dangerous part, because 0 flows straight into a status that looks calm.
+- **Rules:** R186.
