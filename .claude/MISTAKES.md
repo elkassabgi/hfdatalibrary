@@ -2478,3 +2478,36 @@ have run it before writing a commit message that asserted the mechanism.
 upstream zip IS the complete dataset, so an incremental merge into a 36.4M-row file is the
 wrong shape entirely — stream the new snapshot to a temp parquet and swap, or do the merge
 in DuckDB with disk spill (the pattern tools/derive_csv_bulk.py already uses successfully).
+
+## R196 — a UTF-8 .ps1 with no BOM silently DELETED half my script under PowerShell 5.1
+
+**Symptom.** `run_local_heavy.ps1` ran, printed its first log line and its last log line, and
+exited 0. No error, no warning. A `Set-PSDebug -Trace 1` run gave the sequence
+`... 62 -> 63 -> 64 -> 66 -> 121 ...`: lines 67 through 120 — the CI-collision guard, the
+pull-state, the updater invocation and the push-state — were never executed and never
+reported. A green run that did nothing, which is the failure mode I had already been bitten
+by twice today (R193).
+
+**Cause.** Windows PowerShell 5.1 reads a `.ps1` with no byte-order mark using the SYSTEM
+ANSI CODEPAGE, not UTF-8. My file was UTF-8 and contained em-dashes and curly quotes in
+comments and log strings. Each one decoded to mojibake (`â€”`), and somewhere in that
+mis-decoding the tokenizer lost the thread and swallowed the rest of the body. It does not
+raise — it just stops executing statements.
+
+**What made it expensive.** I could SEE the corruption and dismissed it. The file listing
+showed `local â€” nothing to do` and I read that as a cosmetic display artifact of my own
+terminal, then went hunting for brace imbalances, reserved variables and here-string
+delimiters. The mojibake WAS the bug, printed in front of me, three times, before I looked at
+it properly. I also mis-read a 96-character display truncation as a truncated line of code
+and briefly "found" a second bug that did not exist.
+
+**The rule.** Any `.ps1` this project writes must be pure ASCII, or be saved with a UTF-8
+BOM. Prefer ASCII: it cannot be got wrong by whichever tool writes the file next. And when
+non-ASCII text renders as mojibake in a file you are debugging, that is evidence about the
+FILE, not about the terminal — check the encoding before checking the logic.
+
+**Second lesson, the one that actually cost the time.** I formed five hypotheses (brace
+imbalance, `$args`, here-string terminator, if-expression assignment, `-WhatIf` colliding
+with CmdletBinding) and tested each by reasoning rather than by instrumenting. The trace took
+one command and gave the answer immediately. When control flow is doing something impossible,
+TRACE IT rather than theorise about the parser.
