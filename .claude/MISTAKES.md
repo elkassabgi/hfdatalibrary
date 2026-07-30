@@ -1655,8 +1655,20 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   | `imf_gfse` Expense | 48,750 | ? | **AMBIGUOUS** |
   | `imf_gfsmab` Main Aggregates and Balances | 43,179 | ? | **AMBIGUOUS** |
 
-  `imf_gfse` and `imf_gfsmab` both plausibly belong to `GFS_SOO`, and `GFS_SOEF` has no obvious
-  counterpart — so the last two are 91,929 series that must NOT be wired on a name guess.
+  **RESOLVED 2026-07-29 by evidence, on the COMPLETE indicator sets — mapping is now settled.**
+  Pulled `detail=serieskeysonly` for both flows and extracted every distinct INDICATOR (not a
+  sample; the first pass read only the first 4,000 of a 57 MB response, which could not have
+  proven absence):
+  * `GFS_SOO` — 475,049 series, **220 distinct indicators**, and it carries BOTH families:
+    `G26*` (12 codes: G26CFG_T, G26C_S13U_T, G26FG_T, …) AND `G11*`/`G12*` (43 codes: G1111_T,
+    G111_T, G1211_T, …).
+  * `GFS_SOEF` — 12,720 series, **exactly 5 indicators**, all `G9*_OEF` (G91_A_OEF, G92_A_OEF,
+    G93_L_OEF, G9M2_N_OEF, G9_A_OEF). No G26, no G11/G12.
+  Therefore: **`imf_gfse` = the G26 subset of `GFS_SOO`; `imf_gfsmab` = the G11/G12 subset of
+  `GFS_SOO`.** Our pipeline split ONE IMF flow into two source ids by indicator group, which is
+  why no 1:1 name match existed. A single `GFS_SOO` fetcher covers both (91,929 series).
+  **`GFS_SOEF` has no counterpart among our six — 12,720 series of Other Economic Flows we do
+  not carry at all.** That is new coverage available for free once the family is wired.
   **Resolve by evidence, not by name:** pull a sample from `GFS_SOO` and `GFS_SOEF` and compare
   the actual dimension codes against ours (`imf_gfse` keys end `…XDC.1A_S1_G26`, `imf_gfsmab`
   `…XDC.G11__Z`), then map on matching code sets.
