@@ -188,3 +188,19 @@ space you have not reproduced exactly, and a matching provider NAME is not prove
       series; the catalog credits abs with **18**. Whatever abs serves, it is not what it
       holds. Decide whether to catalogue at flow grain (like the 9 PxWeb sources) or leave
       it — but do not leave the discrepancy undocumented.
+
+### Do not chase these until ONE clean full run has happened
+
+The outage means several queue items may be describing symptoms of the outage, not real
+defects. `_direct` wrappers with "0 catalog rows" have never executed once — not because
+they are unreachable, but because nothing downstream of abs ever ran. Re-measure before
+building anything:
+
+  - #18 nine imf_*_direct (0 catalog rows each) — including the three FSI wrappers the
+    imf_fsi unlock depends on. "Unreachable" and "never attempted" look identical here.
+  - #24 census (22) / usda (25) / noaa (10) — all small, all downstream of abs.
+  - Any source promoted to live on 2026-07-29/30: NONE has executed in CI even once.
+
+The gate is a full run that reaches past abs. statcan (56,845,456,057 rows) is the first
+untested giant behind it — watch its memory specifically, since the cursor audit clears its
+per-PID fold but nothing has ever exercised the rest of that fetcher end-to-end.
