@@ -2058,3 +2058,14 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Left NOT live, deliberately,** with the whole analysis in the module docstring so the next person does not rediscover it. Building the fetcher was still worth it: it is what surfaced the defect.
 - **The habit:** when a guard fires, the first question is "what is it protecting me from?", not "how do I get past it?". And an assumption I wrote in prose is not evidence, even when I wrote it confidently — especially when my own probe already disagreed.
 - **Rules:** R177.
+
+### M-20260730-84: fed_board would have gone live and silently never run, for want of one line
+
+- **Caught four minutes before the 06:00 cron**, by asking a question I had not asked of any fetcher I shipped today: *does CI install everything this imports?*
+- **`jobs/ingest_fed_board.py` does `from lxml import etree` at MODULE level**, and my fetcher imports that module. `lxml` was NOT in `requirements-updater.txt`.
+- **The failure mode is the worst kind.** An ImportError in a fetcher makes `fetcher_implemented('fed_board')` return False, so the orchestrator classifies the source as PENDING — *"no adapter built"* — and skips it. No red step. Nothing naming lxml. The source I had just promoted, verified end-to-end and written a commit message about would simply have never run, indefinitely, behind a green job.
+- **This is the THIRD incident of the same class,** and the requirements file documents the other two in its own comments: missing `openpyxl` made edgar_jrc report "no adapter built" (CI run 28978133410), and missing `xlrd` broke damodaran (a ModuleNotFoundError surfaced as a transient) AND sipri_polity (which reported *"2/3 sub-unit(s) returned 200 but parsed 0 rows"* — the 2 being precisely its two .xls files). One absent dep, two sources broken, neither naming the cause. I had read those notes earlier today and still shipped the same bug.
+- **Fixed, and then made structural.** `tools/audit_updater_deps.py` walks the import graph STATICALLY — 150 modules reachable from the fetchers, following every jobs/core/connectors module they pull in — and fails on any third-party root the requirements file does not declare. Static deliberately: importing locally proves nothing, because everything is installed here; what matters is whether the runner is TOLD to install it. Wired into the preflight workflow.
+- **It found a second gap on its first run:** `numpy` is imported directly by `vdem.py` and was undeclared. It works today only because pandas and pyarrow drag it in — a direct import satisfied by someone else's dependency is luck, not a contract.
+- **The habit:** "it imports on my machine" is not evidence about CI, and a comment describing a past incident is not protection against repeating it. Turn the comment into a check.
+- **Rules:** R178.
