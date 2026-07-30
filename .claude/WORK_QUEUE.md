@@ -204,3 +204,25 @@ building anything:
 The gate is a full run that reaches past abs. statcan (56,845,456,057 rows) is the first
 untested giant behind it — watch its memory specifically, since the cursor audit clears its
 per-PID fold but nothing has ever exercised the rest of that fetcher end-to-end.
+
+### The OOM class beyond cursors: whole-file reads on giant stores
+
+abs was a cursor blowup; statcan was about to be a READ blowup, found by looking ahead
+rather than by another dead runner. Fixed 2026-07-30 (commit f66d299):
+  - `_disk_vector_map` read every column of every changed cube and `.to_pydict()`-ed it.
+    statcan's largest cube 98100435.parquet is 962,150,400 rows -> ~67 GB of Arrow at
+    ~70 B/row before to_pydict() even starts. Now 4 columns, folded per record batch.
+  - `merge._max_obs_date(blob.read_table(path))` -> projected to `columns=["obs_date"]`
+    (~3.8 GB worst case instead of ~67 GB).
+
+- [ ] **statcan vector-map cardinality is UNMEASURED.** The map holds one entry per
+      distinct vector per cube. Far below the row count, but unknown for the census
+      giants; if it runs to tens of millions it needs its own cap. Measure distinct
+      series_key on 98100435 before assuming it is fine.
+
+- [ ] **Sweep the whole-file-read class properly.** tools/audit_cursor_blowup.py covers
+      cursor folds only. The analogous audit is: which fetchers call `blob.read_table(p)`
+      with NO `columns=` against a store whose largest file is huge? statcan was found by
+      hand; there may be others. oecd (6,979,047,823 rows / 1,413 files), cbs_nl
+      (4,581,749,467 / 3,844) and eurostat (2,430,929,754 / 7,754) are the next largest
+      stores and none has been checked.
