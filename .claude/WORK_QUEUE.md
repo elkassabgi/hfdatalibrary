@@ -76,9 +76,13 @@ DONE since the last table: WHO (3 / 34,788), BOC (1 / 12,862), SNB (1 / 762).
 - [ ] Small non-DBnomics remaining: usda 25, census 22, noaa 10, bea 240 (BEA's own API — its
       DBnomics namesake is a NAME COLLISION, R171). comtrade is BLOCKED (see above); snb, fhfa,
       maddison and boc are DONE.
-- [ ] `worldbank_extra` — BLOCKED on a data repair: no series_key column and `country` is BLANK
-      for all ~120k GEM + ~134k aggregate rows, so (indicator, country, obs_date) is not unique.
-      Needs a re-key into a WDI-style layout BEFORE any fetcher can merge safely. Do not paper over.
+- [ ] `worldbank_extra` — NOT a coverage gap; it is UNSERVED data. Re-measured 2026-07-30:
+      **0 catalogued series, absent from util.ts**, 9 parquets on disk. So it never appears in
+      the served-but-unscheduled count and no fetcher would help. The underlying defect is
+      confirmed though — schema is [indicator, country, obs_date, value] with `country` BLANK
+      (verified on doing_biz.parquet), so (indicator, country, obs_date) is not unique and there
+      is no series_key at all. Re-key into a WDI-style layout FIRST, then catalogue, then serve,
+      then schedule. Belongs with tools/audit_unserved.py's bucket, not this queue's numerator.
 - [ ] `ksh_stadat` — 3 unparsed table shapes (multi-label-column + single time column).
 - [ ] `owid` — 24 missing + 32 stale CSVs (parked while gated).
 - [ ] `stats_nz` — 10 of 12 datasets unreachable upstream (pre-existing, not our regression).
