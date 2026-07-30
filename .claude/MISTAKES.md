@@ -2038,3 +2038,23 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Fixed:** `CURSOR_CAP = 50,000`, chosen against measurements rather than taste — fed_board's largest release has 39,882 series, fhfa ~5k, who_hwf 4,421, maddison 338, so every real source stays under it and behaves exactly as before. When the cap bites, the fetcher LOGS the dropped count and the reason, because a truncation nobody is told about reads as "we covered everything".
 - **The habit, and it is the one I keep relearning:** a correct fix applied uniformly is not automatically a safe fix. Before shipping something to N callers, find the LARGEST caller and multiply. "What does this cost on the biggest instance?" is a different question from "is this right?", and only the second one had an obvious answer.
 - **Rules:** R175.
+
+### M-20260730-82: I wrote "every real source stays under the cap" into a commit without checking the biggest ones
+
+- **The claim.** Shipping CURSOR_CAP (R175) I wrote, in the commit message: *"every real source stays under it and behaves exactly as before"*, citing fed_board 39,882 / fhfa ~5k / who_hwf 4,421 / maddison 338.
+- **I had measured four sources and asserted it of all of them.** Running the same check over the rest, minutes later: **bis/LBS alone has 608,570 distinct series**, **fhfa/annual_tract has 63,930** (not ~5k — I had quoted a different cube), and **zillow unions across 206 republished cubes toward ~543,000**.
+- **Worse, the cap I shipped was per-FILE.** Capping each file and then unioning them reaches exactly the unbounded total the cap exists to prevent. Necessary, and not sufficient — and I had just written a ledger entry about finding the largest caller.
+- **Fixed:** `_common.merge_cursors()` bounds the ACCUMULATED set across files for zillow, bis, fed_board, fhfa and ilostat, and each logs when it bites. Verified: bis LBS caps at exactly 50,000 and stays there when CBS is added on top.
+- **The habit:** a claim about "every source" needs the query that covers every source, not four examples and a generalisation. It cost one loop over six directories to check — less time than writing the sentence I got wrong.
+- **Rules:** R176.
+
+### M-20260730-83: comtrade's published data is under-keyed — and the guard caught it, not me
+
+- **Found because a run failed:** `refusing shrink 24086->4429`. My first instinct was to suspect my own merge call. Testing `merge_and_write(mode="merge")` in isolation showed it unions correctly (10 + 1 = 11), so the fault was in the data, not the call.
+- **Reproduced with ONE row merged into a copy of the real store: 24,086 -> 4,155.** The stored parquet holds **24,086 rows but only 4,154 distinct (series_key, obs_date) pairs**, and **1,240 of those carry CONFLICTING values** — `import_total:72` at 2014-12-31 is simultaneously 1,603,998,886.636, 2,729,735,494.827 and 4,816,420,248.446.
+- **The cause:** `jobs/ingest_comtrade.py` keys on `{flow}:{reporter}` and drops whatever dimension actually separates those records (mode of transport / customs / mos code), so several real observations share one id. Exactly the vdem-vparty and unsdg defect.
+- **Why no merge can be right until it is fixed.** Dedup on (series_key, obs_date) DISCARDS real values; not deduping leaves an ambiguous id space where a download returns three different numbers for the same series-date. The never-shrink guard refusing was the system working — without it I would have written the collapsed 4,154-row table over 24,086 rows of published data.
+- **A second measured correction to my own docstring.** I had written that the endpoint "returns whole annual histories anyway". It does not: `public/v1/preview` caps a response at 500 records and returned only period 2025. My own earlier probe — 5 reporters, 1 record — contradicted the claim at the time and I did not follow it up.
+- **Left NOT live, deliberately,** with the whole analysis in the module docstring so the next person does not rediscover it. Building the fetcher was still worth it: it is what surfaced the defect.
+- **The habit:** when a guard fires, the first question is "what is it protecting me from?", not "how do I get past it?". And an assumption I wrote in prose is not evidence, even when I wrote it confidently — especially when my own probe already disagreed.
+- **Rules:** R177.
