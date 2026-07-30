@@ -2402,3 +2402,41 @@ held for the full hour, so the crashed source is blocked from retry for up to 60
 That is defensible (it protects against a second writer) but it means the fastest possible
 retry after a crash is an hour, and any verification attempted inside that window silently
 measures nothing.
+
+## R194 — I put 1,143,250 series live in breach of the licence condition I had just verified
+
+**What I did.** I checked the licence audit for `cepii_gravity` before serving it — CONFIRMED
+redistributable_attribution, Etalab Open Licence 2.0 — reported the gate as cleared, added it
+to SUPPORTED_SOURCES, deployed, synced 1,143,250 catalog rows to D1, and confirmed 10/10 ids
+returned 200 with real CSV bodies. Then I looked at the served citation header:
+
+    #  Series:    GRAVITY:col_dep:ABW:ABW [cepii_gravity:...]
+    #  License:   etalab-2.0; attribution required
+    #  Provided:  Elkassabgi Data Library
+
+No Source line. No CEPII. No last-update date. Etalab 2.0's ONE condition is attribution —
+name the source together with the date of last update — and the audit even records the extra
+citation CEPII asks for ("Conte, Cotterlaz & Mayer working paper"). The D1 `source` row was a
+stub: name auto-generated "Cepii Gravity", attribution NULL, homepage NULL, terms_url NULL,
+license_id 'NEEDS-REVIEW'. I had verified the licence PERMITS redistribution and never checked
+that the machinery which DISCHARGES its condition was populated.
+
+**The self-deception.** My own verification script printed `[OK] publisher` — because it
+substring-matched "cepii" and the string "cepii_gravity" appears in the series id. The check
+I wrote to confirm attribution was satisfied by the id, not by any attribution. A test that
+can pass on the thing being tested is not a test.
+
+**The rule.** "The licence permits X" and "we satisfy the licence's conditions for X" are two
+different claims, and the second is the one that matters at serve time. Before making a
+source live: fetch a real body and READ the citation header, and check the source row has a
+non-empty attribution. Never assert a condition is met via substring search over a blob that
+contains the source id.
+
+**Swept the class, because one stub row implied others.** Eight more SERVED sources have an
+attribution-REQUIRED licence and an empty attribution string — 353,139 series: harvard_atlas
+255,217, gapminder 86,684, stat_slovenia 4,134, dst 1,963, stat_latvia 1,952, statfin 1,539,
+hagstofa 1,068, bfs 582. Two carried license_id 'NEEDS-REVIEW' ("do not redistribute until
+reviewed") while being served, though the audit has CLEARED verdicts for both. cepii_gravity
+and harvard_atlas are fixed (harvard_atlas is CC0, so its real defect was the wrong licence
+id, not missing attribution). The remaining seven are blocked on a permission denial and are
+listed in the work queue with their audit-sourced values ready to apply.
