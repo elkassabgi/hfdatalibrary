@@ -1967,3 +1967,19 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **What happened instead:** `tools/preflight_registry.py` failed with a `ScannerError` naming line 2354 column 52, the `&&` chain stopped, and **nothing was committed or pushed**. Rephrased, re-ran, `registry preflight OK: 134 sources, 106 live`, then pushed.
 - **The point worth keeping:** R168's lesson was "a validation whose failure mode is total must fire at the moment of the change." The very next registry edit proved it — and proved the value of putting the check *before* the commit in the same command, not after the push where a red CI job would have been the first signal.
 - **Rules:** R168 (confirmed in use).
+
+### M-20260730-76: "103 sources left" implied 103 fetchers; 60 of them have no upstream to fetch from
+
+- **How I had been reporting it:** "N of 202 sources / M of 5,050,206 series scheduled", with the remainder framed as a build queue. That framing is what I have been working from all session, and it is wrong in a way that overstates how close 100% is.
+- **What the data says.** Most of the long tail arrived via DBnomics, and DBnomics stopped re-indexing several providers years ago. Newest DBnomics index per provider, over the 103 served-but-unscheduled sources:
+  - **UNCTAD — 38 sources / 127,413 series — 2023-06-30**
+  - **FAO — 18 / 87,579 — 2024-05-09**
+  - **UNESCO — 4 / 57,530 — 2022-04-04**
+  - IMF — 28 / 398,777 — 2025-08-31 · BOC — 1 / 12,862 — 2025-02-15
+  - WHO — 3 / 34,788 — **2026-07-24** and BEA — 1 / 240 — **2026-07-26**, both genuinely current
+  - 8 sources / 3,953 series are not DBnomics providers at all — ordinary fetcher work
+- **Why that changes the work, not just the number.** For the 60 UNCTAD/UNESCO/FAO sources there is **nothing newer behind the feed they came from**. A fetcher written against DBnomics for those would run nightly, succeed, and transfer zero new data — indistinguishable in every log line from a healthy source. Making them current means re-deriving from the real publisher AND reproducing our published ids exactly, because the ids were minted by DBnomics' slugifier (`unctad_rfia:UNCTAD_RFIA:A.number-of-exporters.<slug>`). That is the FAO prover's problem, and it fails silently: a wrong key template does not error, it mints a parallel id space beside the live series and reports success.
+- **The error was mine, not the metric's.** The coverage number was accurate; what I attached to it was a false implication — that every unscheduled source was one fetcher away. That is the same failure Ahmed corrected in R158: a status that reads as a smaller remaining job than the real one.
+- **Fixed:** `tools/audit_upstream_liveness.py` buckets the gap by whether the upstream is alive, and prints DATES rather than a pass/fail, because "too stale" is a judgement for the reader. Progress reporting now has to say which kind of work is left, not just how many sources.
+- **The habit:** before calling something "remaining work", check that the work is the kind you think it is. "No fetcher" and "no upstream" look identical in a coverage table and are months apart in effort.
+- **Rules:** R170.
