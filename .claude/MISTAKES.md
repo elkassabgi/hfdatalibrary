@@ -2003,3 +2003,15 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **A second, quieter fix in the same place:** with `budget 0` the run used to fall into the "returned 0 series, 0 usable observations" branch and blame upstream for a break that never happened. Same safe outcome, misleading message — and a misleading message is how the next reader loses an hour (R47, R151).
 - **The habit:** every early-exit path — deadline, cap, page limit — has to answer "what status does this report, and does that status let the gate advance?" A budget is a deferral, never a completion.
 - **Rules:** R172.
+
+### M-20260730-79: BLS is edge-blocked — and I nearly blamed the host for my own burst
+
+- **Found by the stability sweep,** which flagged `bls` as the single remaining mover: `bls:3675e30a0364ebe3 -> None`. Not the R164 never-hitting-cache defect — the `None` is the fetcher's own documented fallback (`except TransientError: return None`, so the strategy fetches anyway, cadence-gated).
+- **First probe:** all 8 surveys returned **HTTP 429**. The tempting conclusion was "BLS rate-limits us".
+- **I had just fired 8 rapid requests at them**, so that conclusion was unearned — the mirror image of R132, where I invented an ONS rate limit that turned out to be my own 429s. The discriminating test is one request after an idle gap.
+- **Measured:** after 90 s idle, a **single** request still returns **429 from `AkamaiGHost` with an "Access Denied" HTML body**. That is a persistent edge block, not burst throttling. Backing off will not fix it.
+- **The fetcher is already doing the documented right thing:** BLS requires a contact-identifying User-Agent on download.bls.gov, and we send `Econ-Fin Data Library admin@hfdatalibrary.com`. So this is an IP/edge decision, not a UA-policy failure.
+- **What I am NOT claiming.** I probed from this workstation's residential IP. The GitHub runner has different egress, and I have not measured it. The health gate reporting `bls` at **59 d stale (newest obs 2026-06-01) with attn=_all:partial** is *consistent* with CI being blocked too, but consistent is not measured — the 06:00 UTC run will show it directly.
+- **Recorded as a real external blocker** alongside imf_fsi's legacy-host 403, not as a fetcher bug. If CI is also blocked the route is BLS's registered API (api.bls.gov, free key) rather than download.bls.gov.
+- **The habit:** when a host refuses you right after you hammered it, the first suspect is your own traffic. One request after a pause separates "they block us" from "I burst them" — and the two lead to completely different fixes.
+- **Rules:** R173.
