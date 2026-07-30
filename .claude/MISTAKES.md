@@ -1659,6 +1659,19 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   | `imf` | 131 | 13 — `fetch_dataflows`, `fetch_dim_order` | buildable |
   | `bea` | 240 | 27 — large surface | more work |
   | `census` | 22 | 30 — large surface | more work |
+  **REFINEMENT (same day): "has reusable helpers" does NOT mean "wrappable".** Checked `bis`,
+  the cleanest-looking candidate: both its helpers are BACKFILL-SHAPED and skip when output
+  already exists — `download()` returns early if the zip is on disk >10 KB, `ingest_zip()`
+  returns early if the parquet exists — and the CSV parse is inline, writing straight to a
+  `ParquetWriter`. So neither can be called by an updater, and the parse cannot be reused
+  without extracting it. Expect the same shape across most of the table: these ingests were
+  written to run ONCE and resume, which is precisely the property that makes them inert as
+  updaters (same root cause as ipea's skip-if-present and stats_nz's frozen list).
+  **So the real unit of work per source is: extract a pure parse function from the ingest, then
+  write the fetcher around it.** Budget for a refactor per source, not a wrapper. The three
+  built so far (stats_nz, ipea, and the GFS/FSI thin wrappers) were the ones where a reusable
+  parser already existed or the base class did the work.
+
   | **`maddison`** | 338 | **0 — everything inside `main()`** | **needs an ingest refactor before any fetcher**; its URLs also pin `mpd2020.xlsx` and Dataverse datafile id `421302`, so a new Maddison release would never be seen (R159 shape, slow-burning: the dataset moves every ~3 years) |
 
 - **J. `imf_gfs*` family — 6 sources / 213,200 series, all SERVED, none registered.** The single
