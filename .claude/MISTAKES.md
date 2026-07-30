@@ -1574,6 +1574,18 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   keys carry readable labels). It rests on the 96.4% TABLE-level redundancy (394 of 415 tables already in `ksh_stadat`, which
   carries more series for them), `ksh_stadat` covering 4x more tables, and `ksh`'s fetcher being unimportable. Ahmed chose
   option (a) on 2026-07-29: preserve the 16 retired tables in `ksh_stadat` as labelled discontinued series, then retire the id.
+  **PROGRESS 2026-07-29 — step 1 of 4 DONE (the irreversible-if-skipped one).** The 719 series
+  across the 16 KSH-retired tables are extracted from `ksh`'s 25 parquets and published to
+  `clean_full/ksh_stadat/_discontinued_from_ksh.parquet`. Verified by READING BACK from R2, not
+  by trusting the PUT: 11,591 rows, 719 distinct series, 16 tables, keys intact
+  (`KSH:gsz0011:Foreign direct investment enterprises in Hungary — net liabilities, billion
+  HUF:A`). The 719 matches the independently-derived count exactly. **Nothing has been deleted;
+  `ksh` is untouched and still serving.**
+  REMAINING, in order: (2) catalogue those 719 under `ksh_stadat` with their existing KSH titles
+  plus a discontinued marker — do NOT invent titles; (3) recover the 5 still-published tables
+  (`fol0003`, `gsz0087`, `mez0121`, `mez0122`, `sza0071`, 184 series) via `ksh_stadat`'s own
+  fetcher, whose catalog walk missed them; (4) only then retire `ksh` — resolver entry, catalog
+  rows, D1 rows, R2 CSVs. Step 4 is the destructive one and must not run before 2 and 3 verify.
   Note `ksh`'s fetcher is broken regardless — it imports `jobs/ingest_ksh_hungary.py`, which does
   not exist — so (b) means writing that parser.
 - **H. `imf_fsi`.** IMF split `FSI` into `FSIC` / `FSIBSIS` / `FSICDM`; three 17-line wrappers over `_imf_direct.py` cover it. They would be NEW source ids serving beside the frozen `imf_fsi` (precedented: `imf_cofer` + `imf_cofer_direct`). Ahmed has given a general go-ahead.
