@@ -1591,7 +1591,20 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   `ksh_stadat:KSH:gsz0011:Foreign direct investment…:A` returns HTTP 200 with 17 rows,
   2008-12-31..2024-12-31, cc-by-4.0. (A first check said 404; that was my bash harness eating the
   em-dash in the id — R154, not a data problem.)
-  REMAINING, in order: ~~(2) catalogue those 719~~ under `ksh_stadat` with their existing KSH titles
+  **STEP 3 DONE — and it found a real parser gap.** The 5 still-published tables were NOT simply
+  missed by `ksh_stadat`'s catalog walk: all 5 are present in its `_catalog.json` with valid ids
+  and `updatedAt` dates, and all 5 fetch HTTP 200 from KSH. Running `ksh_stadat.parse_table` on
+  the live files, every one returns **0 rows, skip reason `'no parseable time dimension'`** —
+  while `ksh`'s parser handles the same tables fine. Two parsers, one table shape.
+  So they were migrated (184 series, 5 tables, published to R2 and verified by read-back) and
+  catalogued with an ACCURATE marker — **not** "discontinued", since KSH still publishes them:
+  `[migrated from ksh — not auto-updating: parser reports no parseable time dimension]`.
+  184 CSVs derived, 0 failed. **ksh_stadat verified: catalog 98,423 = R2 98,423, MISSING 0,
+  ORPHANED 0.** All 903 series across all 21 ksh-only tables are now preserved and downloadable.
+  **FOLLOW-UP (real, unstarted):** teach `ksh_stadat`'s parser the time-dimension shape these 5
+  use; until then they are frozen. Fixing it is what makes them resume updating — and would
+  likely recover other tables silently skipped for the same reason across the whole source.
+  REMAINING: ~~(2) catalogue those 719~~ ~~(3) recover the 5~~ under `ksh_stadat` with their existing KSH titles
   plus a discontinued marker — do NOT invent titles; (3) recover the 5 still-published tables
   (`fol0003`, `gsz0087`, `mez0121`, `mez0122`, `sza0071`, 184 series) via `ksh_stadat`'s own
   fetcher, whose catalog walk missed them; (4) only then retire `ksh` — resolver entry, catalog
