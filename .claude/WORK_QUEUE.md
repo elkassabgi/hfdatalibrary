@@ -71,7 +71,16 @@ template mints a parallel id space beside the live series and reports success.
 - [ ] `ksh_stadat` — 3 unparsed table shapes (multi-label-column + single time column).
 - [ ] `owid` — 24 missing + 32 stale CSVs (parked while gated).
 - [ ] `stats_nz` — 10 of 12 datasets unreachable upstream (pre-existing, not our regression).
-- [ ] Read each 06:00 UTC run and fix what it reddens.
+- [ ] Read each 06:00 UTC run and fix what it reddens. **EXPECT THE NEXT RUN'S HEALTH GATE TO
+      FAIL, AND DO NOT MISREAD IT.** Snapshot 2026-07-30 06:27 UTC: `RED-UNRUN 36`. RED-UNRUN
+      means "adapter built, no state at all" — and 12 of those are sources promoted TODAY that
+      have simply never executed in CI yet (bis, boc, fed_board, fhfa, ilostat, maddison, snb,
+      who_hwf/rs/sdg, zillow) plus the 9 imf_*_direct registered this morning. The gate judges
+      live-tier sources, so it will go red until each has run ONCE. That is the gate working, not
+      the fetchers failing. Judge each source by its own line in the run log — `ok`, `no_change`,
+      `partial`, or a named error — never by the gate's exit code alone. Other pre-existing reds:
+      `ofr` RED-DATA (newest obs 2026-07-27, 3d, daily) and `bls` ATTENTION at 59d, which is the
+      Akamai edge block (R173).
 
 ## Done 2026-07-30
 
