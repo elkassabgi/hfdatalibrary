@@ -2207,3 +2207,31 @@ to live today has never executed once in CI. Runs on 2026-07-29 failed the same 
 it confidently twice does not make it a diagnosis (this is R180 again, in the same session). Read
 the log before explaining the colour — and when the conclusion is `cancelled`, suspect the runner,
 not the code's exit path. Ledger R54 said "read the log first"; I read the exit code first.
+
+## R188 — I wrote a diagnostic that faithfully reproduced the resource-exhaustion bug it was diagnosing
+
+**What I did.** To attribute the abs OOM I wrote `abs_leak_repro.py`, which replays abs's
+accumulation over the local store: walk all 1,222 flow parquets and fold every
+`(series_key, obs_date)` into one run-global dict, exactly as the fetcher does. The whole
+point was fidelity to the buggy code path.
+
+**Why that was dangerous.** It was TOO faithful. The measurement that finished moments later
+showed the abs store holds **376,332,763 distinct series** across 976,632,535 rows, so the
+dict my repro was building is the same ~94 GB structure that destroyed the 16 GB CI runner —
+now pointed at Ahmed's workstation, which was concurrently running the cepii derive. I killed
+it on the strength of the number, not because I had predicted the hazard when writing it.
+
+**The near-miss.** I got lucky on ordering. Had the DuckDB count been slower than the repro's
+climb, the first symptom would have been this machine paging or dying mid-derive, and I would
+have been debugging a self-inflicted outage on top of the real one.
+
+**The rule.** When reproducing a RESOURCE-exhaustion defect (memory, disk, file handles,
+connections), bound the reproduction before running it: cap the iteration, cap the structure,
+or run it against a slice. Fidelity is what makes the repro useful and is exactly what makes
+it dangerous — the faithful version is a working exploit of your own machine. A repro of an
+OOM must be the one thing that cannot OOM.
+
+**Also recorded, because it is a real gap and not part of the outage.** abs's store holds
+376,332,763 distinct series; the catalog credits it with **18**. Whatever abs is serving, it
+is not what it holds. That is a cataloguing question, not a memory one, and it goes to the
+work queue rather than being fixed under cover of this repair.
