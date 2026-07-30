@@ -2148,3 +2148,11 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Class swept:** of four fetchers touching ourworldindata.org, three gate on an HTTP validator and only whr was affected — gpi returns a real ETag, transparency_ti a content-derived token.
 - **The habit:** when a test clears something, ask what that test is INCAPABLE of seeing. A two-probe comparison can only catch movers whose period is shorter than the gap; anything slower — cache TTLs, hourly regenerations, nightly rebuilds — passes cleanly. And a suspicion I decline for lack of evidence should be written down as a thing to re-check, not dropped.
 - **Rules:** R184.
+
+### M-20260730-92: an empty-string conclusion is not a failure — my filter said eight steps had failed
+
+- **Short one, caught before it was asserted.** Checking the dispatched updater run I filtered steps with `conclusion not in ('success', 'skipped', None)` and printed **eight FAILED steps** — including "Push state to R2" and the health gate.
+- **Nothing had failed.** The run was still `in_progress` on "Run updater"; every later step was `pending` with `conclusion=''`. GitHub uses an EMPTY STRING, not `None`, for a step that has not concluded, so my membership test matched all of them.
+- **The tell was internal contradiction:** a run cannot be executing step 7 and have failed steps 8-15. That is what stopped me repeating it as fact — the same reflex as R163, where a status contradicting my conclusion outranked my conclusion.
+- **The habit:** when filtering on a status field, check what the API uses for "not yet" — `None`, `''`, `null` and a missing key are four different things, and a negated membership test quietly swallows all of them. Print the raw values once before trusting a derived verdict.
+- **Rules:** R185.
