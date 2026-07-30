@@ -1556,7 +1556,20 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **C-OLD (superseded).** Fetched +1,698 rows then `csv coherence partial: 28 changed keys unmapped` — same publish-side gap, smaller.
 - **D. `wid` RED-UNRUN is expected to clear.** It was `PROTECTED, not attempted (in-flight FIRSTPASS_DIRS backfill)`. Now unpinned, with the R130 resume fix and a 60-min cap; the next cron is its first real attempt.
 - **E. Auto-update coverage.** 201 served sources / 4,740,072 series; **58 refresh on a schedule** (updater-daily `live:true`, the updater-heavy matrix `un_wpp/bundesbank/cepii_gravity/eia`, and sec-edgar-daily). Of the rest: **25 sources / 204,509 series are promote-ready** (fetcher resolves; needs `live:true` + a forced proof run — `insee_bdm` 101,848 monthly and `adb` 53,458 lead), **14 have no fetcher** (incl. `imf_fsi` 73,288), and **1 is broken** (`ksh`). Regenerate with a script if the table is wanted again; do not keep it as a loose file.
-- **F. `un_wpp` titles.** 334,236 rows titled with their own key — the ONLY real title defect (verified: `cso` 0, `ons_uk` 0, `insee_melodi` 5/139). The COUNTRY name is recoverable for free: `jobs/ingest_un_wpp.py` reads `Location` at line 100 and discards it at line 128 because ISO3 is set. The INDICATOR long name is genuinely absent from WPP's CSVs and must not be invented. Fix sets `title`/`geography` from published labels and leaves ids untouched.
+- **F. `un_wpp` titles — DONE 2026-07-29.** All **334,236** rows retitled and `geography`
+  populated; **0** still titled by their key. Built the ISO3 -> place-name map from UN's OWN
+  file (WPP2024_Demographic_Indicators_Medium.csv.gz, 16.5 MB) and measured coverage before
+  applying: 237 ISO3-shaped location segments, **all 237 mapped**, plus 316 that were already
+  names — full coverage, so the 75 MB OtherVariants file was unnecessary. **174,687** ids had
+  their ISO3 expanded (ABW -> Aruba). Titles read `Births1519 — AcceleratedABRdecline — Aruba`:
+  indicator and variant kept VERBATIM because their long forms are genuinely not published
+  (R145), only the place name added. Pushed to D1 (13 parts + FTS).
+  **Verified in D1, not by eyeballing search results:** 728 un_wpp series now match "Aruba" in
+  FTS out of 2,084 total matches — 35% of them — where previously ZERO were findable by country
+  name. A page-one search for "Aruba" shows none of them, which is the endpoint's ORDERING, not
+  the index; I nearly recorded that as a failed fix before querying D1 directly.
+  Remaining nicety, not a defect: catalog ranking buries un_wpp behind other sources for bare
+  country queries. 334,236 rows titled with their own key — the ONLY real title defect (verified: `cso` 0, `ons_uk` 0, `insee_melodi` 5/139). The COUNTRY name is recoverable for free: `jobs/ingest_un_wpp.py` reads `Location` at line 100 and discards it at line 128 because ISO3 is set. The INDICATOR long name is genuinely absent from WPP's CSVs and must not be invented. Fix sets `title`/`geography` from published labels and leaves ids untouched.
 - **G. 18 served sources have no site page** (3,260,484 series, `wid`'s 2,465,197 among them). NOT an access failure — `catalog.html` searches the live API, so all are findable and downloadable. It is the landing/SEO surface. `audit_site.py` check F now catches it permanently.
 - **I. `ksh` retirement — APPROVED BY AHMED, THEN BLOCKED ON A FINDING. Do not delete yet.**
   Ahmed approved "recover the 21 ksh-only tables into `ksh_stadat`, then retire `ksh`". Checking
