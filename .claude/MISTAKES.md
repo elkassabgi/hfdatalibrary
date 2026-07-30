@@ -1604,7 +1604,17 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   **FOLLOW-UP (real, unstarted):** teach `ksh_stadat`'s parser the time-dimension shape these 5
   use; until then they are frozen. Fixing it is what makes them resume updating — and would
   likely recover other tables silently skipped for the same reason across the whole source.
-  REMAINING: ~~(2) catalogue those 719~~ ~~(3) recover the 5~~ under `ksh_stadat` with their existing KSH titles
+  **STEP 4 DONE — `ksh` RETIRED 2026-07-29. All four steps complete.** Gate first: **0 of ksh's
+  415 tables absent from ksh_stadat**, all 903 migrated rows present. Only then removed —
+  25,057 catalog rows (local + D1), 25,057 R2 CSVs, the resolver entry, the D1 source row.
+  **KEPT all 25 parquets under `clean_full/ksh/`, so the retirement is reversible.** Verified
+  live: retired id -> 404 not_found; migrated twin -> 200 with 17 rows; a still-published
+  migrated series -> 200. Deployed AND committed (a deployed-but-uncommitted resolver change is
+  how a later deploy silently reverts it).
+  Near-miss at the end: after removing the entry, `grep -c '"ksh"'` still returned 1 — my own
+  explanatory comment. Verified against the comment-stripped source instead of trusting the
+  count; same unanchored-match family as R112/R129/R137/R142/R149.
+  DONE: ~~(2) catalogue those 719~~ ~~(3) recover the 5~~ ~~(4) retire ksh~~ under `ksh_stadat` with their existing KSH titles
   plus a discontinued marker — do NOT invent titles; (3) recover the 5 still-published tables
   (`fol0003`, `gsz0087`, `mez0121`, `mez0122`, `sza0071`, 184 series) via `ksh_stadat`'s own
   fetcher, whose catalog walk missed them; (4) only then retire `ksh` — resolver entry, catalog
