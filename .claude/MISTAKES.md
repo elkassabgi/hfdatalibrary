@@ -2105,3 +2105,13 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Fixed:** stripped the 0x08 bytes; the pattern is now a plain substring match. Verified: 116 of 139 wired, with sec_edgar / bundesbank / un_wpp true and cepii_gravity / eia / comtrade false.
 - **The habit:** when generating code with escapes through a shell heredoc, assume the escapes are wrong until a byte-level check says otherwise — and when a computed value contradicts what you know to be true, do not re-read the logic a fifth time, look at the bytes.
 - **Rules:** R181.
+
+### M-20260730-88: I pushed a website change and would have called it shipped — econdatalibrary.com does not auto-deploy
+
+- **What I nearly reported.** Ahmed asked for a notice on the econ site. I edited the generator, regenerated 203 pages, committed and pushed to `elkassabgi/econdatalibrary`, and was one sentence from telling him it was live.
+- **It was not live.** Fetching `https://econdatalibrary.com/` showed the OLD banner. The repo has FIVE workflows — hello, preflight, sec-edgar-daily, updater-daily, updater-heavy — and **none of them deploys the site**. `wrangler pages project list` confirms it: project `econdatalibrary`, **Git Provider: No**. The site is a MANUAL Pages deploy (`AUTH_SSO_BUILD_LOG.md:1520` records it: *project econdatalibrary, dir catalog/site*).
+- **A git push publishes nothing here.** The deploy is `npx wrangler pages deploy catalog/site --project-name=econdatalibrary`. Ran it: 212 files uploaded, and all three changes then verified against the PRODUCTION domain — the landing banner, a wired database page (boc: "live — on the daily update run") and an unwired one (fao_gt: "not yet wired — verified initial load").
+- **Why this is a trap worth writing down.** My standing note says "always git push website changes immediately". That is right for hfdatalibrary, and it is HALF the job for econ — the push records the change, the wrangler deploy publishes it. The gap is silent: git succeeds, the commit looks like delivery, and the site keeps serving the old bytes.
+- **What caught it** was the habit of checking the live URL instead of trusting the push. A deploy is not done because the tool that precedes it succeeded.
+- **Fixed the note, not just the instance:** the memory now says econ needs the wrangler step and that "pushed" is not "published" for this site.
+- **Rules:** R182.
