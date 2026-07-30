@@ -1901,3 +1901,37 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **The habit, and it is the same one as R160 one day earlier:** an adapter note is a HYPOTHESIS from whoever surveyed the source. Probe the validator before building on it — three HEADs and two GETs cost fifteen seconds. A cache whose key changes every read is indistinguishable from a working cache in every log line it produces.
 - **Class, not instance (Ahmed's standing rule):** this cannot stop at `fed_board`. Every fetcher gating on `http_vintage` needs its endpoint checked for the same defect, with a zero-result sweep as the proof.
 - **Rules:** R164.
+
+### M-20260729-70: the same never-hitting-cache defect in a fetcher I shipped hours earlier
+
+- **Ahmed's standing rule made this mandatory:** a reported example is one instance of a class — sweep the whole surface and prove it with a zero-result check. So after R164 I swept **all 25** `http_vintage`-gated fetchers by calling each one's real `current_vintage()` twice, three minutes apart, and comparing.
+- **Result: 23 STABLE, 2 MOVING, 0 ERROR.** One of the two was **`bis` — my own fetcher, written and promoted the same day.**
+- **The BIS flap is subtler than the Fed's,** and worth writing down because a HEAD-once probe would have passed it. Two HEADs 15s apart on `WS_LBS_D_PUB_csv_flat.zip`:
+  - `ETag W/"153f3e65-19f89d4b74e"  LM Wed, 22 Jul 2026 12:37:26 GMT  CL 356466277`
+  - `ETag W/"153f3e65-19f88bb24fb"  LM Wed, 22 Jul 2026 07:29:53 GMT  CL 356466277`
+  **Last-Modified went BACKWARDS five hours** — no republish can do that — and Content-Length was identical. These are Apache ETags, `"<size-hex>-<mtime-hex>"`, and `0x153f3e65` = 356,466,277 = exactly Content-Length. Several origin replicas hold the same bytes with different mtimes, so only the mtime half moves. CBS was stable; only LBS flapped, so probing one url would also have missed it.
+- **Why my fetcher picked the worst field.** `http_vintage` returns `ETag or Last-Modified or Content-Length`, in that order — a sensible default that here selects the one field that flaps and discards the one that does not. The gate would have re-downloaded and re-parsed **440 MB every run**, silently.
+- **The other MOVING was a FALSE POSITIVE, and checking mattered.** `defillama`'s ETag moved too — but the body genuinely changes: the ETag's size half went `0x818f58 -> 0x818c87` (8,491,352 -> 8,490,119 bytes) and it is live DeFi TVL. A moving token is only a defect when the CONTENT is unchanged. Two GETs plus a body hash is the discriminating test; without it I would have "fixed" a gate that was working.
+- **Fixed:** `bis` gates on Content-Length (stable, and it does move on a real republish), with the reasoning and the raw headers in the docstring. Because size is weaker than a hash, a `MAX_AGE_DAYS = 30` backstop force-re-pulls a zip whose size has not moved in a month, so a same-byte-count revision cannot hide forever. Re-probed: stable across a 20s gap.
+- **Made permanent, not a one-off:** `tools/audit_vintage_stability.py` DISCOVERS every fetcher exposing `current_vintage` (rather than carrying a list that goes stale), probes twice, and exits non-zero on any unexpected mover. `defillama` is recorded in `EXPECTED_MOVERS` **with its evidence**, so the baseline is a real zero rather than a muted alarm.
+- **The habit:** when a defect is found in a shared helper's DEFAULT, every caller inherits it. Sweep by executing the production code path, not by grepping for the helper — and never let a source's own author (me, hours earlier) exempt it from the sweep.
+- **Rules:** R165.
+
+### M-20260729-71: I measured the fraction by hand every cycle, so I kept measuring it differently
+
+- **Symptom, across one day:** an unfiltered `GROUP BY` labelled "served sources" and believed (R143); a cadence filter that hid 10 fetcher-ready sources including three shipped hours earlier (R157); a gap-check that would have reported CLEAN on exactly 10 missing sources (R142). Three different wrong denominators for the one number that decides what I build next.
+- **Root cause:** the measurement lived in ad-hoc inline SQL, rewritten from memory each cycle. Nothing was reviewable, so each rewrite could drift independently.
+- **Fixed:** `tools/audit_schedule_coverage.py`, with every input PARSED FROM THE FILE THAT OWNS IT — `SUPPORTED_SOURCES` from `util.ts` (comments stripped first, or prose words get harvested as ids — the R137 shape), `live: true` from `registry.yaml` via yaml, the heavy matrix from the `ALL='[...]'` literal in `updater-heavy.yml`, and sec_edgar from its own workflow. No hardcoded list, because a second copy of a list is a second thing to go stale (R159).
+- **It paid for itself on first run,** surfacing two things I was not looking for: `cepii_gravity` is catalogued with **1,143,250 series and absent from the resolver**, so the worker 501s on all of it; and the nine `imf_*_direct` fetchers I promoted are **scheduled with 0 catalog rows** — refreshing sibling ids nobody serves while the served originals stay frozen. Neither is visible from a registry-only view.
+- **The habit:** a number that steers the work is a deliverable. If I have derived it by hand more than once, the next derivation is a tool — not because hand-derivation is slow, but because it is unreviewable and drifts.
+- **Rules:** R166.
+
+### M-20260729-72: 1.14M series were four minutes from being advertised with nothing behind them
+
+- **Not a mistake — a near-miss the process caught,** recorded because the margin was thin and the same shape has bitten before (the IEP sources went live catalogued and searchable with **zero** CSVs in R2, so every Download button failed).
+- **The setup was persuasive.** `cepii_gravity` is licence-cleared (Etalab 2.0, gate closed 2026-07-29, 1,143,250/1,143,250 dated), catalogued, already scheduled via the heavy matrix, and my first R2 probe returned five real CSVs at the right keys with sensible sizes. Every signal said "just add it to `util.ts`".
+- **The full both-directions count said otherwise:** 1,143,250 catalogued, **151,543** objects in R2. **MISSING 991,707.** ORPHANED 0. The derive had stopped at ~13%. Adding the resolver entry would have turned ~992,000 series into live 404s.
+- **What made the difference** was refusing to let a 5-key `list_objects_v2` stand in for the population. The sample was not unrepresentative by bad luck — the first keys are alphabetical, and the derive died partway through, so the beginning is exactly the part that IS present.
+- **The habit:** a sample drawn from the front of an ordered listing cannot detect a truncated job — it is systematically drawn from the region most likely to be complete. Count both sets before advertising anything, and treat "the first few look right" as no evidence at all.
+- **Real work opened, not closed:** finish the cepii_gravity derive (991,707 CSVs), re-verify to MISSING 0, then add the resolver entry and deploy.
+- **Rules:** R167.
