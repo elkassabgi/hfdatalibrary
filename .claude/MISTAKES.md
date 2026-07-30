@@ -2126,3 +2126,12 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   - Repaired with the **Edit tool**, which takes literal text and cannot mangle escapes, and simplified the pattern to `r"//.*"` (re.sub is per-line without DOTALL) so there is no escape to get wrong.
 - **The habit, now twice-earned:** do not write regexes containing backslash escapes through a shell heredoc. Use Edit for literal content, or choose a pattern with no escapes at all. And after any generated write, check the bytes — `ast.parse` catches the loud half, `cat -A` catches the silent half.
 - **Rules:** R183.
+
+### M-20260730-90: a stale edge cache almost had me report a good deploy as failed
+
+- **Short addendum to R182.** After deploying the download-gate fix I fetched
+  `https://econdatalibrary.com/cepii_gravity.html` and the change was ABSENT — old Download CTA, old "not yet wired" text, 22,358 bytes against my local 22,374. The obvious read was "the deploy did not include it".
+- **It had.** Fetching the deployment URL directly (`622661f9.econdatalibrary.pages.dev`) and the production domain with a cache-bust both showed the new text. Cloudflare's edge was still serving the previous copy on the plain URL.
+- **So verification has a false-negative mode.** R182's lesson was "check the live URL, a push is not a publish". The refinement: a plain fetch can hit a stale edge copy, so a MISSING marker is not proof the deploy failed — confirm against the deployment URL or a cache-busted request before concluding anything. A present marker is still proof; only absence is ambiguous.
+- **What kept it straight** was comparing byte counts and checking WHICH version was being served (the live page still had markers from the PREVIOUS deploy), rather than treating one absent string as the whole answer.
+- **Rules:** R182 (refined).
