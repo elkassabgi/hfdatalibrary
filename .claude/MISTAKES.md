@@ -1958,3 +1958,12 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **And the mistake inside the fix:** my first `--verify` ran one query PER sampled key — 300 complete passes over 69.6M rows to check 300 series. I had reintroduced the exact quadratic cost the tool exists to remove, inside the test for that tool. It ran ten minutes with no output before I looked at what it was actually doing. Now one scan covers the whole sample.
 - **The habit:** when something is slow, measure WHERE before adding concurrency — "add workers" is a fix for contention, not for a bad algorithm, and it hides the real shape of the problem. Then check that the verification you bolt on does not inherit the same flaw as the thing it verifies.
 - **Rules:** R169.
+
+### M-20260730-75: the preflight built an hour earlier caught me breaking the registry again
+
+- **Short entry, because the process worked** — but it is worth recording that the fix from R168 paid out the same session.
+- **What I did:** while correcting `ilostat`'s registry note I wrote *"strictly weaker than what ILO already publishes: a revision that rewrites values…"* inside an unquoted YAML scalar. A `: ` in a plain multi-line scalar ends the scalar, so `registry.yaml` no longer parsed at all.
+- **What that would have cost.** Not a bad note — a **total outage**, the same shape as R168: `registry.validate()` cannot read an unparseable file, `orchestrate.py` raises SystemExit, and every run aborts before touching a source. A prose colon and a stale integer take the system down identically.
+- **What happened instead:** `tools/preflight_registry.py` failed with a `ScannerError` naming line 2354 column 52, the `&&` chain stopped, and **nothing was committed or pushed**. Rephrased, re-ran, `registry preflight OK: 134 sources, 106 live`, then pushed.
+- **The point worth keeping:** R168's lesson was "a validation whose failure mode is total must fire at the moment of the change." The very next registry edit proved it — and proved the value of putting the check *before* the commit in the same command, not after the push where a red CI job would have been the first signal.
+- **Rules:** R168 (confirmed in use).
