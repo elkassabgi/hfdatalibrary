@@ -2306,3 +2306,32 @@ the UNDONE part get done, and prove that separately. A bound without a resume me
 not a bound, it is a truncation — and the log line describing it is a lie you will believe
 later. Also caught in the same pass: `json` was used by the new helpers and never imported,
 which import-time checks could not see because nothing calls them at import (R178 again).
+
+## R191 — R190 recurred within the hour, in a commit message this time
+
+**What happened.** Two hours after recording R190 ("a bound without a resume mechanism is a
+truncation, and its log line is a lie you will believe later"), I committed
+tools/verify_derive_parity.py with this in the message:
+
+    Key construction is IMPORTED from derive_csv_bulk rather than re-derived, so an
+    encoding drift cannot pass parity by being wrong identically in both places.
+
+The code did not import it. I had written the `urllib.parse.quote(source + ':')` encoding
+out a SECOND time inside the verifier — precisely the arrangement the sentence claims to
+rule out, in the one tool whose entire job is to catch a drift between two representations.
+
+**Why the recurrence matters more than the instance.** R190 was a log line; this was a
+commit message; the earlier one today was a work-queue entry. Same failure each time: I
+describe the property I INTENDED, at the moment I am most convinced of it, and the prose
+then becomes the thing future-me trusts instead of the code. Writing the justification is
+apparently part of how I convince myself the work is done — which makes the justification
+the least reliable artifact in the commit, not the most.
+
+**The rule.** Any sentence of the form "X is imported / shared / bounded / verified / drains
+/ cannot drift" is a CLAIM ABOUT CODE, and it must be checked against the code at the moment
+of writing, not asserted from intent. Cheapest possible check: grep the file for the thing
+you just said it does. `grep import verify_derive_parity.py` would have taken two seconds.
+
+**Fixed** by making it true: derive_csv_bulk now owns csv_key()/csv_key_prefix() as the
+single definition, uses them for its own listing and writes, and the verifier imports
+csv_key_prefix. One definition, so writer and checker cannot drift.
