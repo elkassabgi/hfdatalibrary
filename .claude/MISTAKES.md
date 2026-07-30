@@ -2270,3 +2270,39 @@ table.
 
 **Status.** Fixed before the result was relied on; the corrected sweep is what the abs/vdem/
 owid work is verified against.
+
+## R190 — I shipped a log line promising behaviour the code did not implement ("they drain next tick")
+
+**What I did.** Fixing the abs OOM I added a per-source Deadline budget so it stops starting
+new flows once the budget is spent, and printed:
+
+    {deferred}/{total} flow(s) NOT attempted this run; they drain next tick
+
+**Why it was false.** `blob.list_parquets` returns SORTED names — a stable order. A fixed
+budget over a fixed order works the same PREFIX every run, so flows past the cut-off are
+never reached at all. Nothing drained. The tail of ABS's 1,222 flows would have frozen
+permanently while the log asserted, every single run, that it was draining.
+
+**Why this is worse than the bug.** The OOM was loud: a destroyed runner, a red run, nothing
+updating. This would have been silent and self-certifying — a source reporting `partial`
+with a reassuring explanation, indefinitely. I replaced a visible outage with an invisible
+one and documented the invisible one as healthy. I also asserted it twice more, in the
+commit message and in the work queue, before checking the ordering.
+
+**What I should have done.** The claim "they drain next tick" is a behavioural property of
+the ITERATION ORDER, and I never looked at the iteration order. Writing a disclosure is not
+the same as verifying the thing being disclosed — if anything the act of writing it made me
+feel the case was handled. eia's budget works only because its sidecar lets unchanged
+datasets be skipped cheaply; abs has no such sidecar, so the analogy I was leaning on did
+not transfer (R48's shape: a mechanism verified on one family is not portable).
+
+**Fixed** with a `_rotation.json` bookmark: resume after the last flow attempted, wrapping
+around, saved even on a complete pass so there is no branch that can stop rotating. Proven
+with stubs — complete pass wraps to the top, a mid-list bookmark resumes at exactly the next
+flow, and the rotated pass still visits every flow.
+
+**The rule.** When a fix bounds work (a budget, a cap, a page size, a batch), ask what makes
+the UNDONE part get done, and prove that separately. A bound without a resume mechanism is
+not a bound, it is a truncation — and the log line describing it is a lie you will believe
+later. Also caught in the same pass: `json` was used by the new helpers and never imported,
+which import-time checks could not see because nothing calls them at import (R178 again).
