@@ -2235,3 +2235,38 @@ OOM must be the one thing that cannot OOM.
 376,332,763 distinct series; the catalog credits it with **18**. Whatever abs is serving, it
 is not what it holds. That is a cataloguing question, not a memory one, and it goes to the
 work queue rather than being fixed under cover of this repair.
+
+## R189 — my own new audit judged only the 25 sources it happened to DISPLAY, then printed "OFFENDERS: 0"
+
+**What happened.** I wrote `tools/audit_cursor_blowup.py` to sweep the class behind the abs
+OOM. It ranks source stores by row count, prints the top 25, and flags any that folds one
+cursor per SERIES without a bound. It printed `OFFENDERS (must be 0): 0` and I had already
+started treating that as the zero-result check for the sweep.
+
+**The defect.** The offender list was built INSIDE the display loop:
+
+    for src, (rows, files) in sorted(rows_by_src.items(), ...)[:25]:
+        if rows >= threshold and ... :
+            offenders.append(...)
+
+so only the 25 largest stores were ever judged — while the threshold is 20,000,000 rows and
+the 25th largest store holds 72,514,320. Every source ranked 26th and below was invisible to
+the verdict no matter how far over the threshold it sat. The number printed was not "no
+offenders exist", it was "no offenders among the ones I chose to show you", and nothing in
+the output distinguished those two.
+
+**Why it nearly worked.** The three real offenders (abs, vdem, owid) all happened to rank
+inside the top 25, so the audit gave the right answer for the wrong reason. A tool that is
+accidentally correct on today's data is the hardest kind of broken to notice — it will go on
+being trusted until the data shifts.
+
+**The rule (this is R142's shape again, and my own EXEMPT/`no silent caps` discipline turned
+on my own tool).** A display limit must never be the evaluation limit. Judge the whole
+surface, display a slice, and print the population size next to the verdict —
+`evaluated all N source store(s); displayed the 25 largest` — so the reader can see the two
+numbers are different. Any offender falling outside the displayed slice is now printed
+anyway, because a table that silently contradicts the verdict beneath it is worse than no
+table.
+
+**Status.** Fixed before the result was relied on; the corrected sweep is what the abs/vdem/
+owid work is verified against.
