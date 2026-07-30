@@ -1638,6 +1638,34 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   rows, D1 rows, R2 CSVs. Step 4 is the destructive one and must not run before 2 and 3 verify.
   Note `ksh`'s fetcher is broken regardless — it imports `jobs/ingest_ksh_hungary.py`, which does
   not exist — so (b) means writing that parser.
+- **J. `imf_gfs*` family — 6 sources / 213,200 series, all SERVED, none registered.** The single
+  largest un-harnessed block. Analysed 2026-07-29; **do not re-derive this, and do not guess the
+  mapping.**
+  The modern API (agency IMF.STA) carries exactly 6 GFS flows: `GFS_SOO` (Statement of
+  Operations), `GFS_SOEF` (Statement of Other Economic Flows), `GFS_SSUC` (Statement of Sources
+  and Uses of Cash), `GFS_COFOG` (Government Expenditures by Function), `GFS_SFCP` (Stocks and
+  Flows by Counterparty), `GFS_BS` (Balance Sheet).
+
+  | our source | series | IMF flow | confidence |
+  |---|---:|---|---|
+  | `imf_gfsssuc` Statement of Sources and Uses of Cash | 36,901 | `GFS_SSUC` | CERTAIN (identical name) |
+  | `imf_gfscofog` Expenditure by Function (COFOG) | 34,731 | `GFS_COFOG` | CERTAIN |
+  | `imf_gfsibs` Integrated Balance Sheet | 29,390 | `GFS_BS` | strong |
+  | `imf_gfsfalcs` Financial Assets/Liabilities by Counterpart Sector | 20,249 | `GFS_SFCP` | strong |
+  | `imf_gfse` Expense | 48,750 | ? | **AMBIGUOUS** |
+  | `imf_gfsmab` Main Aggregates and Balances | 43,179 | ? | **AMBIGUOUS** |
+
+  `imf_gfse` and `imf_gfsmab` both plausibly belong to `GFS_SOO`, and `GFS_SOEF` has no obvious
+  counterpart — so the last two are 91,929 series that must NOT be wired on a name guess.
+  **Resolve by evidence, not by name:** pull a sample from `GFS_SOO` and `GFS_SOEF` and compare
+  the actual dimension codes against ours (`imf_gfse` keys end `…XDC.1A_S1_G26`, `imf_gfsmab`
+  `…XDC.G11__Z`), then map on matching code sets.
+
+  **IMPORTANT — a wrapper does NOT un-freeze these.** Per the `_imf_direct` convention these
+  would be NEW source ids (`imf_gfscofog_direct` etc.), leaving the existing 6 frozen exactly as
+  the 3 FSI wrappers left `imf_fsi` frozen. Getting the family to auto-update means the ksh
+  pattern end-to-end: build the direct siblings, let them populate, compare coverage at
+  INDICATOR grain, migrate anything unique, then retire the originals.
 - **H. `imf_fsi` (73,288 series) — CANNOT be given a fetcher against its own source. Treat as the
   ksh case.** Its ingest (`jobs/ingest_imf_fsi.py`) targets the legacy SDMX host
   `https://data.imf.org/api/SDMX/BI`, dataflow `FSI`. Both `/dataflow` and `/data/FSI` return
