@@ -2440,3 +2440,41 @@ reviewed") while being served, though the audit has CLEARED verdicts for both. c
 and harvard_atlas are fixed (harvard_atlas is CC0, so its real defect was the wrong licence
 id, not missing attribution). The remaining seven are blocked on a permission denial and are
 listed in the work queue with their audit-sourced values ready to apply.
+
+## R195 — my bis fix targeted the wrong axis, and I said so in the commit without noticing
+
+**What I claimed.** Fixing bis's abort I made two changes and wrote:
+
+    bis BATCH 500,000 -> 4,000,000 ... This buys total work and pool churn, NOT a lower
+    ceiling: the per-merge peak is set by the existing file size, not the batch. The
+    ceiling is the pool release's job.
+
+**Why that is self-refuting.** I correctly identified that the peak is set by the EXISTING
+FILE and not by the batch — and then assigned the ceiling to `pa.default_memory_pool()
+.release_unused()`, which I placed at the END of merge_and_write. That release runs BETWEEN
+calls. The peak happens INSIDE one call, while the existing table, the concat, the dedup
+index, the group-by hash table and the sort buffer are all live simultaneously. Nothing I
+added touches that moment. The two sentences contradict each other and I wrote them
+consecutively.
+
+**Measured outcome.** Run 30556532210, bis actually executing this time:
+
+    mem: 1026 -> 1024 -> 1027 -> 1097 -> 2011 -> 2953 -> 15806 -> 15800
+    ##[error]The operation was canceled.
+
+~12.8 GB allocated between two 15-second samples, then the runner destroyed. Peak 15,806MB,
+HIGHER than the 15,700MB of the failure I was fixing, and reached in ~2 minutes instead of
+~7 — the larger batch made it arrive sooner. A third failure signature for the same source:
+gradual climb + std::length_error + exit 134, then instant spike + destroyed runner.
+
+**The rule.** When a fix has two parts and one of them is explicitly documented as NOT
+addressing the failure mode, the whole fix rests on the other part — so state precisely
+where the other part acts and check that it acts THERE. "Between calls" and "within a call"
+are different places; I had both facts and still shipped the mismatch. Also: a memory fix is
+verified by a memory curve, never by a green step. This one was never green, and I should
+have run it before writing a commit message that asserted the mechanism.
+
+**Real fix, not yet built:** the peak is the whole-file Arrow merge. For a bulk snapshot the
+upstream zip IS the complete dataset, so an incremental merge into a 36.4M-row file is the
+wrong shape entirely — stream the new snapshot to a temp parquet and swap, or do the merge
+in DuckDB with disk spill (the pattern tools/derive_csv_bulk.py already uses successfully).
