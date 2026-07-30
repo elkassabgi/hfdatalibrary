@@ -2027,3 +2027,14 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **What made it findable** was asking a question I should ask of every Result I construct: *what does the CALLER do with each field I left None?* I had checked that my statuses were honest in isolation and never checked what the orchestrator does with them.
 - **Credit where due:** the contract failed SAFE. Whoever wrote §5.7 made the missing-cursor case demote and withhold the vintage rather than pass silently — otherwise this would have been invisible until someone noticed a download was months behind its parquet.
 - **Rules:** R174.
+
+### M-20260730-81: the fix for R174 was itself unbounded, and would have OOM'd the runner
+
+- **Caught by sizing my own change before trusting it** — one measurement, minutes after committing the fix, before the cron could run it.
+- **R174's fix was right in principle:** every bulk fetcher must report `series_cursors` or its CSVs freeze behind a correctly-updating parquet. What I did not check was the COST of that set.
+- **It is linear in two expensive places.** `orchestrate._catalog_ids_for` runs **one SQLite query per changed key**, and `StateStore.put_series_cursors` writes **one row per cursor** into `state.db` — which is already ~306 MB and gets compressed and pushed to R2 every run.
+- **ilostat makes that fatal.** Measured: 1,947 indicators hold **~30.8 million** distinct store series (388M rows, ~15,800 per indicator). A budget-limited first run touching just 100 indicators builds ~1.6M cursors — 1.6M SQLite lookups, 1.6M state rows, and a dict large enough to threaten a 7 GB runner. My "fix" would have turned a stale-CSV problem into a dead nightly job.
+- **And it would have bought nothing there.** ilostat's store keys already carry the `ilostat:` prefix, so `_catalog_ids_for` builds `ilostat:ilostat:…` and NOTHING maps; with 80 catalog ids — under `_DERIVE_ALL_CAP` = 5,000 — the orchestrator re-derives all 80 whether it gets five cursors or five million. Maximum cost for zero additional coverage.
+- **Fixed:** `CURSOR_CAP = 50,000`, chosen against measurements rather than taste — fed_board's largest release has 39,882 series, fhfa ~5k, who_hwf 4,421, maddison 338, so every real source stays under it and behaves exactly as before. When the cap bites, the fetcher LOGS the dropped count and the reason, because a truncation nobody is told about reads as "we covered everything".
+- **The habit, and it is the one I keep relearning:** a correct fix applied uniformly is not automatically a safe fix. Before shipping something to N callers, find the LARGEST caller and multiply. "What does this cost on the biggest instance?" is a different question from "is this right?", and only the second one had an obvious answer.
+- **Rules:** R175.
