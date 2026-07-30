@@ -1983,3 +1983,23 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Fixed:** `tools/audit_upstream_liveness.py` buckets the gap by whether the upstream is alive, and prints DATES rather than a pass/fail, because "too stale" is a judgement for the reader. Progress reporting now has to say which kind of work is left, not just how many sources.
 - **The habit:** before calling something "remaining work", check that the work is the kind you think it is. "No fetcher" and "no upstream" look identical in a coverage table and are months apart in effort.
 - **Rules:** R170.
+
+### M-20260730-77: a provider NAME matched, and I nearly built a fetcher on the wrong provenance
+
+- **Near-miss, caught by checking one thing before writing code.** My own new `audit_upstream_liveness.py` reported **BEA as live on DBnomics (indexed 2026-07-26)**, right next to WHO. WHO had just worked beautifully, so the obvious next move was another three-line wrapper on the same base.
+- **`bea` does not come from DBnomics.** Its ids are BEA's own NIPA codes — `bea:A191RC:Q` — while DBnomics' BEA provider publishes `BEA/GDPbyIndustry-1:...`. The source is ingested straight from BEA via `jobs/ingest_bea_full.py`. The provider names simply collide, and my tool infers the provider from `_provider.json` with a **source-id-prefix fallback**, so a collision reads exactly like provenance.
+- **What it would have cost:** a fetcher writing `BEA_GDPbyIndustry-1:<code>` keys alongside the live `bea:A191RC:Q` series — a parallel id space beside the real data, reported as success. That is the precise failure `tools/prove_faostat_repair.py` exists to prevent, arriving through a different door.
+- **What saved it** was making the id-shape check a precondition rather than a follow-up: WHO was only safe because a FULL set comparison showed 4,421 of 4,421 codes reproduced exactly. Running the same check first for BEA took one query and answered it immediately.
+- **Fixed:** the tool's docstring now states plainly that a matching provider name is not proof of provenance, names `bea` as the live example, and requires a full id-set comparison against `/v22/series/<PROVIDER>/<DATASET>` before anyone uses the liveness table to justify a DBnomics fetcher. The liveness column answers "does the mirror still move" — never "is the mirror where our ids came from".
+- **The habit:** when a tool I just built hands me a convenient answer, the first use of it is the most dangerous, because I trust it most and have tested it least.
+- **Rules:** R171.
+
+### M-20260730-78: my own new fetcher would have frozen a dataset behind a green run
+
+- **Found by re-reading code I had just written**, not by a failure. `_dbnomics.run()` stops pulling when the wall-clock budget expires. As first written it then merged whatever it had and returned **`ok`**.
+- **Why that is the bad kind of bug.** On `ok` the strategy records the new vintage. DBnomics' `indexed_at` does not move until the next re-index, so the gate would match forever and **the unfetched remainder would never be pulled** — a partially-loaded dataset sitting behind a green, on-schedule source. Exactly the shape I spent the session removing from other people's code, written fresh into mine.
+- **Fixed:** the iterator reports truncation to the caller, which flags a transient unit so `finalize` returns `partial` and the vintage is NOT advanced. The partial merge itself is kept — never-shrink means nothing is lost and the next run completes it.
+- **Proven by exercising both paths, because a safety branch that has never executed is not known to work (R142):** `budget 0` -> `TransientError` naming the budget; deadline tripped after page 1 -> `TRUNCATED at 1,000 series`, `status=partial`, store unchanged at 2,211 rows.
+- **A second, quieter fix in the same place:** with `budget 0` the run used to fall into the "returned 0 series, 0 usable observations" branch and blame upstream for a break that never happened. Same safe outcome, misleading message — and a misleading message is how the next reader loses an hour (R47, R151).
+- **The habit:** every early-exit path — deadline, cap, page limit — has to answer "what status does this report, and does that status let the gate advance?" A budget is a deferral, never a completion.
+- **Rules:** R172.
