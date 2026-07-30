@@ -25,11 +25,20 @@ green at 05:50 with all four matrix jobs reporting "0 unit(s) processed" — two
 
 | provider | sources | series | newest DBnomics index | route |
 |---|---|---|---|---|
-| IMF | 28 | 398,777 | 2025-08-31 | the `_imf_direct` family, NOT DBnomics — biggest remaining block |
+| IMF | 28 | 398,777 | 2025-08-31 | **NOT recoverable by the `_direct` route** — see below |
 | UNCTAD | 38 | 127,413 | **2023-06-30** | mirror dead — re-derivation + id crosswalk |
 | FAO | 18 | 87,579 | **2024-05-09** | element crosswalk reaches 79%; rest restructured — Ahmed's call |
 | UNESCO | 4 | 57,530 | **2022-04-04** | mirror dead; UIS API exposes too few codes |
 | 8 others | 8 | 3,100 | mostly not DBnomics | hf_equities 1,391 · comtrade 713 · worldbank 692 · bea 240 · usda 25 · census 22 · noaa 10 · eia 7 |
+
+**The IMF row needs care — I had it wrong once.** All 28 are LEGACY ids (imf_fsi 73,288,
+imf_gfse 48,750, imf_gfsmab 43,179, imf_gfsssuc 36,901, imf_gfscofog 34,731, imf_gfsibs 29,390,
+imf_cpi 28,420, …); NOT ONE `_direct` source is among them. The `_imf_direct` family is
+ADDITIONAL coverage under NEW ids, not a rescue of these — `jobs/ingest_imf_direct.py` records
+the crosswalk as uneven (FDI 95.3%, APDREO 100%, WHDREO 56%, FAS/WORLD/COFER ~0%), which is
+exactly why new ids were minted rather than the old ones overwritten. So recovering these 398,777
+series under their PUBLISHED ids needs a per-flow crosswalk proven flow by flow, the same bar the
+FAO prover applies. Do not treat this row as "one fetcher away" (R170).
 
 88 of the 96 sit in those four families. A source whose mirror is frozen cannot be fixed by
 writing an updater against that mirror — it would run nightly, succeed, and transfer nothing.
