@@ -1861,3 +1861,43 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Fixed:** no filter is sent, and the fetcher's docstring states why with the evidence. The series is pulled whole and `merge_and_write` dedups on (series_key, obs_date), so existing series still extend — the real defect (the ingest skips any series already on disk, so nothing ever extends) is fixed regardless. The registry's strategy_reason is corrected IN PLACE, so the false claim and its refutation both stay on the record.
 - **The habit:** a `strategy_reason` is a hypothesis written by whoever surveyed the source, not a tested fact. Before building on an upstream capability, send the narrowing request and compare counts. And never ship a parameter the server discards.
 - **Rules:** R160.
+
+### M-20260729-66: a grep whose shape could not match the file, reported to Ahmed as a finding
+
+- **What I said, in user-visible text:** *"`fed_board` is served but unregistered — one of the 93."* I then started writing it a registry entry it already had.
+- **Why the query was empty.** I grepped `^  [a-z0-9_]*fed` — a MAPPING-shaped pattern (`  fed_board:`). `registry.yaml` is a LIST of records (`- source_id: fed_board`). The pattern is not merely wrong, it is structurally incapable of matching anything in that file, so "no output" carried zero information and I read it as evidence of absence.
+- **Caught by accident,** not by process: a later `yaml.safe_load` printed `fed_board in registry: True`, contradicting what I had already told him.
+- **This is the third instance of one class.** R137 (grep matched INSIDE a longer word, so `cso` looked UNASSESSED), R141 (compared two sources on keys that structurally cannot match — 13% vs the true 96.4%), and now R161. Every time: a query whose shape does not fit the data, whose null result I treated as a fact about the world.
+- **Fixed:** the registry is read with `yaml.safe_load` — its own parser — not grep. Parsers cannot silently mismatch a shape; that is the point of them.
+- **The habit:** an empty result is only evidence if the query could have produced a non-empty one. Before believing a "not found", run the pattern against a case you KNOW exists. When a file has a real parser, grep is the wrong tool for questions about its structure.
+- **Rules:** R161.
+
+### M-20260729-67: I guessed a URL for the change-probe instead of deriving it from the code that downloads
+
+- **What I wrote.** `fed_board`'s `_zip_url()` built `Output.aspx?rel=<REL>&filetype=zip&label=include`, with a `getattr(ig, "ZIP_URL", …)` fallback for a constant that does not exist, so the guess always won.
+- **What the downloader actually sends.** `ig.download_zip` does `SESSION.get(OUTPUT_URL, params={"rel": rel, "filetype": "zip"})` — **no `label=include`**.
+- **Why a mismatched probe url is worse than no probe.** The vintage would have tracked a DIFFERENT object than the one downloaded: it can move when the fetched bytes have not, or sit still when they have. Both directions are silent.
+- **Caught before shipping** by preparing the ingest's own request with `requests.Request(...).prepare()` and asserting `url == req.url`. That equality check is the cheap part; assuming it was the mistake.
+- **Fixed:** `_zip_url` is `f"{ig.OUTPUT_URL}?rel={rel}&filetype=zip"` — derived from the same constant the downloader uses, with the reason in the docstring so nobody re-adds the parameter.
+- **The habit:** a probe and its fetch must be built from ONE expression. If I cannot point at the line the downloader uses, I have not verified the url — I have retyped it. Same family as R125/R160: asserted instead of read.
+- **Rules:** R162.
+
+### M-20260729-68: I printed an unmeasured baseline next to a real measurement, and it nearly sold me a false pass
+
+- **What my own test output said:** `2nd run elapsed: 1.3s  (a real re-download of CHGDEL took ~40s+)`. The 1.3s was measured. **The ~40s was invented** — I never timed a download. I wrote it into the print statement as the contrast that made 1.3s look like proof the cache had hit.
+- **The reading it produced.** I concluded the vintage gate worked. It had not: the run re-downloaded and re-parsed the whole release. CHGDEL is 279 KB and genuinely completes in about a second, so the fast run was consistent with doing all the work — the "proof" only existed because I had supplied a fake baseline for it to beat.
+- **What exposed it** was the contradiction I could not explain away: `status='ok'` with `+41448 new rows` on a run I had just declared a no-op. A cache hit adds zero rows. I stopped theorising and printed the actual branch conditions, which showed the vintage had not matched at all.
+- **Fixed:** the two-run test now prints both runs' timings and both statuses from the same code path, and the pass condition is the STATUS (`ok` then `no_change`), not a wall-clock comparison against a number I made up.
+- **The habit:** never print an unmeasured quantity beside a measured one. A baseline is either measured in the same run or it is not stated. And a status that contradicts my conclusion outranks my conclusion — instrument, do not rationalise (R47, R151).
+- **Rules:** R163.
+
+### M-20260729-69: the registry told me to build a cache gate that cannot work, and I built it
+
+- **What the adapter note prescribed** for `fed_board`: *"Per-release HTTP ETag / Last-Modified on datadownload/Output.aspx?rel=<REL>&filetype=zip (skip download+parse when unchanged)."* I implemented exactly that.
+- **Measured, the endpoint offers none of it.** `Output.aspx` is generated per request: `Last-Modified` advanced on every call — **03:17:40, 03:18:01, 03:18:21** across three HEADs twenty seconds apart — there is **no ETag**, **no Content-Length** on HEAD, and **Range is unsupported** (`Range: bytes=-65536` returns 200 with the entire body and no `Content-Range`, so the zip's per-entry CRC32s in the central directory cannot be sampled cheaply either).
+- **The failure mode is the invisible one.** The gate compares a timestamp that changes every time it is read, so it reports "changed" forever: all 18 releases re-downloaded, re-parsed and re-uploaded every single day, while the sidecar, the logs and the green status all present it as a working cache. Nothing would ever have flagged it.
+- **What the endpoint DOES offer** is a stable body: two full GETs of CHGDEL returned identical bytes (sha256 `0f741306efb4ccd7`, 279,024 B). And the whole corpus is **79.9 MB in 9.4 s** — Z1, which the registry calls "~590MB", is a **36.4 MB** zip; 590MB is the uncompressed XML. So content-hashing every release on every run is cheap, and it gates the part that is actually expensive: iterparse, parquet write, R2 PUT.
+- **Fixed:** the fetcher hashes each downloaded zip and skips parse+publish when the digest is unchanged; two consecutive runs now give `ok +41,448 rows` then `no_change / 1 of 1 byte-identical`. The registry's `vintage_signal` and `strategy_reason` are corrected IN PLACE with the measurements, so the next reader cannot rebuild the broken gate from the old note.
+- **The habit, and it is the same one as R160 one day earlier:** an adapter note is a HYPOTHESIS from whoever surveyed the source. Probe the validator before building on it — three HEADs and two GETs cost fifteen seconds. A cache whose key changes every read is indistinguishable from a working cache in every log line it produces.
+- **Class, not instance (Ahmed's standing rule):** this cannot stop at `fed_board`. Every fetcher gating on `http_vintage` needs its endpoint checked for the same defect, with a zero-result sweep as the proof.
+- **Rules:** R164.
