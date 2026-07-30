@@ -2511,3 +2511,46 @@ imbalance, `$args`, here-string terminator, if-expression assignment, `-WhatIf` 
 with CmdletBinding) and tested each by reasoning rather than by instrumenting. The trace took
 one command and gave the answer immediately. When control flow is doing something impossible,
 TRACE IT rather than theorise about the parser.
+
+## R197 — I diagnosed "out of memory" all day; it was a 2 GiB Arrow limit that more RAM cannot fix
+
+**What I believed, for hours, across four fixes.** abs, then bis, then bls "OOMed the
+runner". I capped cursor folds, streamed reads, released the Arrow pool, raised batch sizes,
+moved bis to its own CI runner, then measured every store and routed 16 databases to the
+workstation on the grounds that they were TOO BIG FOR THE CLOUD. Every one of those steps
+was reasoned from peak-memory numbers: 15,700 MB, 15,806 MB, 15,886 MB against a 16 GB
+runner. The reading was consistent, quantitative, and wrong.
+
+**What it actually was.** The workstation run crashed too — in 2.5 minutes, with 337 GB of
+382 GB free. That single fact falsified the entire memory story, and it only appeared
+because the owner told me to run these locally. Isolating the operations on bis/LBS.parquet
+(36,379,671 rows; series_key = 13,203,140,215 bytes, 6.6x Arrow's 2 GiB int32-offset limit):
+
+    sort_by on `string`               raises pa.ArrowInvalid "offset overflow"  (CATCHABLE)
+    group_by on `string`              DIES 0xC0000005 ACCESS_VIOLATION          (uncatchable)
+    group_by on `large_string`        DIES 0xC0000409                           (uncatchable)
+    sort_by on `large_string`         OK, all 36,379,671 rows
+
+`_dedup`'s `group_by(...).aggregate(...)` was the killer. It does not raise, it takes the
+process down — which is why merge.py's existing `except pa.ArrowInvalid -> retry on
+large_string` guards never fired, and why the failure wore a different costume every time:
+SIGABRT/134 and `std::length_error` on Linux, ACCESS_VIOLATION and STACK_BUFFER_OVERRUN on
+Windows, and a "cancelled" runner when the destroyed process took the agent with it.
+
+**Why the wrong diagnosis was so stable.** Memory genuinely climbed, so every measurement
+CONFIRMED it. A rising RSS curve next to a hard death is overwhelmingly suggestive, and I
+never ran the one experiment that could refute it — the same workload with far more memory.
+I had the means to do that from the start; the workstation was always there.
+
+**The rule.** When a fix for a resource diagnosis does not work, do not reach for the next
+resource fix. Falsify the diagnosis: give the workload an order of magnitude more of the
+resource you think it lacks, and see whether it still dies. Four attempts in, the cheapest
+available experiment was still the one I had not run. And when a process CRASHES rather than
+raising, that is evidence about a limit being violated, not about a limit being reached —
+exhaustion raises MemoryError, overflow corrupts and aborts.
+
+**Fixed** by deduplicating with a sort instead of a hash: sort by (keys..., row-index), keep
+the last row of each key run. Proven equivalent to the old implementation on 40 randomised
+duplicate-heavy tables with 0 mismatches, and it now completes LBS.parquet — 36,379,671 rows
+in, 36,379,671 out, exit 0. It fixes the class in the CLOUD too, so some of the 16 databases
+I routed to the workstation may not have needed to move at all.
