@@ -1637,7 +1637,21 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
   rows, D1 rows, R2 CSVs. Step 4 is the destructive one and must not run before 2 and 3 verify.
   Note `ksh`'s fetcher is broken regardless — it imports `jobs/ingest_ksh_hungary.py`, which does
   not exist — so (b) means writing that parser.
-- **H. `imf_fsi`.** IMF split `FSI` into `FSIC` / `FSIBSIS` / `FSICDM`; three 17-line wrappers over `_imf_direct.py` cover it. They would be NEW source ids serving beside the frozen `imf_fsi` (precedented: `imf_cofer` + `imf_cofer_direct`). Ahmed has given a general go-ahead.
+- **H. `imf_fsi` (73,288 series) — CANNOT be given a fetcher against its own source. Treat as the
+  ksh case.** Its ingest (`jobs/ingest_imf_fsi.py`) targets the legacy SDMX host
+  `https://data.imf.org/api/SDMX/BI`, dataflow `FSI`. Both `/dataflow` and `/data/FSI` return
+  **HTTP 403** (2026-07-29). 403 is Forbidden, not 404, so this may be a WAF bot-block rather
+  than a decommissioned endpoint — I could not distinguish the two and am not claiming it is
+  dead. Either way our ingest cannot fetch it, so no amount of fetcher work makes this source
+  auto-update.
+  Its data now lives at api.imf.org split across FSIC / FSIBSIS / FSICDM, for which fetchers were
+  built and proven live today (FSIC:13.0.1, FSIBSIS:18.0.0, FSICDM:7.0.0).
+  **PATH (the ksh pattern, in order):** (1) let the 3 new direct sources populate on the cron;
+  (2) compare their coverage against imf_fsi's 73,288 series at INDICATOR grain — not raw key
+  grain, which cannot match across two keying schemes (R141); (3) migrate anything unique,
+  preserving titles; (4) only then retire `imf_fsi`. Do NOT delete before (2) and (3) verify —
+  the ksh case turned up 719 series that were not re-crawlable anywhere.
+- **H-OLD.** IMF split `FSI` into `FSIC` / `FSIBSIS` / `FSICDM`; three 17-line wrappers over `_imf_direct.py` cover it. They would be NEW source ids serving beside the frozen `imf_fsi` (precedented: `imf_cofer` + `imf_cofer_direct`). Ahmed has given a general go-ahead.
 
 ### M-20260729-53: I characterised a whole source's key format from two rows
 
