@@ -2015,3 +2015,15 @@ Not a mistake — the actionable residue of three deleted write-ups, kept here b
 - **Recorded as a real external blocker** alongside imf_fsi's legacy-host 403, not as a fetcher bug. If CI is also blocked the route is BLS's registered API (api.bls.gov, free key) rather than download.bls.gov.
 - **The habit:** when a host refuses you right after you hammered it, the first suspect is your own traffic. One request after a pause separates "they block us" from "I burst them" — and the two lead to completely different fixes.
 - **Rules:** R173.
+
+### M-20260730-80: eight fetchers I shipped today would have republished forever while their CSVs went stale
+
+- **Found by reading the orchestrator, not by a failure.** `orchestrate._derive_changed_csvs` takes the changed-series set from `Result.series_cursors` **and nothing else**. None of the bulk fetchers I built today reported any.
+- **What that does, and why it is invisible.** The contract handles it deliberately (§5.7): merged rows + no cursors -> the run is demoted to `partial` and **the vintage is NOT bumped**. Nothing crashes, the parquet publishes correctly, the data is right. But the source re-fetches and republishes on **every single run, forever**, and the per-series CSVs — the thing users actually download — are never re-derived. Fresh parquet, stale downloads, green-ish logs.
+- **Eight sources, all mine, all today:** fed_board, bis, zillow, ilostat, maddison, fhfa, and the three who_* through `_dbnomics`.
+- **Why I missed it.** Bulk-snapshot sources have no natural per-series cursor — they replace whole FILES, not series — so "no cursors" felt like the honest answer. It isn't: the honest changed-set is *every series in the file I just republished*, which is one grouped two-column read away.
+- **Fixed:** `_common.cursors_from_parquet()` reads (series_key -> max obs_date) back from the published file; `_dbnomics` builds them from rows already in memory. It returns `{}` on any failure, because a cursor problem must never sink a good publish — that lands the caller in the documented no-cursors path rather than raising.
+- **Proven on the ok path, not assumed:** maddison emits 338 cursors (its exact series count), who_rs emits 2,207 with `status=ok`. Two of the eight exercised end to end; the rest share the same helper and call site.
+- **What made it findable** was asking a question I should ask of every Result I construct: *what does the CALLER do with each field I left None?* I had checked that my statuses were honest in isolation and never checked what the orchestrator does with them.
+- **Credit where due:** the contract failed SAFE. Whoever wrote §5.7 made the missing-cursor case demote and withhold the vintage rather than pass silently — otherwise this would have been invisible until someone noticed a download was months behind its parquet.
+- **Rules:** R174.
