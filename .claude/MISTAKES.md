@@ -2662,3 +2662,34 @@ the branch, and the file size. "I opened the file in the project directory" is n
 about production. A cheap, decisive check: compare the on-disk size against the deployed
 worker, or grep the local file for an endpoint you know is live — here, `grep /token/exchange`
 would have returned nothing and ended the mistake before the audit started.
+
+### R200 addendum — the same root cause has a second, worse consequence: four worktrees can deploy to one live worker
+
+Chasing the audit mistake above, I searched for every wrangler config naming the live worker.
+There are four, in four git worktrees of the same repository:
+
+    hf_wt_sso        sso-build                286 KB   the deployed source; fixed
+    hf_wt_capport    ekd-family               131 KB   all four takeover holes, no SSO
+    hfdatalibrary    feat/partner-toolkit-m0  131 KB   stale, no SSO
+    hf_wt_famtag     famtag-integration       134 KB   all four takeover holes, no SSO
+
+All four declare `name = "hfdatalibrary-api"`, so `wrangler deploy` from any of them targets
+the SAME production worker. The three stale ones are ~150 KB smaller because the entire
+family-SSO system is absent from those branches — no `handleAccountsRegister`, no
+`/token/exchange`, no accounts.* identity provider. A deploy from one would reintroduce every
+account-takeover hole AND take single-sign-on down across hf, econ and portal at once.
+
+**What actually prevents that is an accident.** Only `hf_wt_sso`'s config declares the
+`RateLimiterDO` Durable Object. Deploying from the others would remove that class, and
+Cloudflare refuses to drop a DO class — so the deploy fails instead of destroying production.
+That refusal is precisely the error I hit earlier in this session and filed as a config
+problem to work around. It was not a config problem. It was the guard rail, and I was leaning
+on it without knowing it existed.
+
+**The rule.** When several checkouts of one repo can deploy to one target, the safe default is
+"only one of them can" — enforced, not incidental. Before treating a deploy failure as an
+obstacle, establish what the failure is protecting; a refusal that blocks a destructive action
+is a feature wearing an error message. And note the ordering trap: I discovered the four
+configs only because the first search I ran (for the Durable Object) answered a narrower
+question — "which copy defines RateLimiterDO" — and returned exactly one file, which reads as
+reassurance. The reassuring answer to a narrow question is not an answer to the broad one.
