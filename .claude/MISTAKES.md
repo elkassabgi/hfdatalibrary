@@ -2693,3 +2693,45 @@ is a feature wearing an error message. And note the ordering trap: I discovered 
 configs only because the first search I ran (for the Durable Object) answered a narrower
 question — "which copy defines RateLimiterDO" — and returned exactly one file, which reads as
 reassurance. The reassuring answer to a narrow question is not an answer to the broad one.
+
+### R201 — my own probe printed "CLEAN" on a response that had been truncated at exactly 100,000 rows
+
+Repairing `comtrade`'s under-keyed store, I established that the ingest had dropped three
+dimensions (`motCode`, `customsCode`, `partner2Code`) and that filtering to their aggregate
+values yields one row per series per year. To confirm that held at batch scale I probed four
+query shapes and printed a per-probe verdict. All four printed `CLEAN — dupes=0`:
+
+    1 reporter x 12 years          raw=    51  agg= 10  dupes=0  CLEAN
+    20 reporters x 12 years        raw= 20513  agg=208  dupes=0  CLEAN
+    20 reporters, NO period        raw= 20513  agg=208  dupes=0  CLEAN
+    1 rep x 15 partners x 12 yrs   raw=100000  agg=106  dupes=0  CLEAN
+
+The fourth number is exactly 100,000. Row counts arriving at a round power of ten are not
+data, they are a limit. The API caps a response at 100,000 records, reports `count: 100000`
+in the envelope, and truncates the rest in silence.
+
+**Why the green verdict was worthless.** My test asked "are the surviving aggregate rows
+unique?" A truncated response trivially passes that: throwing rows away cannot create a
+duplicate. The test could only ever fail on data the cap had already removed. Re-running the
+same 15 partners as 15 separate requests returned 144,113 rows and **38 aggregate year-rows
+the batched call had never shown me** — and because the cap truncates the tail, every one of
+them was 2022-2025. The most recent years, in an ingest whose entire purpose is to stay
+current.
+
+**What made it survivable** was noticing the roundness of the number rather than the colour of
+the verdict, and testing the cap directly: query the same pair inside the batch and alone, and
+diff. That took one script and settled it.
+
+**The rule.** A uniqueness, consistency or completeness check run on a possibly-truncated
+response proves nothing about the source — only about the fragment that arrived. Before
+believing any such check, prove the response was complete: look for an envelope count, compare
+against a narrower query that cannot have hit the limit, and treat any suspiciously round total
+(1,000 / 10,000 / 100,000 / 500) as a cap until shown otherwise. Deletion-shaped truncation
+passes every test that only looks at what is present.
+
+The fix in `jobs/ingest_comtrade.py` is not "use a smaller batch" — that only moves the
+threshold. The three dimensions are accepted as *query parameters*, so the server returns the
+aggregate directly: 16,712 rows become 12, byte-identical values, and the cap becomes
+unreachable rather than merely unlikely. `_get()` still refuses any response at or above the
+cap, and returns `None` rather than `[]` so a truncated or throttled call can never be read as
+"this series has no data".
