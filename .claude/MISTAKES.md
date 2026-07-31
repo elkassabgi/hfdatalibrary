@@ -2770,3 +2770,43 @@ run summary) any unit whose `run_location` is not where the process is running, 
 job fails when the updater exits 0 having processed zero units, naming the missing fetcher
 module. Verified: `ons_uk` skips under `AQUEDUCT_RUN_LOCATION=cloud` and runs under `=local`;
 the zero-unit grep matches the real `0 unit(s)` line and not a `1 unit(s)` line.
+
+### R203 — generating a PowerShell file from a Python heredoc turned `\r` into a carriage return, twice
+
+Wiring the local heavy updater into the reboot guard, I patched two `.ps1` files by writing
+them from `python - <<'PY'` heredocs. Both came out corrupt, the same way, and neither
+corruption was visible in the text I was shown:
+
+    # `powershell -File tools\run_local_heavy.ps1 -IfDue` ...   <- in a comment
+    $heavy = Join-Path $root 'tools\run_local_heavy.ps1'        <- in live code
+
+In each case the `\r` reached Python as a two-character escape and was written as a single
+0x0D byte. `Read` rendered the line as `toolsun_local_heavy.ps1` — the CR just moved the
+cursor — and an `Edit` on the string I could see failed to match, because the bytes were not
+what the screen showed. The consequences differed by position: in the comment the stray CR
+broke tokenising and the parser reported *"string is missing the terminator"* at line 208, 130
+lines below the actual fault; in live code it produced `Test-Path: Illegal characters in path`
+at runtime.
+
+**Three things that made this cheap to find and would have made it expensive to miss.**
+`[System.Management.Automation.Language.Parser]::ParseFile` gives the real first error, where
+`Get-Content | Measure-Object -Line` reported a plausible line count for a file that could not
+run at all. A byte-level assertion (`b.count(b"\r") - b.count(b"\r\n") == 0`, plus backticks
+and non-ASCII) catches this class before the file is written. And the fix is to stop producing
+the hazard: `Join-Path (Join-Path $root 'tools') 'run_local_heavy.ps1'` contains no backslash
+for an escape to eat.
+
+**The rule.** When generating a file for another language through a heredoc, the escape
+characters of *both* languages apply, and Windows paths are made of the escape character. Never
+hand-write a backslash path into generated code; assert on the bytes, not on the rendering; and
+parse the result with the target language's own parser before believing it works. This is R196
+one layer up — that was a BOM-less UTF-8 `.ps1` silently losing 54 lines under PowerShell 5.1;
+this is the same file type corrupted at generation time instead of at read time.
+
+**And R49 for the third time in one day.** A process query matches your own shell. It bit the
+new mutex (a scan for `*run_local_heavy*` matched the shell that had just launched the script
+by name, so the gate stood down in every case that was genuinely due), and again minutes later
+when a check for `*RELAUNCH_GUARD_LOOP*` reported two guard loops — one of which was the very
+command doing the asking. Excluding `$PID` is not enough: the launcher, the parent, and the
+query itself all carry the pattern. Identify a process by something you *wrote* (a lockfile
+holding PID plus start time), not by text that any observer of it also contains.
