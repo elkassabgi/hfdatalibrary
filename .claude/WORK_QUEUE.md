@@ -249,12 +249,16 @@ table — it does NOT hold for these:
       transient-failing.** That is 105 minutes of retries and timeouts, not data. Something
       changed upstream or in credentials; diagnose before it burns another budget.
 
-- [ ] **ecb and adb re-fetch far more than they keep.** ecb reported "+5,849,110 new rows"
-      while its store went 218,343,241 -> 218,362,496, i.e. the merge deduplicated ~99.7% of
-      what was downloaded; adb reported "+5,143" with the store unchanged at 1,012,740. The
-      "+N new rows" in a run note counts rows that FLOWED, not net new — deliberately, so a
-      healthy quiet re-fetch is not misread as empty — but it must not be read as progress.
-      Narrowing their re-fetch windows is the throughput win.
+- [x] **ecb / adb "re-fetch far more than they keep" — WITHDRAWN, this was my misreading.**
+      The observation was right (ecb fetched 5,849,110 rows for a net +19,255) but the
+      conclusion was wrong. ecb's startPeriod is the boundary period INCLUSIVE — a minimal
+      one-period window, not a wide re-fetch. It returns millions of rows because ECB has
+      millions of SERIES, and one period across all of them is millions of rows however few
+      actually moved. Its cadence is genuinely daily and its store is 218M obs, so ~66 min is
+      the inherent cost of a date-tail at that width, not waste. Narrowing the window would
+      LOSE the in-place revisions the inclusive boundary exists to capture.
+      Same shape as hagstofa: the per-run cost is inherent; what was fixable was the
+      FREQUENCY, and that is what the is_due change addressed.
 
 Recovering hagstofa's 55 min and insee_bdm's 105 min alone would return ~66% of the daily
 budget, which is worth more than any per-source tuning.
