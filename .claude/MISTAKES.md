@@ -2735,3 +2735,38 @@ aggregate directly: 16,712 rows become 12, byte-identical values, and the cap be
 unreachable rather than merely unlikely. `_get()` still refuses any response at or above the
 cap, and returns `None` rather than `[]` so a truncated or throttled call can never be read as
 "this series has no data".
+
+### R202 — twice in one day: I had written the lesson into a comment and never into an enforcement
+
+Two independent failures today turned out to have the same shape.
+
+**`run_location: local`.** Thirteen sources carry it. It is read by two local tools and by
+NOTHING in the updater or the workflows. So the routing decision I reported as "done" —
+sources too big for a 16 GB runner now update on the workstation — was a string in a YAML
+file. Twelve of the thirteen were kept out of CI only incidentally, by `live: false`. The one
+that was live, `ons_uk`, went straight through and destroyed the runner at 104 minutes: 2.3 GB
+climbing to 15.8 GB with 151 MB left. That run also lost the state, freshness and D1 syncs of
+every source that had already succeeded, because `always()` still needs a machine to run on.
+
+**The heavy matrix.** `insee_sirene` and `cepii_baci` are listed but have no fetcher module.
+Each gets a dedicated runner, prints `=== 0 unit(s) processed ===`, exits 0, and the job goes
+GREEN. Two of five heavy jobs were no-ops. And the workflow's own `force` input description
+already says, verbatim: *"R50: without it a not-due source reports '0 unit(s) processed' and
+goes green having exercised nothing."* I wrote that sentence into the file and then did not put
+a `grep` for it anywhere in the job.
+
+**The rule.** A decision that lives only in prose — a registry key nothing reads, a caveat in
+an input description, a docstring, a commit message — has not been implemented. When I record
+a lesson, the record is not the deliverable; the check is. Two concrete tests:
+
+  1. For any rule I claim is in force, name the line of code that would REFUSE the violation.
+     If the answer is a document, it is not in force.
+  2. If something else currently blocks the bad path, ask what happens when that something
+     changes. `live: false` was masking the inert `run_location` for twelve sources — the
+     routing looked like it worked right up until one source was promoted.
+
+Both are now enforced, not described: `_wrong_location()` skips (announced, and restated in the
+run summary) any unit whose `run_location` is not where the process is running, and the heavy
+job fails when the updater exits 0 having processed zero units, naming the missing fetcher
+module. Verified: `ons_uk` skips under `AQUEDUCT_RUN_LOCATION=cloud` and runs under `=local`;
+the zero-unit grep matches the real `0 unit(s)` line and not a `1 unit(s)` line.
