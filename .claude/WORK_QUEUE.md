@@ -226,3 +226,35 @@ rather than by another dead runner. Fixed 2026-07-30 (commit f66d299):
       hand; there may be others. oecd (6,979,047,823 rows / 1,413 files), cbs_nl
       (4,581,749,467 / 3,844) and eurostat (2,430,929,754 / 7,754) are the next largest
       stores and none has been checked.
+
+## Budget is now the binding constraint, and three sources waste most of it (2026-07-31)
+
+The first SUCCESSFUL cloud run (30577997654, exit 0, peak 3,575 MB) processed 15 sources and
+left 69 unattempted when the 240-min budget ran out. Three sources took 226 of those 240 min.
+Tested the "it is only catching up after weeks of no updates" hypothesis against the `runs`
+table — it does NOT hold for these:
+
+- [ ] **hagstofa — 55 min per run, no new data, for over two weeks.** Runs on 07-14, 07-25
+      (x2), 07-30 all report the SAME note: `26/1906 sub-unit(s) returned 200 but parsed 0
+      rows from a non-trivial body (schema/structural break)`. Durations 4,347s / 3,843s /
+      3,088s / 3,275s — flat, not decaying, so it is not backlog.
+      CORRECTIONS TO MY OWN FIRST READ: the store is NOT empty (7,207,289 rows / 1,775,507
+      series); `obs=0` is the FETCHER reporting zero, which is a different claim. And of the
+      82,655 "far-future" rows, 81,535 (2028-2100) are LEGITIMATE — thjodhagsspa is Iceland's
+      national economic forecast. Only 1,120 rows beyond 2100 are genuinely corrupt, all from
+      one climate table (UMH11140.px, dates like 3005-12-31). sane_since already guards that
+      max, so it is NOT the cause of the runtime. The 26 structural sub-units are.
+
+- [ ] **insee_bdm — 11 min on 07-16 became 105 min on 07-30, with 201/201 sub-units
+      transient-failing.** That is 105 minutes of retries and timeouts, not data. Something
+      changed upstream or in credentials; diagnose before it burns another budget.
+
+- [ ] **ecb and adb re-fetch far more than they keep.** ecb reported "+5,849,110 new rows"
+      while its store went 218,343,241 -> 218,362,496, i.e. the merge deduplicated ~99.7% of
+      what was downloaded; adb reported "+5,143" with the store unchanged at 1,012,740. The
+      "+N new rows" in a run note counts rows that FLOWED, not net new — deliberately, so a
+      healthy quiet re-fetch is not misread as empty — but it must not be read as progress.
+      Narrowing their re-fetch windows is the throughput win.
+
+Recovering hagstofa's 55 min and insee_bdm's 105 min alone would return ~66% of the daily
+budget, which is worth more than any per-source tuning.
