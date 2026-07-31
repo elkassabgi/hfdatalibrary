@@ -262,3 +262,29 @@ table — it does NOT hold for these:
 
 Recovering hagstofa's 55 min and insee_bdm's 105 min alone would return ~66% of the daily
 budget, which is worth more than any per-source tuning.
+
+## Routing sources to the workstation one-at-a-time IS whack-a-mole (2026-07-31)
+
+Thirteen sources now carry run_location: local, and every one was added AFTER it destroyed a
+runner. Four distinct causes, none predicted by row count:
+
+    abs            unbounded cursor fold (376M series -> ~94 GB)
+    bis, bls       dedup hash overflow past Arrow's 2 GiB string ceiling
+    cepii_gravity  the COMBINED existing+new merge peak, which my harness never measured
+    ons_uk         349-character series keys - 8.9 GB of key text over just 25.4M rows
+
+They share ONE cause: merge_and_write holds whole tables in memory. #29's chunked merge would
+retire the entire class, and most of these 13 could return to the cloud. Until then each new
+source that gets far enough down the alphabet to run is a fresh casualty — the cron run only
+reached ons_uk because the is_due fix stopped it repeating yesterday's work.
+
+- [ ] **ons_uk key bloat (deferred, needs a decision).** Its keys carry the code AND the
+      label — `sex=female:Sex=Female` — averaging 349 chars, max 525. Codes alone would cut
+      the dominant memory term ~3.5x and might make it cloud-capable. BUT the key IS the
+      published series id, so changing it breaks every existing download URL and requires
+      re-deriving the source's CSVs. Not a unilateral change; costed here so the option is
+      on the table rather than rediscovered.
+
+WHAT THE CRON RUN PROVED, positively: with the is_due fix it reached insee_melodi, ipea,
+maddison, nyfed and ofr — sources it had NEVER processed, because it was no longer repeating
+work already done. It died further down the alphabet than any previous run.
