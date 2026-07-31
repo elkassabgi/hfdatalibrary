@@ -2582,3 +2582,36 @@ timestamp so a mismatch is visible in the output rather than hidden in the arith
 when a derived number implies something impossible — 403 minutes under a 300-minute cap, a
 run that should not exist — suspect the DERIVATION before the system. The impossible reading
 was evidence about my formula, not about the run.
+
+## R199 — I measured one side of a two-sided operation and routed two databases on it; both died
+
+**What I did.** After fixing the merge crash I built tools/measure_merge_peak.py to decide,
+per database, whether it fits a 16 GB cloud runner. It reported bls 11.1 GB and
+cepii_gravity 11.3 GB against 14.5 GB available, so I moved both to the cloud and said so.
+
+**What happened.** In the very next heavy-matrix run BOTH runners were destroyed:
+
+    bls            1,161 MB -> 15,802 MB   "the runner has received a shutdown signal"
+    cepii_gravity  1,457 MB -> 15,529 MB   exit 143 (SIGTERM)
+
+**The flaw.** The harness ran `_dedup` + `_sort` on the EXISTING parquet only. A real update
+also downloads and parses the NEW data and merges existing+new, so the true peak is on the
+COMBINED table. A merge has two inputs and I measured one. My own child-process comment even
+said "concat with itself is not needed - the dominant cost is dedup + sort over the existing
+rows", which asserted the very thing I had not checked.
+
+**Why it survived scrutiny.** The numbers looked authoritative — real RSS, sampled by a
+parent process, on the real file, through the real functions. Precision about the wrong
+quantity reads exactly like precision about the right one. And it was CORROBORATED by
+insee_sirene, which measured 11.0 GB and genuinely succeeded on the same runner size, so the
+one confirming case made the method look sound.
+
+**No multiplier fixes it**, which is the part worth remembering: insee_sirene at 11.0 GB
+survived while bls at 11.1 GB died. The missing term is the size of the incoming delta, which
+varies per source and per run, so it cannot be corrected with a constant.
+
+**The rule.** Before trusting a measurement to make a decision, state what the real operation
+does and check the harness exercises ALL of it. For anything with two inputs, measuring one
+is not a lower-bound-with-margin, it is a different quantity. The tool now documents itself as
+a LOWER BOUND and requires an actual isolated run for anything within ~4 GB of the budget —
+because the only sound proof that a source runs in the cloud is that it ran in the cloud.
