@@ -2615,3 +2615,50 @@ does and check the harness exercises ALL of it. For anything with two inputs, me
 is not a lower-bound-with-margin, it is a different quantity. The tool now documents itself as
 a LOWER BOUND and requires an actual isolated run for anything within ~4 GB of the budget —
 because the only sound proof that a source runs in the cloud is that it ran in the cloud.
+
+## R200 — I audited 124 KB of a 268 KB file and called it "the entire login mechanism"
+
+**What I did.** Asked to go through the whole login mechanism, I audited
+`D:\research\hfdatalibrary\api\src\index.js` and produced a numbered findings list
+(N1-N12, M1-M6). I then tried to deploy the fixes and the deploy failed, which is the only
+reason I looked further and discovered that the deployed worker is built from a *different*
+checkout: `D:\research\hf_wt_sso`, branch `sso-build`. Same repository — it is a linked git
+worktree of `hfdatalibrary/.git`, not a fork — but a different branch, and the branch I read
+was behind.
+
+**The size of the gap.** The file I audited was 124,642 bytes. The live one is 268,553. More
+than half the running auth code — the entire `accounts.elkassabgidata.com` family-SSO surface:
+`handleAccountsRegister`, `handleAccountsLogin`, `handleAccountsGoogleCallback`,
+`handleAccountsOrcidCallback`, `/token/exchange`, `/token/refresh` — did not exist in the
+text I read. I was not auditing an old copy of the mechanism; I was auditing a *fraction* of it.
+
+**Both error directions showed up, which is what makes this worth an entry.**
+
+- *False positive.* I reported M5 as "2FA code entry is the only login-related endpoint with
+  no rate limit at all". The live `RATE_LIMITS` has `'api:2fa': { max: 5, window: 600 }`. The
+  finding was true of the stale branch and false of production. Had I shipped it, I would have
+  "fixed" something that was never broken and reported a vulnerability that did not exist.
+- *False negative, and worse.* `handleAccountsRegister` bound `email_verified` to
+  `isAdmin ? 1 : 0`, skipped the verification email entirely for admins, and then called
+  `loginAndRedirect` — so registering an address listed in `ADMIN_EMAILS` returned an admin
+  session in a single request. That is the most serious thing in the whole sweep and it lives
+  in code my audit could not see. Only the fact that rows for both admin addresses already
+  exist (a duplicate email 409s first) kept it from being exploitable.
+
+**How the false positive was caught.** Not by re-reading, and not by doubting the conclusion.
+I opened the live `RATE_LIMITS` block to apply an unrelated edit and the `api:2fa` line was
+simply *there*, one line below where I was typing. A finding of the form "X does not exist"
+is refuted by the first honest look at the real file — so the audit never had to be wrong for
+long, it only had to be pointed at the wrong file.
+
+**Why it survived.** The stale checkout is the primary working directory, it is a real git
+repo, it contains a real and recently-modified `api/src/index.js`, and every finding I made
+against it was *internally* correct. Nothing about reading it felt like reading the wrong
+thing. I confirmed the file's contents carefully and never once confirmed its provenance.
+
+**The rule.** Before auditing or fixing anything that runs in production, establish which
+bytes actually run and say so out loud: the deploy config (`wrangler.toml` — `name`, `main`),
+the branch, and the file size. "I opened the file in the project directory" is not evidence
+about production. A cheap, decisive check: compare the on-disk size against the deployed
+worker, or grep the local file for an endpoint you know is live — here, `grep /token/exchange`
+would have returned nothing and ended the mistake before the audit started.
