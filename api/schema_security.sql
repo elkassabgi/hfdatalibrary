@@ -4,6 +4,11 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   count INTEGER DEFAULT 0,
   window_start TEXT DEFAULT (datetime('now'))
 );
+-- Rows here are dead once their window passes, and until 2026-07-31 nothing deleted them,
+-- so the table only grew — in the same D1 that fails WRITES (logins, registrations) when it
+-- fills. index.js prunes it from the cron and opportunistically from checkRateLimit; both
+-- filter on window_start, so it needs an index or the sweep scans the whole table.
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
 
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

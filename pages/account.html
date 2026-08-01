@@ -242,7 +242,15 @@ async function loadAccount() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
     if (params.get('oauth_error')) {
-      la.insertAdjacentHTML('afterbegin', '<p style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; color:#991b1b;">' + params.get('oauth_error').replace(/_/g,' ') + '</p>');
+      // oauth_error is a query parameter and must never reach insertAdjacentHTML raw:
+      // /pages/account?oauth_error=<img src=x onerror=...> was a working reflected-XSS
+      // link until 2026-07-31. Build the node and set textContent, so the value is
+      // rendered as text and never parsed as markup. The codes we emit are lowercase
+      // words, so anything outside that shape is dropped before display as well.
+      var errBox = document.createElement('p');
+      errBox.style.cssText = 'background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; color:#991b1b;';
+      errBox.textContent = String(params.get('oauth_error')).replace(/[^A-Za-z0-9_ -]/g, '').replace(/_/g, ' ').slice(0, 120);
+      la.insertBefore(errBox, la.firstChild);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   } catch (e) {
@@ -302,8 +310,15 @@ async function loadDownloadHistory() {
 
 async function linkOrcid() {
   try {
+    // credentials: 'include' is load-bearing, not hygiene. link-init now returns a
+    // Set-Cookie holding the nonce that binds the ORCID link to THIS browser —
+    // without it the link state was a bearer value anyone could forward, and the
+    // victim's ORCID iD landed on the forwarder's account. api.hfdatalibrary.com is
+    // a different origin, so a default fetch would silently drop that cookie and
+    // the callback would reject every link attempt as state_invalid.
     const r = await fetch(API + '/v1/auth/orcid/link-init', {
       method: 'POST',
+      credentials: 'include',
       headers: authHeaders()
     });
     const data = await r.json();

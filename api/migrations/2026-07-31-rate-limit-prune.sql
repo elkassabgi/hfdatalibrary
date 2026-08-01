@@ -1,0 +1,12 @@
+-- Rate-limit table hygiene. Additive: one index, no column or table changes.
+--
+-- Nothing in the worker ever deleted from rate_limits, so it held one permanent row for
+-- every key the site had ever seen — and unauthenticated endpoints supply part of those
+-- keys. It shares its D1 with users, sessions and download_log, and D1 refuses WRITES once
+-- it is full, so an unbounded limiter table is a site outage that needs no exploit, just
+-- time. index.js now sweeps it: pruneRateLimits() runs from the daily cron and, about once
+-- every 500 charged calls, from checkRateLimit itself.
+--
+-- Both sweeps filter on window_start, which had no index, so each one was a full scan of
+-- exactly the table we are trying to stop from growing. Apply each statement separately.
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);

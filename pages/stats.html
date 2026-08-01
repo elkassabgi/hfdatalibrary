@@ -432,8 +432,19 @@ async function loadStats() {
     // institution not in the map now renders no icon rather than an unverified
     // one. A fixed-width slot keeps every name aligned whether the icon is
     // present, absent, or fails to load.
+    // This page is PUBLIC and renders institution names that users type into their own
+    // profile, so every one of them must be escaped on the way into HTML. Until
+    // 2026-07-31 the name was concatenated raw, which made a profile field a stored-XSS
+    // vector executing on every visitor to the stats page.
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
     function instIcon(name) {
-      var val = INST_DOMAINS[name];
+      // hasOwnProperty: a name like "constructor" would otherwise return an inherited
+      // Object.prototype member and throw on .indexOf, blanking the whole panel.
+      var val = Object.prototype.hasOwnProperty.call(INST_DOMAINS, name) ? INST_DOMAINS[name] : null;
       var inner = '';
       if (val) {
         var url = val.indexOf('CUSTOM:') === 0
@@ -535,7 +546,7 @@ async function loadStats() {
       function instRow(i) {
         return '<div style="display:flex; align-items:center; padding:0.3rem 0;">' +
           instIcon(i.institution) +
-          '<span class="inst-name">' + i.institution + '</span></div>';
+          '<span class="inst-name">' + esc(i.institution) + '</span></div>';
       }
       var html = '<div class="inst-list">' + top.map(instRow).join('');
       if (rest.length > 0) {

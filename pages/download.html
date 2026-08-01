@@ -765,8 +765,22 @@ function requireCitationAgreement() {
 // Handle OAuth callback redirects
 let oauthPendingProvider = null;
 let oauthPendingId = null;
+// Signed proof that this browser really completed ORCID's OAuth. oauthPendingId is only
+// ever used to fill the form in; the server ignores it and trusts this token instead.
+let oauthPendingProof = null;
 (function handleOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
+  // The session id arrives in the QUERY STRING, matching what the worker sends
+  // (api/src/index.js §SESSION-IN-QUERY). That is a known weakness — the id is a
+  // 30-day full-scope credential and a query string lands in the Pages access log,
+  // in browser history and in outgoing Referer headers — and the fix is to move it
+  // to the fragment, which never leaves the browser. A fragment reader was written
+  // and then taken back out: the Worker and Pages deploy as separate parallel jobs,
+  // so a page that reads only the fragment is dark for every user still being served
+  // the old worker, and a worker that sends only the fragment is dark for every user
+  // still being served the old page. Whichever half lands first, sign-in fails
+  // silently. Fix it as one coordinated change: land the fragment reader HERE with
+  // the query fallback kept, confirm it is live, then move the worker in a later push.
   const session = params.get('session');
   const oauthSuccess = params.get('oauth_success');
   const oauthError = params.get('oauth_error');
@@ -800,6 +814,7 @@ let oauthPendingId = null;
     // User authorized via ORCID but has no account yet — pre-fill registration
     oauthPendingProvider = 'orcid';
     oauthPendingId = oauthId;
+    oauthPendingProof = params.get('orcid_prefill');
     // Wait for DOM to be ready, then show banner and pre-fill
     setTimeout(() => {
       const nameField = document.getElementById('reg-name');
@@ -815,7 +830,17 @@ let oauthPendingId = null;
             '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256" fill="#a6ce39"><circle cx="128" cy="128" r="128"/><path fill="#fff" d="M86.3 186.2H70.9V79.1h15.4v107.1zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.5 178 93 148 93h-23.7v79.4zM88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z"/></svg>' +
             '<strong style="color:#065f46;">ORCID verified</strong>' +
           '</div>' +
-          '<p style="color:#047857; font-size:0.9rem; margin:0;">Your ORCID iD <code style="user-select:all;">' + oauthId + '</code> will be linked to this account. You will be able to sign in with ORCID next time.</p>';
+          '<p style="color:#047857; font-size:0.9rem; margin:0;">Your ORCID iD <code style="user-select:all;" id="orcid-banner-id"></code> will be linked to this account. You will be able to sign in with ORCID next time.</p>';
+        // oauthId comes from the query string, so it must never reach innerHTML. Until
+        // 2026-07-31 it was concatenated in directly, which made
+        //   /pages/download?oauth_provider=orcid&oauth_id=<img src=x onerror=...>
+        // a working reflected-XSS link on hfdatalibrary.com — any logged-in user who
+        // followed it ran the attacker's script on our origin, with their session in
+        // localStorage. The site CSP still allows 'unsafe-inline', so nothing caught it.
+        // textContent renders the value as text and never as markup; the shape check
+        // additionally refuses anything that is not an ORCID iD.
+        const idSlot = banner.querySelector('#orcid-banner-id');
+        if (idSlot) idSlot.textContent = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(oauthId) ? oauthId : '';
         regForm.insertBefore(banner, regForm.firstChild);
       }
       // Scroll to registration form
@@ -1205,10 +1230,19 @@ async function registerUser() {
     const r = await fetch(API + '/v1/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // credentials so the __Host-hfd_orcid_pf cookie the ORCID callback set on
+      // api.hfdatalibrary.com rides along. The prefill token is now HALF a
+      // credential — the server checks it against sha256(that cookie's nonce), so a
+      // token mailed to a stranger verifies nowhere. Without this the cookie is not
+      // sent (this is a cross-origin fetch, same site) and the ORCID link is dropped.
+      // api.* returns Access-Control-Allow-Credentials for hfdatalibrary.com.
+      credentials: 'include',
       body: JSON.stringify({
         name, email, password, institution, country, role, newsletter,
         turnstile_token: turnstileToken,
-        orcid_id: oauthPendingProvider === 'orcid' ? oauthPendingId : undefined
+        // The server ignores orcid_id (anyone can type one) and reads orcid_prefill,
+        // which is signed and only minted after a real ORCID sign-in.
+        orcid_prefill: oauthPendingProvider === 'orcid' ? oauthPendingProof : undefined
       })
     });
     const data = await r.json();
@@ -1220,11 +1254,25 @@ async function registerUser() {
       result.innerHTML =
         '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.25rem;">' +
           '<strong style="color:#065f46;">Account created!</strong>' +
+          // The green banner at the top of this form promised "Your ORCID iD will be linked
+          // to this account. You will be able to sign in with ORCID next time." When the
+          // confirmation did not survive the time it took to fill the form, the server
+          // creates the account anyway with no ORCID iD on it and returns orcid_notice.
+          // That promise has to be corrected on this screen — the user will otherwise
+          // discover it only when "Sign in with ORCID" fails to find their account.
+          (data.orcid_notice ? '<p id="reg-orcid-notice" style="margin:0.6rem 0 0; padding:0.65rem 0.8rem; background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; color:#92400e; font-size:0.9rem;"></p>' : '') +
           '<p style="margin:0.6rem 0 0; font-size:0.95rem;">&#128231; <strong>Verify your email to start downloading.</strong> We&rsquo;ve sent a verification link &mdash; check your inbox (and spam folder) and click it to activate your account.</p>' +
           '<p style="margin:0.75rem 0 0; font-size:0.9rem;">Your API key (works across every ElkassabgiData library once your email is verified):</p>' +
           '<code style="display:block; margin-top:0.5rem; padding:0.75rem; background:#fff; border:1px solid #d1d5db; border-radius:4px; font-size:0.95rem; word-break:break-all;">' + data.api_key + '</code>' +
           familyReturnHtml() +
         '</div>';
+      // textContent, never concatenation into innerHTML — same rule as the ORCID banner
+      // above. An older worker simply does not send this field and the paragraph is not
+      // rendered at all, so page and worker can deploy in either order.
+      if (data.orcid_notice) {
+        const orcidNote = document.getElementById('reg-orcid-notice');
+        if (orcidNote) orcidNote.textContent = data.orcid_notice;
+      }
       checkAuth();
     } else {
       result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Registration failed.') + '</p>';

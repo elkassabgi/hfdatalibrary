@@ -91,6 +91,29 @@ const ACCOUNTS_ALLOW = new Set([
 // §5 M2 token TTLs. SHORT TTLs are written with SQLite datetime() arithmetic,
 // NEVER toISOString() (the 'T' > ' ' lexical-compare bug makes a toISOString
 // expiry validate for ~a full day).
+//
+// §EXPIRY-COMPARE (2026-07-31). That write rule was only ever honoured by the M2
+// SSO code below. Everything older — web sessions, download tokens, password
+// resets, 2FA pending rows, ORCID link state, api_key_expires_at — stores
+// toISOString(), so `sessions` alone holds BOTH formats right now: createSession
+// writes '2026-07-31T13:00:00.000Z', createIdpSession writes '2026-07-31 13:00:00'.
+// SQLite compares TEXT byte by byte and 'T' (0x54) sorts above ' ' (0x20), so a
+// bare `expires_at > datetime('now')` read every ISO row as live until the UTC
+// date rolled over: a download link stamped 10 minutes stayed redeemable all day,
+// a reset link stamped 1 hour stayed redeemable all day.
+//
+// Two fixes were rejected. Rewriting the writers to datetime() arithmetic leaves
+// every row already in D1 with its old text, so it fixes nothing that is live and
+// splits each table into two formats. Binding a JS ISO 'now' on the read side is
+// worse: measured, a space-format idp_master row with ten hours of life left
+// compares BELOW an ISO 'now', so the first request after deploy would log every
+// family SSO user out. So every expiry comparison in this file reads
+//     datetime(<column>) > datetime('now')
+// which canonicalises '…T13:00:00.000Z' and '… 13:00:00' to the same UTC text
+// before comparing — correct for the rows that exist today and for whichever
+// format a future writer picks. Unparseable text yields NULL, so the predicate
+// fails: an unreadable expiry is expired, never authenticated. Writers are left
+// exactly as they are; this is a read-side change only.
 const EKD_SESSION_DAYS = 30;   // idp_master (ekd_session), 30d sliding
 const EDL_AT_TTL_SEC = 900;    // family access token, 15 min
 const EDL_RT_TTL_HOURS = 720;  // refresh-token absolute cap = 30 days (G-H LOCKED 2026-07-18; was 24 h — restores the pre-SSO 30-day persistence)
@@ -333,11 +356,40 @@ function normalizeCountry(input) {
 // Rate limits: key -> { max, window_seconds }
 const RATE_LIMITS = {
   'api:login': { max: 5, window: 300 },         // 5 login attempts per 5 min per IP
-  'api:register': { max: 3, window: 3600 },     // 3 registrations per hour per IP
+  // REGISTRATION — split in two on 2026-07-31 after a real user was locked out for ~50 min.
+  // The old rule was a single 3-per-hour-per-IP counter charged at the TOP of handleRegister,
+  // before the body was parsed, before Turnstile and before any field was validated. So a
+  // typo, a CAPTCHA hiccup or a rejected non-Latin name each burned one of three attempts,
+  // and the third mistake locked the person out for the rest of the hour. Worse, the key is
+  // the IP: a university NAT, a department or a conference share one, so three fumbled
+  // sign-ups could lock out an entire institution — for a library whose users are academics,
+  // exactly the wrong shape.
+  //   api:register:burst  cheap flood guard, charged on ENTRY. Generous enough that no honest
+  //                       person retrying a form ever meets it.
+  //   api:register        the real "how many ACCOUNTS may come from here" cap, charged only
+  //                       immediately before the INSERT — so only accounts that are actually
+  //                       created count against it, never failures.
+  // Both register rules — and every other IP-keyed rule here — are charged on rlIpKey(ip),
+  // not the raw address. See rlIpKey: keyed on the full address, an IPv6 client had no cap
+  // at all, because the last hextet is free to change.
+  //
+  // The account cap was 10/hour. One IP is one NAT, and a lab section of twenty signing up
+  // during the same class hour is an ordinary Tuesday for this library — they used to hit
+  // the cap halfway through and the rest were told to come back in an hour. There is no
+  // key available at that point in the handler that tells a class apart from a script:
+  // both arrive from one address with distinct fresh mailboxes, both have passed Turnstile.
+  // So the cap is raised above a plausible cohort rather than split on a signal that does
+  // not exist. NOTE: api:register:burst allows only 30 requests/hour from the same address,
+  // so for a cohort larger than that the burst guard — not this cap — is what bites first,
+  // and raising this rule past 30 would just make it dead code.
+  'api:register:burst': { max: 30, window: 3600 },
+  'api:register': { max: 25, window: 3600 },    // 25 CREATED accounts per hour per IP (per /64 on IPv6)
   'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
-  'api:2fa': { max: 5, window: 600 },           // 5 TOTP guesses per pending token (IP-independent brute-force cap)
+  'api:2fa': { max: 5, window: 600 },           // 5 TOTP guesses per ACCOUNT per 10 min.
+  // Keyed on user_id, never on the pending token: the token is minted by whoever already
+  // has the password, so a token-keyed counter caps a batch rather than the attack.
 };
 
 export default {
@@ -469,12 +521,14 @@ export default {
       // ── OAuth ──
       if (path === '/v1/auth/orcid/link-init' && request.method === 'POST')
         return await handleOrcidLinkInit(request, env, cors);
+      // Both /start handlers are async now — they write a single-use oauth_state
+      // row and set the nonce cookie that binds the flow to this browser.
       if (path === '/v1/auth/orcid/start')
-        return handleOrcidStart(request, env, cors);
+        return await handleOrcidStart(request, env, cors);
       if (path === '/v1/auth/orcid/callback')
         return await handleOrcidCallback(request, env, ip, ua, country);
       if (path === '/v1/auth/google/start')
-        return handleGoogleStart(env, cors);
+        return await handleGoogleStart(env, cors);
       if (path === '/v1/auth/google/callback')
         return await handleGoogleCallback(request, env, ip, ua, country);
 
@@ -549,6 +603,11 @@ export default {
   // 21:00 CDT (DST) / 20:00 CST. The daily activity digest goes to admin.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(sendDailyDigest(env));
+    // Sweep expired rate_limits rows. This was the only place they could ever be removed and
+    // it did not exist: the table grew one permanent row per key forever, and unauthenticated
+    // callers supply part of those keys. A full D1 refuses writes, which is a site outage
+    // reached without a single exploit.
+    ctx.waitUntil(pruneRateLimits(env));
   }
 };
 
@@ -556,35 +615,129 @@ export default {
 // ── Rate Limiting ──
 // ══════════════════════════════════════
 
-async function checkRateLimit(env, key, ruleName) {
+// Rate-limit key for a client address. Every IP-keyed limiter used to pass the address
+// verbatim, which is a cap on IPv4 and nothing at all on IPv6: a residential or mobile
+// provider hands one subscriber a whole /64, so a single machine can source addresses that
+// differ only in the last hextet and each one opens its own empty counter. "5 login attempts
+// per 5 minutes" became unlimited login attempts for the cost of incrementing a number.
+// Folding IPv6 to its /64 puts the budget on the subscriber, which is the unit the rule
+// meant all along. IPv4 is returned unchanged on purpose — there one address really is one
+// host, and folding it to a /24 would hang a whole campus off one counter, which is the
+// lockout shape this file has already had to fix twice.
+function rlIpKey(ip) {
+  const raw = String(ip == null ? '' : ip).trim().toLowerCase();
+  if (!raw) return 'unknown';
+  if (raw.indexOf(':') === -1) return raw.slice(0, 45);   // IPv4, or the literal 'unknown'
+  // ::ffff:a.b.c.d — an IPv4 address wearing an IPv6 shape. Its first four groups are all
+  // zero, so folding it would collapse every IPv4 client on earth into one shared budget.
+  if (raw.indexOf('.') !== -1) return raw.slice(0, 45);
+  const bare = raw.split('%')[0];                          // drop any zone id
+  const sides = bare.split('::');
+  if (sides.length > 2) return bare.slice(0, 45);          // malformed — key it whole rather than guess
+  const head = sides[0] ? sides[0].split(':') : [];
+  const tail = (sides.length === 2 && sides[1]) ? sides[1].split(':') : [];
+  let groups = head;
+  if (sides.length === 2) {
+    const gap = 8 - head.length - tail.length;
+    if (gap < 0) return bare.slice(0, 45);
+    groups = head.concat(new Array(gap).fill('0'), tail);
+  }
+  if (groups.length !== 8) return bare.slice(0, 45);
+  return groups.slice(0, 4).map(g => g.replace(/^0+/, '') || '0').join(':') + '::/64';
+}
+
+// A rate-limit key becomes a PRIMARY KEY row in D1 and, until the prune below existed, stayed
+// there for good. Parts of those keys come from unauthenticated request bodies, so the key
+// has to be bounded or a caller can choose how many bytes we store per request. Every real
+// key is short — an address, a user id, 'tfa:u<id>' — so anything longer is replaced by its
+// SHA-256: still one distinct counter per distinct input, but a fixed 64 hex characters.
+const RL_KEY_MAX = 96;
+
+// Nothing in the worker ever deleted from rate_limits. Every key the site had ever seen kept
+// a row permanently, in the same D1 that holds users, sessions and download_log — and D1
+// fails WRITES when it fills, so an unbounded limiter table takes out logins, registrations
+// and download logging with it. A row is dead once its window has passed; twice the longest
+// window is a safe horizon and it follows RATE_LIMITS instead of drifting away from it.
+const RL_PRUNE_AGE = 2 * Math.max(...Object.values(RATE_LIMITS).map(r => r.window));
+
+async function pruneRateLimits(env) {
+  try {
+    return await env.DB.prepare(
+      "DELETE FROM rate_limits WHERE (julianday('now') - julianday(window_start)) * 86400 > ?"
+    ).bind(RL_PRUNE_AGE).run();
+  } catch {
+    return null;   // housekeeping — the daily digest must still go out if this sweep fails
+  }
+}
+
+// opts.charge === false asks "is this key already over the limit?" WITHOUT spending an
+// attempt. handleLogin uses it so that only a WRONG password costs anything: charging every
+// request meant five successful sign-ins from one university NAT locked out the sixth
+// colleague, which is an availability bug wearing a security badge. Brute force still pays,
+// because brute force is failures.
+//
+// The charge is now a single statement, and that statement is the decision. It used to be
+// three — SELECT the count, compare it in JS, UPDATE — with nothing holding between them, so
+// N requests sent at the same moment all read the same value, all concluded they were under
+// the cap, and all passed: 200 attempts against a limit of 5. On a key with no row yet it was
+// worse, because every one of them took the "insert 1" branch and the whole burst left the
+// counter at 1, so the attacker did not even have to wait out the window. The peek/charge
+// split above widened the gap from one database round-trip to tens of milliseconds, since a
+// 100,000-iteration password hash now runs inside it. Decide from what the write did, never
+// from a value read by an earlier SELECT.
+async function checkRateLimit(env, key, ruleName, opts) {
   const rule = RATE_LIMITS[ruleName];
   if (!rule) return { ok: true };
+  const charge = !opts || opts.charge !== false;
 
-  const fullKey = `${ruleName}:${key}`;
-  const now = Date.now();
-  const windowMs = rule.window * 1000;
+  const rawKey = String(key == null ? '' : key);
+  const fullKey = ruleName + ':' + (rawKey.length <= RL_KEY_MAX ? rawKey : 'h:' + await sha256Hex(rawKey));
 
-  const existing = await env.DB.prepare('SELECT count, window_start FROM rate_limits WHERE key = ?').bind(fullKey).first();
-
-  if (!existing) {
-    await env.DB.prepare('INSERT OR REPLACE INTO rate_limits (key, count, window_start) VALUES (?, 1, datetime("now"))').bind(fullKey).run();
-    return { ok: true, remaining: rule.max - 1 };
+  // Window age is computed by SQLite, not by `new Date(window_start)`. window_start is stored
+  // as 'YYYY-MM-DD HH:MM:SS' with no zone marker, and V8 reads that shape as LOCAL time — the
+  // old JS arithmetic was correct only because Workers happens to run in UTC.
+  if (!charge) {
+    const peek = await env.DB.prepare(
+      "SELECT count, CAST((julianday('now') - julianday(window_start)) * 86400 AS INTEGER) AS age FROM rate_limits WHERE key = ?"
+    ).bind(fullKey).first();
+    if (!peek || peek.age >= rule.window) return { ok: true, remaining: rule.max };
+    if (peek.count >= rule.max) return { ok: false, retryAfter: Math.max(rule.window - peek.age, 1) };
+    return { ok: true, remaining: rule.max - peek.count };
   }
 
-  const windowStart = new Date(existing.window_start).getTime();
-  if (now - windowStart > windowMs) {
-    // Window expired, reset
-    await env.DB.prepare('UPDATE rate_limits SET count = 1, window_start = datetime("now") WHERE key = ?').bind(fullKey).run();
-    return { ok: true, remaining: rule.max - 1 };
-  }
+  // Insert-or-increment, but only while the row is inside its window and under the cap. An
+  // expired window resets the count to 1 and restamps; a full one matches no WHERE and writes
+  // nothing at all. meta.changes is therefore 1 exactly when this request was entitled to
+  // spend an attempt — the same single-use claim test consumeOauthState already relies on.
+  const charged = await env.DB.prepare(
+    "INSERT INTO rate_limits (key, count, window_start) VALUES (?, 1, datetime('now')) " +
+    "ON CONFLICT(key) DO UPDATE SET " +
+      "count = CASE WHEN (julianday('now') - julianday(window_start)) * 86400 >= ? THEN 1 ELSE count + 1 END, " +
+      "window_start = CASE WHEN (julianday('now') - julianday(window_start)) * 86400 >= ? THEN datetime('now') ELSE window_start END " +
+    "WHERE (julianday('now') - julianday(window_start)) * 86400 >= ? OR count < ?"
+  ).bind(fullKey, rule.window, rule.window, rule.window, rule.max).run();
 
-  if (existing.count >= rule.max) {
-    const retryAfter = Math.ceil((windowMs - (now - windowStart)) / 1000);
-    return { ok: false, retryAfter };
+  if (charged.meta && charged.meta.changes === 0) {
+    // Blocked. Only this branch needs to know how much of the window is left, so the extra
+    // read costs nothing on the common path.
+    const left = await env.DB.prepare(
+      "SELECT CAST(? - (julianday('now') - julianday(window_start)) * 86400 AS INTEGER) AS retry FROM rate_limits WHERE key = ?"
+    ).bind(rule.window, fullKey).first();
+    return { ok: false, retryAfter: (left && left.retry > 0) ? left.retry : rule.window };
   }
+  // No meta at all means we got no measurement, which is not the same as "over the limit".
+  // Reading it as a rejection would turn one D1 hiccup into a site-wide 429 on login and
+  // registration — a far worse failure than one attempt going uncharged.
 
-  await env.DB.prepare('UPDATE rate_limits SET count = count + 1 WHERE key = ?').bind(fullKey).run();
-  return { ok: true, remaining: rule.max - existing.count - 1 };
+  // Sweep dead rows about once every 500 charged calls. The cron prunes daily, but a burst
+  // between two cron runs is precisely the case that grows the table, and the burst is the
+  // thing rate limiting exists to meet.
+  if (Math.random() < 0.002) await pruneRateLimits(env);
+
+  // No `remaining` on this path: an atomic charge cannot report the resulting count without
+  // RETURNING, and no caller has ever read the field — every one of them tests .ok and
+  // .retryAfter only.
+  return { ok: true };
 }
 
 // Profile fields are displayed publicly (stats page world map, institutions list,
@@ -595,6 +748,36 @@ function isLatinish(s) {
   if (typeof s !== 'string' || s.length === 0) return false;
   return /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s)
       && /[\p{Script=Latin}]/u.test(s); // require at least one actual letter
+}
+
+// Gate for the EDIT forms (as opposed to registration): a submitted profile value only has
+// to clear isLatinish when the user is actually changing it.
+//
+// Why the distinction is necessary. Non-Latin text gets into these columns without ever
+// passing this filter — Google auto-create copies users.name straight out of Google's
+// profile (see handleGoogleCallback), and every row that predates the filter was never
+// checked. Both edit forms then prefill from the stored row and re-post all four fields on
+// every save (account.html loadAccount/saveProfile; renderAccountPage's fname/finst/
+// fcountry/frole). So checking each submitted field unconditionally rejects the whole save
+// over a value the user never touched, and because institution/country/role are what set
+// profile_complete, the user is left permanently unable to complete their profile — which
+// is what handleDownloadToken and handleDownload check before serving any data. A Google
+// user with a CJK, Cyrillic or Arabic display name lost downloads entirely for one day
+// under that rule; they could download the day before.
+//
+// Why letting it through is safe: the string is already in the column. Re-sending it stores
+// nothing new, so it cannot be an injection — only a value the user has typed can be, and
+// that still has to pass. An empty value is allowed for the same reason: it clears the
+// field and there is nothing in it to inject.
+//
+// What this deliberately does NOT do is scrub a bad value that is already stored. Getting
+// junk out of a column is a data cleanup plus output escaping at the render sites; an
+// input validator only decides what may go in from here on.
+function latinOkOrUnchanged(submitted, stored) {
+  const v = (submitted == null ? '' : String(submitted)).trim();
+  if (v.length === 0) return true;
+  if (v === (stored == null ? '' : String(stored)).trim()) return true;
+  return isLatinish(v);
 }
 
 function rateLimitResponse(retryAfter, cors) {
@@ -649,6 +832,338 @@ const OAUTH_REDIRECT_GOOGLE = 'https://api.hfdatalibrary.com/v1/auth/google/call
 // redirect_uri_mismatch. Distinct from the api.* URIs above (M3: api.* untouched).
 const OAUTH_REDIRECT_GOOGLE_ACCOUNTS = 'https://accounts.elkassabgidata.com/v1/auth/google/callback';
 const OAUTH_REDIRECT_ORCID_ACCOUNTS  = 'https://accounts.elkassabgidata.com/v1/auth/orcid/callback';
+
+// ── api.* OAuth CSRF state (2026-07-31) ──
+// Until now neither api.* flow carried a state. handleGoogleStart never sent one
+// and handleGoogleCallback never read one; handleOrcidStart merely echoed back
+// whatever the caller typed into ?state=, and handleOrcidCallback treated an
+// unknown state as "not a link request" and fell through to a plain login. So
+// both callbacks accepted any authorization code that arrived. That is login
+// CSRF: the attacker runs the flow in their own browser, stops before the last
+// hop, keeps the unused code, and sends the victim
+// api.hfdatalibrary.com/v1/auth/google/callback?code=<attacker's code>. The
+// worker exchanges it, resolves the ATTACKER's account, and plants that session
+// in the victim's browser (download.html even overwrites a victim who was
+// already signed in as themselves). Everything the victim does afterwards —
+// downloads, profile edits, an ORCID link — lands in a row whose password the
+// attacker knows.
+//
+// A state alone would not close it, because the ORCID link state was a bearer
+// value: the attacker called link-init, got S bound to THEIR user_id, and sent
+// the victim the clean first-party link /v1/auth/orcid/start?state=S. So the
+// state is bound to the browser that started the flow. /start mints a 256-bit
+// nonce, keeps it in a host-only cookie, and puts only sha256(nonce) in the URL
+// and in the oauth_state row — a callback that lands in a browser which never
+// started the flow has no cookie and fails closed, and a state lifted from a URL
+// or a Referer header is not the cookie. Same shape as the accounts.* broker
+// (startFamilyOAuth / consumeOauthState), which already did this correctly.
+// One exception, and only until the pages catch up: see §DEPLOY-ORDER below.
+//
+// This deliberately does NOT reuse sso_oauth_state. consumeOauthState matches on
+// provider alone, so an api.* row parked in that table could be consumed by
+// handleAccountsGoogleCallback and brokered into a family code with an empty
+// PKCE challenge. Separate flows, separate tables. The legacy oauth_state has no
+// verifier column, so the api.* Google flow still has no PKCE — that is code
+// interception, a different hole from the one closed here.
+//
+// §DEPLOY-ORDER — one flow cannot demand the cookie yet. CI deploys the Worker and
+// the Cloudflare Pages site as two PARALLEL jobs, so for a window the LIVE OLD page
+// talks to the NEW worker. Both /start handlers set their cookie on their own 302,
+// which the browser stores and replays on the provider's top-level GET back — those
+// are page-independent and stay strict. The ORCID LINK flow is not: its cookie ships
+// on the JSON response to account.html's fetch, and a fetch without
+// credentials: 'include' (which only the new account.html sends) makes the browser
+// DISCARD the Set-Cookie. Demanding the cookie there turns every "Link ORCID" click
+// on the deployed page into oauth_error=state_invalid with no workaround. So the
+// cookie is required when present and optional when absent for link rows only —
+// full strength the moment the pages ship, and never weaker than the state-only
+// check that is live today.
+const OAUTH_STATE_COOKIE = { google: '__Host-hfd_oauth_g', orcid: '__Host-hfd_oauth_o' };
+// §PER-FLOW-COOKIE. The cookie NAME carries the flow. Until this change there was one
+// fixed name per provider, so every /start wrote its fresh nonce straight over whatever
+// the browser was already holding. Two tabs — or Back, click "Sign in with Google"
+// again, then finish the older tab — and the older callback arrived carrying the NEWER
+// tab's nonce, failed the compare in consumeApiOauthState and was bounced to
+// ?oauth_error=state_invalid, which download.html shows as
+// alert('Sign-in failed: state_invalid'). Both tabs used to work, because before the
+// login-CSRF fix both /start handlers were pure redirects that carried no state at all.
+// So this was a NEW user-visible failure on the entry point 364 of 572 users take, and
+// it had nothing to do with the pages being stale — it happened with any pages.
+//
+// Deriving the name from the state gives every flow its own slot, so nothing a second
+// flow starts can reach the first one's nonce. The state is sha256(nonce) and is already
+// public — it travels in the authorize URL — so putting 8 of its characters in a cookie
+// name discloses nothing. The secret is the VALUE, and the value is still a 256-bit
+// nonce that never left this browser.
+//
+// THE SECURITY PROPERTY IS UNCHANGED. The callback reads the cookie named for ITS OWN
+// state and still requires sha256(nonce) === state (constantTimeEqual, below in
+// consumeApiOauthState); a mismatch is still rejected. All that moved is WHICH cookie a
+// given callback is permitted to look at — from "the one shared slot, whoever wrote it
+// last" to "the slot belonging to this state". That is strictly narrower, never looser:
+// a nonce that does not hash to the state cannot be accepted through any name.
+//
+// Eight hex characters, not all 64: these names ride on every request to
+// api.hfdatalibrary.com and several can be live at once, so the name stays short. Two
+// concurrent flows colliding needs the same 8 hex out of 2^32, and even then it degrades
+// to exactly the old behaviour — the later flow overwrites the earlier one's nonce —
+// never to accepting a nonce that does not hash to the state.
+//
+// The state on the read side arrives from the URL, i.e. from an attacker if they like,
+// so the name is built only from a canonical 64-char lowercase sha256 hex string. That
+// keeps it a legal cookie name and keeps the RegExp below free of any metacharacter
+// somebody could inject. A malformed state yields no name at all, which reads as "no
+// cookie" and fails closed exactly as an absent cookie already did.
+//
+// DEPLOY ORDER: nothing to coordinate. The worker live right now sends no state and no
+// cookie whatsoever, so a flow started before the push already dies at the callback on
+// the state check itself — the naming scheme makes that neither better nor worse, and it
+// is over within one authorize round-trip. Do NOT "help" that window by falling back to
+// the old fixed name when the per-flow cookie is missing: consumeApiOauthState enforces
+// the nonce whenever one is present, so a leftover under a shared name is precisely what
+// used to kill the next "Link ORCID" with state_invalid. Per-flow names retire that
+// failure, and a fallback would bring it back.
+function oauthCookieName(provider, state) {
+  const base = OAUTH_STATE_COOKIE[provider];
+  if (!base) return null;
+  const s = state == null ? '' : String(state);
+  if (!/^[0-9a-f]{64}$/.test(s)) return null;
+  return `${base}_${s.slice(0, 8)}`;
+}
+// __Host- prefix: a browser refuses to store such a cookie if it carries Domain, so no
+// sibling *.hfdatalibrary.com host can toss one at api.*. The prefix also REQUIRES
+// Secure and Path=/. The per-flow suffix is appended to the END of the name, so this is
+// still a __Host- cookie and all three requirements still hold. SameSite=Lax so it keeps
+// riding the provider's top-level GET back into the callback. Max-Age stays at the same
+// 600 seconds as the oauth_state row: with one cookie per flow they accumulate instead
+// of overwriting each other, and a short life is half of what bounds them — the other
+// half is expiredOauthStateCookie on every exit that consumes a state.
+function oauthStateCookie(provider, state, nonce) {
+  const name = oauthCookieName(provider, state);
+  if (!name) return null;
+  return `${name}=${nonce}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`;
+}
+function readOauthNonce(request, provider, state) {
+  const name = oauthCookieName(provider, state);
+  if (!name) return null;
+  const m = (request.headers.get('cookie') || '')
+    .match(new RegExp('(?:^|;\\s*)' + name + '=([A-Za-z0-9_-]+)'));
+  return m ? m[1] : null;
+}
+// The spent-nonce counterpart of oauthStateCookie, and now the main thing that stops a
+// browser filling up with orphans: with a name per flow, an abandoned sign-in leaves its
+// own cookie sitting there instead of being overwritten by the next click. Same name,
+// same Path, same flags on purpose — a browser only replaces a cookie when name, Path
+// and Domain all match, so an expiry differing in any of them would sit alongside the
+// live one and delete nothing. What a user who clicks sign-in repeatedly can therefore
+// hold is: one ~72-byte cookie per flow they started and did not finish, each gone
+// within ten minutes, and the finished ones cleared on the spot by the exits below.
+function expiredOauthStateCookie(provider, state) {
+  const name = oauthCookieName(provider, state);
+  if (!name) return null;
+  return `${name}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
+// §NONCE-CLEANUP. Both callbacks ended in Response.redirect() on every exit but one, and
+// Response.redirect() freezes its headers — so the state nonce cookie outlived the flow
+// that minted it for the rest of its 10-minute Max-Age. That is not cosmetic, because
+// consumeApiOauthState enforces the nonce WHENEVER one is present: the leftover from an
+// abandoned "Sign in with ORCID" cannot hash to the state of a later "Link ORCID", so the
+// link died at ?oauth_error=state_invalid, which account.html renders as a bare error box.
+// Worse, retrying did not help — the deployed account.html fetches link-init without
+// credentials, so the browser discards the fresh Set-Cookie and the stale one keeps
+// winning until it times out. These build the 302 by hand so the expiry can ride along.
+//
+// Which flow actually gets hurt is worth being precise about — and §PER-FLOW-COOKIE has
+// since changed the answer, so read this in that light. When one name was shared, a
+// leftover was harmless to the next SIGN-IN (each /start overwrote it on a top-level 302
+// before any callback compared it) and fatal to the next ORCID LINK, the one flow whose
+// Set-Cookie the deployed account.html throws away. Names are now per flow, so nothing
+// overwrites anything and nothing collides either: a stale cookie is simply not the name
+// the next callback reads. Cleanup still matters, and matters more than it did, because
+// it is now the only thing that removes a spent cookie before its Max-Age — a leftover no
+// longer gets replaced, it just sits there.
+//
+// Use this ONLY on exits reached AFTER consumeApiOauthState returned a row. That is what
+// makes an unconditional expiry safe here: consume succeeds only when the cookie's nonce
+// hashed to this state or when there was no cookie at all, so what is being cleared is
+// always this flow's own nonce (or nothing — Max-Age=0 on a cookie that does not exist is
+// a no-op). It takes the state for the same reason: the name it clears is derived from
+// it, so this can only ever reach the cookie belonging to the flow that is ending. A
+// second tab's live nonce lives under a different name and is now unreachable from here
+// by construction, not merely by which exit the request happened to take.
+function redirectExpiringOauthState(location, provider, state) {
+  const expired = expiredOauthStateCookie(provider, state);
+  // No name means the state was not a canonical sha256 hex string, which cannot happen on
+  // an exit that reached here through consume (it matched a row keyed by that state). Fall
+  // back to a plain redirect rather than emitting a malformed Set-Cookie: the destination
+  // is what the user needs, and an uncleared cookie only ever times out.
+  if (!expired) return Response.redirect(location, 302);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      'Location': location,
+      'Set-Cookie': expired,
+      'Cache-Control': 'no-store'
+    }
+  });
+}
+// The provider-error exit — the user pressed Deny, or came back with no code — runs BEFORE
+// the state is consumed, so unlike the exits above it holds no proof that the cookie in
+// this request belongs to the flow that is ending. It gets that proof the same way consume
+// does, from the state the provider echoes back with the error (RFC 6749 §4.1.2.1), and
+// expires the cookie only when the two agree.
+//
+// Attributed rather than "clear whatever is there", and it stays attributed under
+// §PER-FLOW-COOKIE even though the name now does half the work. Deriving the name from
+// the echoed state already makes it impossible to touch a second tab's nonce — that was
+// the first reason for attributing, and it is now structural. The second reason still
+// needs the compare: the callback URL is reachable with no code and no state at all, and
+// with a state somebody simply copied out of a URL, so without checking sha256(nonce)
+// against it anyone who can cause a top-level navigation could delete a stranger's
+// in-progress nonce for a flow they happen to know the state of. When the state is
+// missing or does not match, this behaves exactly as the old code did: redirect, touch no
+// cookie.
+async function redirectOauthProviderError(request, provider, stateParam, location) {
+  const nonce = readOauthNonce(request, provider, stateParam);
+  if (nonce && stateParam && constantTimeEqual(await sha256Hex(nonce), String(stateParam))) {
+    return redirectExpiringOauthState(location, provider, stateParam);
+  }
+  return Response.redirect(location, 302);
+}
+// 'YYYY-MM-DD HH:MM:SS' UTC — the exact spelling SQLite's datetime() produces, so
+// it can be compared against a stored expires_at as plain text.
+function sqliteNowUtc() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+// The ONE sweep for oauth_state, shared by everything that writes the table: the
+// api.* CSRF states minted just below and the accounts.* orcid_prefill ledger at
+// mintOrcidPrefill. Expired rows are garbage in both cases and nothing else ever
+// removes them, so without a sweep the table grows until D1 fills — and D1 refuses
+// WRITES when it fills, which takes login, registration and download logging down.
+//
+// Three properties, each of which the first version of this sweep lacked:
+//   SAMPLED — it ran on EVERY /start. oauth_state has no index on expires_at
+//     (schema_live_20260717.sql:61 — `state` is the only key), so that was a
+//     full-table scan on the click 364 of 572 users begin with, and anyone looping
+//     the endpoint made their own scan more expensive with every request. Running
+//     it on ~1 write in 20 deletes exactly the same rows; the table still cannot
+//     hold more than a TTL window of starts plus a short tail. (An index on
+//     expires_at would turn the scan into a seek and is worth adding next time the
+//     schema is touched, but it is not what made this dangerous.)
+//   SARGABLE — datetime(expires_at) called a function on every row, so no index
+//     could ever be used even once one exists. The stored value comes from
+//     datetime(), which is zero-padded fixed-width UTC and therefore sorts lexically
+//     in time order, so comparing the bare column against the same spelling of "now"
+//     is the identical predicate for far less work. (Rows written before 2026-07-31
+//     by the old link-init hold an ISO string with a 'T', which sorts after a
+//     same-day space-separated value; those get swept a day late. They are dead
+//     rows either way.)
+//   NON-FATAL — housekeeping must never decide whether someone can sign in. A D1
+//     error here is logged and swallowed; the worst case is that expired rows
+//     survive to the next sweep.
+async function sweepOauthState(env) {
+  if (Math.random() >= 0.05) return;
+  try {
+    await env.DB.prepare('DELETE FROM oauth_state WHERE expires_at <= ?')
+      .bind(sqliteNowUtc()).run();
+  } catch (e) {
+    console.log(JSON.stringify({ evt: 'oauth_state_sweep_failed', msg: e && e.message }));
+  }
+}
+// Start one flow. userId is the account being linked (ORCID link-init) or null
+// for a plain sign-in. §EXPIRY-COMPARE: written with datetime() arithmetic and
+// read with datetime() on both sides, so a 10-minute state lasts 10 minutes —
+// the old link-init wrote toISOString() against a bare compare, which kept the
+// state usable until midnight UTC. (The sweep above compares the column as text
+// instead; same instant, no per-row function call.)
+async function mintApiOauthState(env, provider, userId) {
+  const nonce = generateToken() + generateToken();   // 256-bit; never leaves the browser
+  const state = await sha256Hex(nonce);
+  try {
+    await env.DB.prepare(
+      "INSERT INTO oauth_state (state, user_id, provider, expires_at) VALUES (?, ?, ?, datetime('now','+10 minutes'))"
+    ).bind(state, userId || null, provider).run();
+  } catch (e) {
+    // §START-DEGRADES. Before this round both /start handlers were pure redirects
+    // that touched no database, so no D1 trouble of any kind could stop a user
+    // signing in with Google. Adding a write here quietly made "Sign in with
+    // Google" — the entry point for 364 of 572 users — fail with a 500 during a D1
+    // incident it used to survive. It must not.
+    //   A plain sign-in degrades: the cookie, not the row, is what proves this
+    //   browser started the flow, so consumeApiOauthState accepts a state that
+    //   hashes from the cookie nonce even when the row is missing.
+    //   A LINK cannot degrade and is deliberately still fatal: user_id is the only
+    //   record of WHICH account the iD attaches to, and guessing is how someone
+    //   else's ORCID ends up on your row. handleOrcidLinkInit answers a fetch, so
+    //   account.html renders that failure as an error box rather than a blank page.
+    if (userId) throw e;
+    console.log(JSON.stringify({ evt: 'oauth_state_insert_failed', provider, msg: e && e.message }));
+  }
+  await sweepOauthState(env);
+  // §PER-FLOW-COOKIE: the state names the cookie as well as travelling in the URL, so
+  // this flow's nonce goes into a slot of its own and a sign-in started in another tab
+  // a second later no longer lands on top of it.
+  return { state, cookie: oauthStateCookie(provider, state, nonce) };
+}
+// Finish one flow. Returns the row (user_id = the link target, null for a plain
+// sign-in) or null, and null must always abandon the callback. Called BEFORE the
+// token exchange so a forged callback never burns a real code or hits the
+// provider. oauth_state has no `used` column, so single use is the DELETE: the
+// request whose DELETE reports changes === 1 owns the flow and a concurrent
+// replay of the same state gets null.
+async function consumeApiOauthState(request, env, provider, stateParam) {
+  if (!stateParam) return null;
+  // §PER-FLOW-COOKIE: read back the cookie named for THIS state, not the one shared slot
+  // whose contents the most recent /start decided. That is what lets a second concurrent
+  // sign-in exist without invalidating this one. It does not soften the check below — the
+  // nonce found under that name must still hash to this exact state.
+  const nonce = readOauthNonce(request, provider, stateParam);
+  // The row is read before the cookie decision because the row is what says WHICH
+  // flow this is: user_id set = ORCID link-init, null = a plain sign-in from /start.
+  // Reading first leaks nothing — the state is sha256 of a 256-bit nonce, so there
+  // is nothing to guess — and nothing is burned until every check below passes.
+  const row = await env.DB.prepare(
+    'SELECT * FROM oauth_state WHERE state = ? AND provider = ? AND datetime(expires_at) > datetime("now")'
+  ).bind(stateParam, provider).first();
+  if (!row) {
+    // §START-DEGRADES (see mintApiOauthState). No row, but this browser is holding a
+    // nonce that hashes to exactly this state — a pair only /start running in THIS
+    // browser can produce, since the nonce is 256 bits in an HttpOnly __Host- cookie
+    // and only sha256(nonce) was ever published. The CSRF property the row supports
+    // is therefore already satisfied without it, so a D1 write that failed at /start
+    // costs the user nothing instead of costing them the sign-in.
+    // Always a plain sign-in, never a link: the link target lives only in the row.
+    // What is given up is single use — the same state could be presented twice
+    // inside the cookie's 10-minute life — which is worth nothing to an attacker who
+    // would need the victim's HttpOnly cookie to present it at all, and the provider
+    // refuses a second exchange of the same authorization code regardless. Expiry
+    // still holds too: the cookie's Max-Age is the same 10 minutes as the row's TTL.
+    if (nonce && constantTimeEqual(await sha256Hex(nonce), String(stateParam))) {
+      console.log(JSON.stringify({ evt: 'oauth_state_row_missing', provider }));
+      return { user_id: null };
+    }
+    return null;
+  }
+  if (nonce) {
+    // Present → it must match. A state lifted from a URL and replayed in a browser
+    // that holds a different (or stale) nonce fails here, which is the whole point.
+    if (!constantTimeEqual(await sha256Hex(nonce), String(stateParam))) return null;
+  } else if (!row.user_id) {
+    return null;                                      // this browser never started a flow
+  } else {
+    // Link flow, no cookie: the deployed account.html fetches link-init without
+    // credentials so the browser threw the Set-Cookie away (§DEPLOY-ORDER above).
+    // Rejecting here would break "Link ORCID" outright for every user until Pages
+    // redeploys, so fall back to the state-only check that is live today. This line
+    // should stop appearing in the logs once the new account.html is out; when it
+    // does, delete this branch and the flow is browser-bound in both directions.
+    console.log(JSON.stringify({ evt: 'oauth_state_unbound_link', provider }));
+  }
+  const burn = await env.DB.prepare('DELETE FROM oauth_state WHERE state = ? AND provider = ?')
+    .bind(stateParam, provider).run();
+  if (!burn.meta || burn.meta.changes !== 1) return null;
+  return row;
+}
 
 // Fetch ORCID public profile data (employment, current affiliation, etc.)
 async function fetchOrcidProfile(orcidId) {
@@ -727,17 +1242,27 @@ async function fetchOrcidProfile(orcidId) {
   }
 }
 
-function handleOrcidStart(request, env, cors) {
-  const reqUrl = new URL(request.url);
-  const state = reqUrl.searchParams.get('state') || '';
-
+// The ?state= pass-through is gone. It let anyone launder an attacker's link
+// state through a clean first-party URL — /v1/auth/orcid/start?state=<S from the
+// attacker's link-init> — and the victim's real ORCID iD was written onto the
+// attacker's row. No caller ever supplied one: account.html gets its entire
+// authorize URL from link-init, and download.html links here with no query at
+// all. This mints its own browser-bound state instead.
+async function handleOrcidStart(request, env, cors) {
+  const { state, cookie } = await mintApiOauthState(env, 'orcid', null);
   const url = new URL('https://orcid.org/oauth/authorize');
   url.searchParams.set('client_id', env.ORCID_CLIENT_ID);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', '/authenticate');
   url.searchParams.set('redirect_uri', OAUTH_REDIRECT_ORCID);
-  if (state) url.searchParams.set('state', state);
-  return Response.redirect(url.toString(), 302);
+  url.searchParams.set('state', state);
+  // Built by hand rather than Response.redirect(): that helper returns immutable
+  // headers, and the nonce cookie has to ship with the 302 or there is nothing
+  // for the callback to check.
+  return new Response(null, {
+    status: 302,
+    headers: { 'Location': url.toString(), 'Set-Cookie': cookie, 'Cache-Control': 'no-store' }
+  });
 }
 
 async function handleOrcidLinkInit(request, env, cors) {
@@ -746,12 +1271,7 @@ async function handleOrcidLinkInit(request, env, cors) {
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
 
   const userId = user.user_id || user.id;
-  const state = generateId();
-  const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-  await env.DB.prepare(
-    'INSERT INTO oauth_state (state, user_id, provider, expires_at) VALUES (?, ?, ?, ?)'
-  ).bind(state, userId, 'orcid', expires).run();
+  const { state, cookie } = await mintApiOauthState(env, 'orcid', userId);
 
   const url = new URL('https://orcid.org/oauth/authorize');
   url.searchParams.set('client_id', env.ORCID_CLIENT_ID);
@@ -760,17 +1280,57 @@ async function handleOrcidLinkInit(request, env, cors) {
   url.searchParams.set('redirect_uri', OAUTH_REDIRECT_ORCID);
   url.searchParams.set('state', state);
 
-  return jsonRes({ url: url.toString() }, 200, cors);
+  // The cookie, not the URL, is what ties this link request to this browser. The
+  // state in the URL is only sha256(nonce), so forwarding the authorize URL to
+  // someone else no longer links their iD to this account. account.html must send
+  // this fetch with credentials: 'include' — hfdatalibrary.com and api.* are the
+  // same site but different origins, and without it the browser discards the
+  // Set-Cookie and every link attempt then dies at the callback.
+  const res = jsonRes({ url: url.toString() }, 200, cors);
+  res.headers.append('Set-Cookie', cookie);
+  return res;
 }
 
 async function handleOrcidCallback(request, env, ip, ua, country) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  // Read once and carry it. Under §PER-FLOW-COOKIE the state names this flow's cookie, so
+  // every exit that expires that cookie needs it — pulling it out of the query string
+  // again at each exit is how one of them eventually gets missed and starts clearing
+  // nothing, silently.
+  const stateParam = url.searchParams.get('state');
 
   if (error || !code) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
+    // §NONCE-CLEANUP. This is the abandoned-flow exit — ORCID's Deny button, or a bounce
+    // back with no code. The state is never consumed on this path, so the cookie is
+    // expired only when the echoed state proves it is this flow's own.
+    return await redirectOauthProviderError(
+      request, 'orcid', stateParam,
+      `${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`
+    );
   }
+
+  // State first, before the token exchange, and required for BOTH branches. The
+  // old code read the state only after exchanging the code and treated a missing
+  // or unknown one as "not a link request", falling through to a plain login —
+  // which is precisely the CSRF sign-in an attacker gets by mailing a victim a
+  // callback URL holding the attacker's code. Checking here also means a forged
+  // callback never burns a live authorization code at ORCID.
+  const stateRec = await consumeApiOauthState(request, env, 'orcid', stateParam);
+  if (!stateRec) {
+    // Still deliberately expires nothing (§NONCE-CLEANUP). The reason used to be that a
+    // shared cookie name made this the one exit reachable while holding a DIFFERENT,
+    // still-live flow's nonce, so clearing would take a second tab's sign-in down with it.
+    // §PER-FLOW-COOKIE removed that hazard — the only cookie this request could clear is
+    // the one named for its own state. Leaving it alone anyway: reaching here means the
+    // state matched no live row and the nonce under its name did not hash to it, i.e. the
+    // cookie is either absent or something this browser did not get from /start, and
+    // deleting it buys the user nothing. It times out inside ten minutes either way.
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=state_invalid`, 302);
+  }
+  // Set by handleOrcidLinkInit only; a plain sign-in state carries user_id NULL.
+  const linkingUserId = stateRec.user_id || null;
 
   // Exchange code for token
   const tokenRes = await fetch('https://orcid.org/oauth/token', {
@@ -789,25 +1349,16 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   });
 
   if (!tokenRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 302);
+    // §NONCE-CLEANUP: the state was consumed above, so the cookie is spent no matter what
+    // ORCID's token endpoint said. Left live it would fail the user's next link attempt.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 'orcid', stateParam);
   }
 
   const tokenData = await tokenRes.json();
   const orcidId = tokenData.orcid;
   const userName = tokenData.name || 'ORCID User';
 
-  // Check for link state (user is linking ORCID to existing account)
-  const stateToken = url.searchParams.get('state');
-  let linkingUserId = null;
-  if (stateToken) {
-    const stateRec = await env.DB.prepare(
-      'SELECT * FROM oauth_state WHERE state = ? AND provider = ? AND expires_at > datetime("now")'
-    ).bind(stateToken, 'orcid').first();
-    if (stateRec) {
-      linkingUserId = stateRec.user_id;
-      await env.DB.prepare('DELETE FROM oauth_state WHERE state = ?').bind(stateToken).run();
-    }
-  }
+  // (linkingUserId came from the state consumed above, before the exchange.)
 
   // Check if anyone already has this ORCID iD linked
   let user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id = ?').bind(orcidId).first();
@@ -815,24 +1366,50 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   if (linkingUserId) {
     // Linking mode: tie this ORCID to the specified user
     if (user && user.id !== linkingUserId) {
-      return Response.redirect(`${SITE_URL}/pages/account?oauth_error=orcid_already_linked_to_another_account`, 302);
+      // §NONCE-CLEANUP: state consumed, cookie spent. Whoever hits this sees an error and
+      // will very likely click "Link ORCID" again straight away — with the old cookie still
+      // in place that retry failed as state_invalid, i.e. a second, unrelated error.
+      return redirectExpiringOauthState(`${SITE_URL}/pages/account?oauth_error=orcid_already_linked_to_another_account`, 'orcid', stateParam);
     }
     // Fetch and store ORCID profile data
     const profile = await fetchOrcidProfile(orcidId);
     const profileJson = profile ? JSON.stringify(profile) : null;
     await env.DB.prepare('UPDATE users SET orcid_id = ?, orcid_profile_json = ? WHERE id = ?')
       .bind(orcidId, profileJson, linkingUserId).run();
-    return Response.redirect(`${SITE_URL}/pages/account?orcid_linked=1`, 302);
+    // §NONCE-CLEANUP: the link succeeded, so this nonce has done its job and must not be
+    // left to mismatch the next flow this browser starts.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/account?orcid_linked=1`, 'orcid', stateParam);
   }
 
   if (!user) {
     // No session and no existing link → fetch profile and redirect to registration
     const profile = await fetchOrcidProfile(orcidId);
+    // The ORCID iD must reach /register as PROOF, not as a value the browser can retype.
+    // oauth_id below stays for display only; orcid_prefill is an HMAC-signed 10-minute
+    // token minted HERE — the one place that has actually completed ORCID's OAuth.
+    // Audience 'api': this token authorizes a link on api.hfdatalibrary.com and nowhere
+    // else, and it only works in THIS browser (the nonce cookie set on the redirect).
+    const orcidProof = await mintOrcidPrefill(env, orcidId, profile?.fullName || userName, 'api');
+    // mintOrcidPrefill returns null only when this worker has no CONSENT_HMAC_SECRET
+    // bound (or the iD is not ORCID-shaped) — a configuration fault, not anything the
+    // person in front of the browser did or can fix. Round 3 turned that into
+    // oauth_error=orcid_link_unavailable, which is a dead end: ORCID sign-up becomes
+    // 100% unavailable, with no path to an account at all, for as long as the secret
+    // is missing. Carry on to the registration form without a token instead — an
+    // account with no ORCID link is a working account, and the user can link ORCID
+    // later from /pages/account. The flag below lets the page say so; the log line
+    // is how we find out the secret is gone, since nobody will report "my ORCID
+    // wasn't linked" as a fault.
+    if (!orcidProof) {
+      console.log(JSON.stringify({ evt: 'orcid_prefill_mint_failed', orcid: orcidId }));
+    }
     const params = new URLSearchParams({
       oauth_provider: 'orcid',
       oauth_id: orcidId,
       oauth_name: profile?.fullName || userName
     });
+    if (orcidProof) params.set('orcid_prefill', orcidProof.token);
+    else params.set('orcid_link_unavailable', '1');
     if (profile?.currentEmployment?.[0]?.organization) {
       params.set('oauth_institution', profile.currentEmployment[0].organization);
     }
@@ -845,12 +1422,47 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
     if (profile?.emails?.[0]) {
       params.set('oauth_email', profile.emails[0]);
     }
-    return Response.redirect(`${SITE_URL}/pages/download?${params.toString()}#register`, 302);
+    // Hand-built, not Response.redirect(): that helper freezes its headers, and
+    // without the nonce cookie riding along the prefill token is only half bound —
+    // verify has nothing to match sha256(nonce) against. The prefill cookie goes out
+    // only when there is a token to bind: on the degraded path above there is no
+    // nonce, and shipping a cookie that names no token would just sit in the browser
+    // and mismatch the next real flow.
+    const headers = new Headers({
+      'Location': `${SITE_URL}/pages/download?${params.toString()}#register`,
+      'Cache-Control': 'no-store'
+    });
+    // The sign-in state was consumed at the top of this handler, so its cookie is
+    // spent — expire it rather than leaving it to sit for the rest of its 10 minutes.
+    // Under a shared cookie name this was the cleanup that mattered most: a user who
+    // tried ORCID sign-in, found they had no linked account, signed in with a password
+    // and then clicked "Link ORCID" arrived at the callback still holding this leftover,
+    // which could not match the link's state, and the link died at state_invalid for
+    // reasons entirely invisible to them. §PER-FLOW-COOKIE ends that class of failure —
+    // the leftover no longer occupies the name the link reads — so what is left here is
+    // simple hygiene: a spent credential should not outlive the flow that minted it.
+    // (The literal became expiredOauthStateCookie so the attributes cannot drift apart
+    // between the exits that send it: an expiry whose Path or name differed from the live
+    // cookie's would delete nothing at all.)
+    // Prefill cookie first, expiry second: two Set-Cookie headers on one response is
+    // ordinary (Headers.append keeps them separate), but if anything ever folded them
+    // into one line a browser would keep only the first — and the prefill nonce is the
+    // one that matters, while a stale state cookie merely times out on its own.
+    if (orcidProof) headers.append('Set-Cookie', orcidProof.cookie);
+    // Guarded because the name is derived from the state now: no name, nothing to send.
+    // Unreachable on this path — consume matched a row keyed by this very state — but an
+    // append of null would put a literal "null" in the header rather than skip it.
+    const spentState = expiredOauthStateCookie('orcid', stateParam);
+    if (spentState) headers.append('Set-Cookie', spentState);
+    return new Response(null, { status: 302, headers });
   }
 
   // Existing user with linked ORCID — log them in
   if (!user.is_active) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 302);
+    // §NONCE-CLEANUP: state consumed, cookie spent. If the account is later reactivated
+    // the same browser may still be inside the ten minutes, and the link it then tries is
+    // the flow that cannot replace this cookie for itself.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'orcid', stateParam);
   }
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
@@ -860,32 +1472,103 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
 
   const { sessionId } = await createSession(env, user.id, ip, ua);
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
-      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`
-    }
+  // Two Set-Cookie headers now, so this has to be a Headers object: an object literal can
+  // only carry one value per name, and writing the second as a comma-joined string would
+  // produce a single malformed header that browsers reject wholesale — including the
+  // session cookie. Session first, spent nonce second, for the same reason the
+  // registration branch above orders its pair that way: if anything ever folds them
+  // together, the one that must survive is the one that keeps the user signed in.
+  const headers = new Headers({
+    // §SESSION-IN-QUERY — a known weakness, deliberately left in place for now.
+    //
+    // hfdatalibrary.com genuinely needs this value: the hfd_session cookie below is
+    // host-only to api.hfdatalibrary.com, and download.html authenticates purely from
+    // localStorage, so the redirect is the only channel that gets the id to the page.
+    // Carrying it as `?session=` writes a 30-day, full-scope bearer credential verbatim
+    // into the Cloudflare Pages access log and into browser history before the page can
+    // scrub the address bar, and it rides out in the Referer of anything that page loads.
+    // The fix is understood and is not in doubt: move it to the fragment
+    // (`#oauth_success=1&session=…`), which is never sent to any server, exactly as
+    // mintSsoCode already does for the family SSO code.
+    //
+    // It is NOT applied here because it cannot be applied here alone. The Worker and the
+    // Pages site are two parallel jobs in .github/workflows/deploy.yml; they are not
+    // atomic and Pages propagation lags. A worker that redirects to a fragment while the
+    // live download.html still reads params.get('session') sends every Google (364 of 572
+    // users) and ORCID sign-in to the download page silently signed OUT, with no error
+    // shown — the cookie cannot rescue it because /v1/auth/me is fetched without
+    // credentials. Deploy order decides whether sign-in works, and we do not control it.
+    //
+    // Revisit as ONE coordinated change: ship a download.html that reads the fragment and
+    // falls back to the query string, wait for Pages to propagate and verify it live, and
+    // only then flip this line. Do not flip it in the same push.
+    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store'
   });
+  headers.append('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
+  // §NONCE-CLEANUP: the ordinary success path left the spent nonce behind too — the most
+  // travelled exit in the handler. With a shared name it was also the biggest single
+  // source of the leftover that broke the next "Link ORCID"; §PER-FLOW-COOKIE means the
+  // link no longer reads this name, so this is now about not leaving a used credential in
+  // the browser and not letting per-flow cookies pile up. Guarded for the same reason as
+  // the registration branch: no state, no name, nothing to append.
+  const spentState = expiredOauthStateCookie('orcid', stateParam);
+  if (spentState) headers.append('Set-Cookie', spentState);
+  return new Response(null, { status: 302, headers });
 }
 
-function handleGoogleStart(env, cors) {
+async function handleGoogleStart(env, cors) {
+  const { state, cookie } = await mintApiOauthState(env, 'google', null);
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', 'openid email profile');
   url.searchParams.set('redirect_uri', OAUTH_REDIRECT_GOOGLE);
   url.searchParams.set('access_type', 'online');
-  return Response.redirect(url.toString(), 302);
+  url.searchParams.set('state', state);
+  // Hand-built for the same reason as handleOrcidStart: Response.redirect()
+  // freezes its headers, and without the nonce cookie the callback has nothing to
+  // match the state against.
+  return new Response(null, {
+    status: 302,
+    headers: { 'Location': url.toString(), 'Set-Cookie': cookie, 'Cache-Control': 'no-store' }
+  });
 }
 
 async function handleGoogleCallback(request, env, ip, ua, country) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  // Read once and carry it, as in handleOrcidCallback: §PER-FLOW-COOKIE derives this
+  // flow's cookie name from the state, so every exit that clears the cookie needs it.
+  const stateParam = url.searchParams.get('state');
 
   if (error || !code) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`, 302);
+    // §NONCE-CLEANUP, the same defect as handleOrcidCallback's error exit, fixed the same
+    // way. A cancelled consent screen is the commonest way to abandon the flow 364 of 572
+    // users take, so this is where the ten-minute orphans come from — and since names are
+    // now per flow, an orphan is never overwritten by the next click, only cleared here or
+    // by its own Max-Age. Expired only when the state Google echoes back with the error
+    // proves the cookie belongs to this flow.
+    return await redirectOauthProviderError(
+      request, 'google', stateParam,
+      `${SITE_URL}/pages/download?oauth_error=${encodeURIComponent(error || 'missing_code')}`
+    );
+  }
+
+  // No state was ever sent or checked here, so this handler would exchange any
+  // code anyone put in the URL and hand back a session cookie for whatever
+  // account that code resolved to. Consume the state — and with it the proof that
+  // this browser is the one that started the flow — before touching Google.
+  const st = await consumeApiOauthState(request, env, 'google', stateParam);
+  if (!st) {
+    // Clears nothing, deliberately — see the matching exit in handleOrcidCallback. It used
+    // to be the one exit reachable while holding a second tab's live nonce; §PER-FLOW-COOKIE
+    // means a second tab's nonce is under a different name and cannot be touched from here
+    // at all. Left as-is because clearing the state's own cookie on a failed compare gains
+    // the user nothing and this exit is the one that must never make things worse.
+    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=state_invalid`, 302);
   }
 
   // Exchange code for token
@@ -902,7 +1585,9 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   });
 
   if (!tokenRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 302);
+    // §NONCE-CLEANUP: the state was consumed above, so the cookie is spent regardless of
+    // what Google's token endpoint returned, and nothing should still be holding it.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=token_exchange_failed`, 'google', stateParam);
   }
 
   const tokenData = await tokenRes.json();
@@ -912,14 +1597,16 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
   });
   if (!userRes.ok) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=userinfo_failed`, 302);
+    // §NONCE-CLEANUP: state consumed, cookie spent.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=userinfo_failed`, 'google', stateParam);
   }
   const profile = await userRes.json();
   const email = (profile.email || '').toLowerCase();
   const name = profile.name || email.split('@')[0];
 
   if (!email) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=no_email`, 302);
+    // §NONCE-CLEANUP: state consumed, cookie spent.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=no_email`, 'google', stateParam);
   }
 
   // Look up existing user by email
@@ -954,10 +1641,107 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
         adminNotificationEmail({ name, email, institution: '(via Google)', country, role: 'Not specified' }, ip, ua, country)
       );
     } catch (e) {}
+  } else {
+    // AN ACCOUNT WITH THIS EMAIL ALREADY EXISTS. Until 2026-07-31 we simply logged into it,
+    // which is the account-takeover pattern known as pre-hijacking:
+    //
+    //   1. Anyone registers with a stranger's address. handleRegister creates the row
+    //      immediately with email_verified = 0 — owning the mailbox is never required.
+    //   2. The real owner later clicks "Sign in with Google".
+    //   3. The lookup above finds that row and signs them straight into it.
+    //   4. Whoever planted it still knows the password, so they keep access to the victim's
+    //      account, its API key and its download history.
+    //
+    // Academic email addresses are printed on faculty pages, so step 1 is easy here. Found
+    // when a real user hit the registration lockout, switched to Google, and landed in the
+    // account he had half-created.
+    //
+    // Google's userinfo carries verified_email, which is genuine proof of mailbox control —
+    // strictly better proof than an unverified local password. So when the local account has
+    // NOT proved ownership and Google HAS, hand the account to the Google owner and
+    // invalidate everything the planter could still be holding.
+    //
+    // THE API KEY MUST ROTATE TOO. handleRegister issues a live key at sign-up, before any
+    // verification. It is inert only because every download route refuses an unverified
+    // account — so setting email_verified = 1 below is precisely what would switch the
+    // planter's key ON. Rotating the password while leaving the key is not remediation, it
+    // is a downgrade from "harmless" to "armed".
+    const googleVerified = profile.verified_email === true || profile.verified_email === 'true';
+
+    if (!user.email_verified) {
+      if (!googleVerified) {
+        // Neither side has proved it owns this mailbox — refuse rather than guess.
+        // §NONCE-CLEANUP: state consumed, cookie spent.
+        return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=email_unverified`, 'google', stateParam);
+      }
+      const rotatedHash = await hashPassword(generateId() + generateId());
+      await env.DB.prepare(
+        'UPDATE users SET password_hash = ?, ' +
+        'email_verified = 1, google_id = COALESCE(google_id, ?) WHERE id = ?'
+      ).bind(rotatedHash, profile.id, user.id).run();
+      // Hand over EVERYTHING, not just the password. The first version of this fix rotated
+      // the password and the API key and deleted `sessions`, which left four other ways
+      // back in: the family SSO refresh chain (30 more days of access tokens for every
+      // site), any pending-2FA row (a 10-minute re-entry window), an ORCID iD the planter
+      // had linked (which is itself a login credential), and a TOTP secret they enrolled
+      // (which locks the rightful owner out of password login permanently).
+      // The api_key must rotate here for a subtle reason: handleRegister issues a live key
+      // at sign-up, inert only because download routes refuse unverified accounts — so the
+      // `email_verified = 1` on the line above is exactly what would arm the planter's key.
+      //
+      // WHY THIS IS ALSO ANNOUNCED BY EMAIL. email_verified = 0 does not only mean "planted".
+      // Accounts created THROUGH ORCID are born unverified by design, so for a user who is in
+      // both groups — one of the 16 rows with an orcid_id and one of the 35 that never had
+      // their verification mail clicked — this branch replaces their password, their API key
+      // and their own ORCID link. Their next "Sign in with ORCID" then matches nothing and
+      // sends them to a registration form that rejects their address as already taken.
+      //
+      // The database cannot tell that user apart from a squatter who linked their own ORCID
+      // to a stranger's address: both are a proven ORCID iD sitting on an unverified row. So
+      // the clearing stays — leaving it would hand a squatter a second, still-working way in,
+      // which is the entire point of the handover. What does NOT have to stay is doing it
+      // silently. Telling the owner turns an invisible breakage into a recoverable one, and
+      // announcing a credential change is right even when nothing suspicious happened.
+      const hadOrcid = !!user.orcid_id;
+      const hadTotp = !!user.totp_enabled;
+      await revokeAllUserCredentials(env, user.id, {
+        rotateApiKey: true,
+        clearForeignIdentities: true,
+        clearTotp: true,
+      });
+      // Non-blocking: a mail failure must never break a sign-in that has already succeeded.
+      try {
+        const changed = ['your password', 'your API key']
+          .concat(hadOrcid ? ['your linked ORCID iD'] : [])
+          .concat(hadTotp ? ['your two-factor authentication'] : [])
+          .join(', ');
+        await sendEmail(
+          env, email,
+          'Your HF Data Library account was secured',
+          '<p>Hello' + (user.name ? ' ' + escapeHtml(user.name) : '') + ',</p>' +
+          '<p>You just signed in to HF Data Library with Google. This address already had an ' +
+          'account that had never been confirmed by email, so we transferred it to you and ' +
+          'reset ' + escapeHtml(changed) + '.</p>' +
+          '<p>You can keep signing in with Google. To use a password instead, choose ' +
+          '&ldquo;Forgot password&rdquo; on the sign-in page.' +
+          (hadOrcid ? ' If you used ORCID with this account, please link it again from your ' +
+            'account page.' : '') + '</p>' +
+          '<p>If this was not you, reply to this message immediately.</p>',
+          FROM_EMAIL, 'HF Data Library'
+        );
+      } catch (e) { /* non-fatal */ }
+      user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+    } else if (!user.google_id) {
+      // Verified account signing in with Google for the first time: record the link so the
+      // pairing is visible, but change nothing else.
+      await env.DB.prepare('UPDATE users SET google_id = ? WHERE id = ?')
+        .bind(profile.id, user.id).run();
+    }
   }
 
   if (!user.is_active) {
-    return Response.redirect(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 302);
+    // §NONCE-CLEANUP: state consumed, cookie spent.
+    return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'google', stateParam);
   }
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
@@ -967,13 +1751,28 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
 
   const { sessionId } = await createSession(env, user.id, ip, ua);
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
-      'Set-Cookie': `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`
-    }
+  // A Headers object because there are two Set-Cookie values now and an object literal
+  // holds only one per name; session first, spent nonce second, so the cookie that keeps
+  // the user signed in is the one that survives if they are ever folded together.
+  const headers = new Headers({
+    // §SESSION-IN-QUERY — see handleOrcidCallback for the full reasoning. Short form:
+    // `?session=` leaks a 30-day full-scope credential into the Pages access log, browser
+    // history and any outgoing Referer, and the fragment is the right place for it — but
+    // the Worker and Pages deploy in parallel, so moving it before the live download.html
+    // can read a fragment signs 364 Google users out with no error. Move both together.
+    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store'
   });
+  headers.append('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
+  // §NONCE-CLEANUP: success left the spent nonce behind as well, and this is the exit
+  // almost every one of the 364 Google users reaches — so it is the single largest source
+  // of ten-minute orphans, and since §PER-FLOW-COOKIE gave every flow its own name, the
+  // next /start no longer overwrites them. Clearing here is what keeps a browser from
+  // carrying one dead cookie per successful sign-in. Guarded: no state, no name.
+  const spentState = expiredOauthStateCookie('google', stateParam);
+  if (spentState) headers.append('Set-Cookie', spentState);
+  return new Response(null, { status: 302, headers });
 }
 
 // ══════════════════════════════════════
@@ -1280,9 +2079,14 @@ async function handleResendWebhook(request, env) {
         env,
         ADMIN_EMAILS[0],
         `[HFDL] Subscriber auto-removed (${reason}): ${email}`,
-        `<p><strong>${email}</strong> was automatically unsubscribed from the newsletter.</p>` +
-        `<p><strong>Reason:</strong> ${reason}${detail ? ' — ' + detail : ''}</p>` +
-        `<p style="color:#6b7280;font-size:13px;">Triggered by Resend webhook event <code>${type}</code>. ` +
+        // Signature-verified, but that only proves Resend sent it — not that the contents are
+        // safe. `detail` is the receiving mail server's own bounce text, and `email` is a
+        // user-chosen address that the registration regex lets carry < > " and '. Both are
+        // escaped; `type`/`reason` are already confined to the three-value allow-list above,
+        // and are escaped too so nobody has to re-derive which of the four is which.
+        `<p><strong>${escapeHtml(email)}</strong> was automatically unsubscribed from the newsletter.</p>` +
+        `<p><strong>Reason:</strong> ${escapeHtml(reason)}${detail ? ' — ' + escapeHtml(detail) : ''}</p>` +
+        `<p style="color:#6b7280;font-size:13px;">Triggered by Resend webhook event <code>${escapeHtml(type)}</code>. ` +
         `Resend has also added this address to its suppression list, so future sends skip it automatically.</p>`
       );
     }
@@ -1291,12 +2095,16 @@ async function handleResendWebhook(request, env) {
   return new Response(JSON.stringify({ received: true, type, removed }), { status: 200, headers: jsonHeaders });
 }
 
+// `name` is the registrant's own string. It is Latin-filtered on the api.* and accounts.*
+// register paths, but not on the ORCID auto-create path, and rows predating the filter are
+// still in the table — so the greeting is escaped rather than trusted. Same reasoning as
+// adminNotificationEmail; the difference is only who receives the message.
 function verificationEmail(name, token) {
   const link = SITE_URL + '/pages/verify?token=' + token;
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
       <h2 style="color: #1a2332;">Welcome to ElkassabgiData</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtml(name)},</p>
       <p>Thank you for creating your free <strong>ElkassabgiData</strong> account. One login and one API key work across the whole family &mdash; the <a href="https://hfdatalibrary.com" style="color: #2563eb;">HF Data Library</a> (1-minute U.S. equities) and the <a href="https://econdatalibrary.com" style="color: #2563eb;">Econ Data Library</a> (global economic &amp; financial data).</p>
       <p>Please verify your email address to activate your account and start downloading data.</p>
       <p style="text-align: center; margin: 2rem 0;">
@@ -1309,20 +2117,30 @@ function verificationEmail(name, token) {
     </div>`;
 }
 
+// Every value below is written by the person registering, and this message arrives from
+// noreply@ with the real "Open Admin Panel" button under it — a template the recipient has
+// every reason to trust. Until 2026-07-31 all eight were interpolated raw. `ua` is the
+// User-Agent header verbatim (never validated, never capped) and `email` only has to survive
+// a regex that permits < > " and ', so an anonymous registration — or a Google/ORCID callback,
+// which needs no CAPTCHA — could paste a lookalike sign-in button and a tracking pixel into
+// the one inbox that can dump every user's API key. The name/institution/country/role fields
+// arrive unfiltered on the ORCID auto-create path too (they come from the attacker's own
+// editable ORCID profile). escapeHtml on all eight, the way dailyDigestEmail already does it;
+// the UA is capped as well so a megabyte of junk cannot bury the rest of the table.
 function adminNotificationEmail(user, ip, ua, country) {
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
       <h2 style="color: #1a2332;">New HF Data Library Registration</h2>
       <p>A new user has registered:</p>
       <table style="width: 100%; border-collapse: collapse; margin: 1rem 0;">
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Name</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${user.name}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Email</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${user.email}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Institution</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${user.institution}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Country</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${user.country}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Role</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${user.role}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>IP Address</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${ip}</td></tr>
-        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>CF Country</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${country}</td></tr>
-        <tr><td style="padding: 6px 12px;"><strong>User Agent</strong></td><td style="padding: 6px 12px; font-size: 0.85rem; color: #6b7280;">${ua}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Name</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(user.name)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Email</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(user.email)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Institution</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(user.institution)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Country</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(user.country)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>Role</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(user.role)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>IP Address</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(ip)}</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;"><strong>CF Country</strong></td><td style="padding: 6px 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(country)}</td></tr>
+        <tr><td style="padding: 6px 12px;"><strong>User Agent</strong></td><td style="padding: 6px 12px; font-size: 0.85rem; color: #6b7280;">${escapeHtml(String(ua ?? '').slice(0, 200))}</td></tr>
       </table>
       <p style="text-align: center; margin: 2rem 0;">
         <a href="https://hfdatalibrary.com/pages/admin" style="background: #1a2332; color: #d4a843; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Open Admin Panel</a>
@@ -1487,12 +2305,14 @@ function dailyDigestEmail(s) {
     </div>`;
 }
 
+// Escaped for the same reason as verificationEmail — `name` is a user-written column, and a
+// password-reset message is the highest-value place to hang a fake button.
 function resetEmail(name, token) {
   const link = SITE_URL + '/pages/reset?token=' + token;
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
       <h2 style="color: #1a2332;">Password Reset</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtml(name)},</p>
       <p>You requested a password reset for your HF Data Library account. Click the button below to set a new password. This link expires in 1 hour.</p>
       <p style="text-align: center; margin: 2rem 0;">
         <a href="${link}" style="background: #2563eb; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Reset Password</a>
@@ -1540,11 +2360,30 @@ async function createSession(env, userId, ip, ua) {
   return { sessionId, expires };
 }
 
+// Cookie lookup with a NAME BOUNDARY, shared by every session-cookie read.
+// Until 2026-07-31 all seven call sites did `cookie.match(/hfd_session=(...)/)`
+// (and the ekd_session equivalent), which matches the name ANYWHERE in the header.
+// A cookie called `x_hfd_session` — which any sibling *.hfdatalibrary.com or
+// *.elkassabgidata.com host can set on us — therefore matched first and shadowed
+// the real one: session substitution on one side, and on the other a lockout we
+// could not clear, because every `Max-Age=0` response we send names only the real
+// cookie and can never delete a differently-named shadow. Anchoring to
+// start-of-header or "; " means only the actual cookie can match.
+// The value pattern must match the WHOLE value (hence the trailing `;`-or-end):
+// a malformed cookie now yields null, so callers fall through to their
+// Authorization-header path instead of being handed a truncated prefix that
+// could never resolve to a session.
+function readCookie(header, name, valuePattern) {
+  const m = String(header || '').match(
+    new RegExp('(?:^|;\\s*)' + name + '=(' + valuePattern + ')(?:;|$)')
+  );
+  return m ? m[1] : null;
+}
+
 async function getSessionUser(request, env) {
   // Check cookie first
   const cookie = request.headers.get('cookie') || '';
-  const match = cookie.match(/hfd_session=([a-f0-9]+)/);
-  let sessionId = match ? match[1] : null;
+  let sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
 
   // Check Authorization header as fallback
   if (!sessionId) {
@@ -1561,12 +2400,17 @@ async function getSessionUser(request, env) {
   // exposed under distinct session_* names. The `kind IS NULL OR kind = 'web'`
   // predicate means family_access / idp_master tokens (minted from M2) can never
   // authenticate a full/web session here — structural, not by convention.
+  //
+  // §EXPIRY-COMPARE: datetime() on both sides. createSession writes this column
+  // with toISOString() and createIdpSession writes it with datetime() arithmetic,
+  // so this one table is read in both formats and only the canonicalising compare
+  // is right for both. Bare, a 30-day web session ran 30 days plus up to a day.
   const session = await env.DB.prepare(
     "SELECT u.*, s.user_id AS user_id, s.id AS session_id, " +
     "s.kind AS session_kind, s.audience AS session_audience, " +
     "s.expires_at AS session_expires_at " +
     "FROM sessions s JOIN users u ON s.user_id = u.id " +
-    "WHERE s.id = ? AND s.expires_at > datetime('now') " +
+    "WHERE s.id = ? AND datetime(s.expires_at) > datetime('now') " +
     "AND (s.kind IS NULL OR s.kind = 'web')"
   ).bind(sessionId).first();
 
@@ -1606,9 +2450,14 @@ async function touchApiKeyExpiry(env, session) {
     const userId = session.user_id || session.id;
     if (!userId) return;
     const next = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+    // §EXPIRY-COMPARE: datetime() on the stored side. This column is ISO text, so
+    // the bare compare made every key look up to a day further from expiry than it
+    // was, and the "is it near expiry" gate opened a day late. Harmless here — the
+    // only cost was a delayed no-op UPDATE — but it is the same defect, and leaving
+    // one bare compare behind is how the next reader concludes the pattern is fine.
     await env.DB.prepare(
       'UPDATE users SET api_key_expires_at = ? WHERE id = ? AND ' +
-      "(api_key_expires_at IS NULL OR api_key_expires_at < datetime('now', ?))"
+      "(api_key_expires_at IS NULL OR datetime(api_key_expires_at) < datetime('now', ?))"
     ).bind(next, userId, '+' + Math.ceil(API_KEY_DAYS / 2) + ' days').run();
   } catch (_e) {
     // Non-fatal by design — a failed refresh must never log the user out.
@@ -1639,24 +2488,35 @@ async function handleSSO(request, env) {
   return new Response(null, { status: 302, headers: { 'Location': dest, 'Cache-Control': 'no-store' } });
 }
 
-async function getUserByApiKey(request, env) {
+// opts.allowQueryKey — honour ?api_key= in the URL. Off unless the caller asks
+// for it, and only the data routes ask, because a plain browser navigation to a
+// download link has no way to set a header. Reading it unconditionally meant the
+// key was accepted on every route requireAuth guards, including /v1/admin/*: a
+// credential in a query string is written into browser history, bookmarks, the
+// Referer header of anything the page then links to, and every proxy/CDN access
+// log, so the routes it must never reach are exactly the ones that change state
+// or read other people's rows.
+async function getUserByApiKey(request, env, opts) {
   // Check header first
   let apiKey = request.headers.get('X-API-Key');
   // Fallback to query parameter (for direct browser downloads)
-  if (!apiKey) {
+  if (!apiKey && opts && opts.allowQueryKey) {
     const url = new URL(request.url);
     apiKey = url.searchParams.get('api_key');
   }
   if (!apiKey) return null;
-  // Check expiration
+  // Check expiration. §EXPIRY-COMPARE: datetime() on the stored side — the column
+  // is ISO text, so bare this accepted a lapsed key until the end of its UTC day.
   return await env.DB.prepare(
-    'SELECT * FROM users WHERE api_key = ? AND is_active = 1 AND (api_key_expires_at IS NULL OR api_key_expires_at > datetime("now"))'
+    'SELECT * FROM users WHERE api_key = ? AND is_active = 1 AND (api_key_expires_at IS NULL OR datetime(api_key_expires_at) > datetime("now"))'
   ).bind(apiKey).first();
 }
 
-async function requireAuth(request, env) {
+// opts is forwarded verbatim to getUserByApiKey. Callers that pass nothing —
+// which is every mutation route — get header-only key auth, never ?api_key=.
+async function requireAuth(request, env, opts) {
   let user = await getSessionUser(request, env);
-  if (!user) user = await getUserByApiKey(request, env);
+  if (!user) user = await getUserByApiKey(request, env, opts);
   return user;
 }
 
@@ -1682,9 +2542,9 @@ function b64url(bytes) {
 }
 
 // 128-bit base64url — the raw factory for all M2 tokens. Its charset can never
-// be captured by getSessionUser's /hfd_session=([a-f0-9]+)/ cookie regex, so an
-// M2 token can't even be parsed as a web session id (defense in depth over the
-// kind predicate).
+// be captured by the '[a-f0-9]+' value pattern getSessionUser passes to
+// readCookie, so an M2 token can't even be parsed as a web session id (defense
+// in depth over the kind predicate).
 function generateToken() {
   return b64url(crypto.getRandomValues(new Uint8Array(16)));
 }
@@ -1719,11 +2579,15 @@ async function validateFamilyToken(request, env) {
   const raw = extractBearer(request);
   if (!raw) return null;
   const idHash = await sha256Hex(raw);
+  // §EXPIRY-COMPARE: datetime() on both sides. mintFamilyTokens writes this row in
+  // space format, so it was already compared correctly — the wrap is what keeps it
+  // correct now that the same column is also read for ISO-format web sessions, and
+  // it is why the read side could not simply bind an ISO 'now' instead.
   const row = await env.DB.prepare(
     "SELECT u.*, s.user_id AS user_id, s.id AS session_id, s.kind AS session_kind, " +
     "s.audience AS session_audience, s.expires_at AS session_expires_at " +
     "FROM sessions s JOIN users u ON s.user_id = u.id " +
-    "WHERE s.id = ? AND s.kind = 'family_access' AND s.expires_at > datetime('now')"
+    "WHERE s.id = ? AND s.kind = 'family_access' AND datetime(s.expires_at) > datetime('now')"
   ).bind(idHash).first();
   if (!row || !row.is_active) return null;
   const origin = request.headers.get('Origin') || '';
@@ -1736,8 +2600,12 @@ async function validateFamilyToken(request, env) {
 
 // Data-route auth: a full session/api_key (full scope, keeps api_key) OR a
 // family token (reduced scope). Used ONLY by data handlers — never mutation/admin.
+// This is the ONLY place ?api_key= is still honoured: a download opened straight
+// from the address bar or a wget/curl one-liner cannot send X-API-Key, and those
+// URLs are already in users' scripts. Nothing here mutates state or reveals
+// another account.
 async function requireDataAuth(request, env) {
-  return (await requireAuth(request, env)) || (await validateFamilyToken(request, env));
+  return (await requireAuth(request, env, { allowQueryKey: true })) || (await validateFamilyToken(request, env));
 }
 
 // §6 fail-closed IdP router for accounts.elkassabgidata.com. Serves ONLY the
@@ -1841,8 +2709,10 @@ async function explainAuthFailure(request, env) {
 // ══════════════════════════════════════
 
 async function handleRegister(request, env, cors, ip, ua, country) {
-  // Rate limit
-  const rl = await checkRateLimit(env, ip, 'api:register');
+  // Flood guard only — generous on purpose. The real "how many accounts may come from this
+  // IP" cap is charged further down, immediately before the INSERT, so honest retries after
+  // a typo or a CAPTCHA failure cost nothing. See the api:register notes in RATE_LIMITS.
+  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:register:burst');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   let body;
@@ -1857,7 +2727,50 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   const { name, email, password, institution, role } = body;
   const userCountry = body.country || country;
   const newsletter = body.newsletter ? 1 : 0;
-  const orcidFromOauth = body.orcid_id || null;
+  // ORCID iD AT SIGN-UP MUST BE PROVEN. Until 2026-07-31 this read body.orcid_id straight
+  // from the request, and handleOrcidCallback resolves a login with
+  //     SELECT * FROM users WHERE orcid_id = ?
+  // so an unproven claim here is a login credential there. The attack needed no mailbox and
+  // no interaction from the victim:
+  //   1. POST /register with orcid_id set to a stranger's ORCID iD.
+  //   2. That person later clicks "Sign in with ORCID".
+  //   3. The lookup finds the ATTACKER's row and signs the victim into it.
+  // ORCID iDs are published on every paper an academic writes, so step 1 costs nothing —
+  // this is the Google pre-hijack again, but through an identifier that is public by design.
+  //
+  // fetchOrcidProfile is not a defence: it proves the iD EXISTS, never that the registrant
+  // owns it. Only completing ORCID's OAuth proves that, and handleOrcidCallback now mints an
+  // HMAC-signed 10-minute token when it does. Accept the token; ignore body.orcid_id.
+  //
+  // The signature alone was still not enough: it proved somebody had completed ORCID,
+  // not that THIS browser had, so the token could be mailed to a stranger and spent on
+  // their brand-new account. Audience 'api' plus the __Host- nonce cookie make it
+  // unusable anywhere but the browser that earned it (download.html sends the fetch
+  // with credentials so the cookie rides along), and the row is burned at the INSERT.
+  const orcidPrefill = await verifyOrcidPrefill(env, request, body.orcid_prefill, 'api');
+  // A prefill that was SENT but does not verify used to return 400 right here. That was
+  // wrong: it turned a registration that has always succeeded into a failure. The worker
+  // this replaces just created the account with orcid_id NULL, and two ordinary people
+  // hit the 400. (1) The token lives ORCID_PREFILL_TTL_MS = 10 minutes, counted from the
+  // ORCID callback — that is, from the moment the EMPTY form first appears — and the form
+  // asks for name, email, a strength-checked password, institution, country, role and a
+  // Turnstile solve. Anyone slower than ten minutes lost the account, and could not even
+  // retry: download.html captures the token once at load and re-posts the same dead string,
+  // so "Create Account" failed identically until they restarted the ORCID flow, discarding
+  // everything they had typed. (2) The deploy window, §PF-LEGACY — pages and worker ship as
+  // separate jobs, so a token minted by the old worker was arriving in the new format check.
+  // Neither is a reason to refuse somebody an account.
+  //
+  // So: create it, leave orcid_id NULL, and SAY SO in the 201. Staying silent is not the
+  // alternative — the banner above the form has already promised "Your ORCID iD will be
+  // linked to this account. You will be able to sign in with ORCID next time", and it will
+  // not be, so the success response has to correct that promise. See the response body at
+  // the end of this function: api_key and session keep their exact shape (the deployed
+  // download.html keys its whole success branch off data.api_key), and the ORCID fields are
+  // purely additive, which is the only thing that is safe when the page and the worker
+  // deploy independently.
+  const orcidPrefillFailed = !!body.orcid_prefill && !orcidPrefill;
+  const orcidFromOauth = orcidPrefill ? orcidPrefill.orcidId : null;
 
   // If ORCID provided, fetch profile data too
   let orcidProfileJson = null;
@@ -1896,16 +2809,58 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     return jsonRes({ error: 'Email already registered. Please log in.' }, 409, cors);
   }
 
+  // One ORCID iD, one account — otherwise a second row silently shadows the first and the
+  // WHERE orcid_id = ? login above becomes ambiguous.
+  if (orcidFromOauth) {
+    const orcidTaken = await env.DB.prepare('SELECT id FROM users WHERE orcid_id = ?')
+      .bind(orcidFromOauth).first();
+    if (orcidTaken) {
+      return jsonRes({ error: 'That ORCID iD is already linked to an account. Please log in.' }, 409, cors);
+    }
+  }
+
+  // ACCOUNT CAP — charged here, not on entry. Everything above this line can reject a
+  // request for reasons that are the person's honest mistake (typo, weak password, CAPTCHA
+  // hiccup, a name we refuse for not being Latin script). Charging at the top made each of
+  // those cost one of three hourly attempts and locked real users out; because the key is
+  // the IP, one NAT'd department could be locked out by three fumbled sign-ups. Only
+  // accounts that actually get created count against this.
+  const acct = await checkRateLimit(env, rlIpKey(ip), 'api:register');
+  if (!acct.ok) return rateLimitResponse(acct.retryAfter, cors);
+
   const passwordHash = await hashPassword(password);
   const apiKey = 'hfd_' + generateId();
   const unsubscribeToken = generateId();
-  const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase()) ? 1 : 0;
+  // NO SELF-SERVICE ADMIN. This used to be `ADMIN_EMAILS.includes(email) ? 1 : 0`, so
+  // anyone who registered one of the two (published, guessable) owner addresses received
+  // is_admin = 1 from a public unauthenticated endpoint. The only thing preventing it was
+  // that rows for both addresses already exist and a duplicate email 409s first — one
+  // deleted row from a full console takeover. Admin is granted out-of-band now: by the
+  // authenticated admin PUT, or directly in D1. A registration form must never mint it.
+  const isAdmin = 0;
 
   const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
 
+  // Burn the prefill here, not at verify time: everything above can reject for an
+  // honest mistake (typo, weak password, CAPTCHA hiccup) and the retry must still
+  // carry a live token. From this line on the token is spent, so a replay — the same
+  // string posted twice — cannot mint a second account wearing the same ORCID iD.
+  // burnOrcidPrefill, not consumeOrcidPrefill: a §PF-LEGACY token never had a ledger row,
+  // and the raw burn answering "false" for a missing row would 409 the very first submit
+  // of an in-flight ORCID sign-up — the deploy-window failure again, one statement later.
+  if (!(await burnOrcidPrefill(env, orcidPrefill))) {
+    return jsonRes({ error: 'That ORCID confirmation has already been used. Please sign in with ORCID again.' }, 409, cors);
+  }
+
   await env.DB.prepare(
     'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
-  ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
+  // email_verified is 0 for EVERYONE, admins included. It used to be `isAdmin ? 1 : 0`, so
+  // registering with an address listed in ADMIN_EMAILS minted an is_admin = 1 account that
+  // was verified on the spot, without anyone ever proving they could read that mailbox.
+  // Both admin addresses are guessable, and the only thing standing in the way was that
+  // rows for them already exist (a duplicate email 409s above) — one deleted row and the
+  // console was open to whoever registered first. Admins verify by email like everyone else.
+  ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
 
@@ -1914,7 +2869,9 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     .bind(user.id, ip, ua, userCountry).run();
 
   // Send verification email (skip for admins — auto-verified)
-  if (!isAdmin) {
+  {
+    // Sent to EVERYONE now, admins included. Admin rows are no longer born verified, so an
+    // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString(); // 24 hours
     await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
@@ -1935,20 +2892,38 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // Create session
   const { sessionId, expires } = await createSession(env, user.id, ip, ua);
 
-  const res = jsonRes({
+  // The four original keys, unmoved and unrenamed. The download.html that is deployed
+  // RIGHT NOW decides success on `data.api_key` being truthy and then reads `data.session`;
+  // anything that shifted those would blank out the "Account created!" panel for every
+  // registrant during the window where the old page is talking to this worker.
+  const payload = {
     message: isAdmin ? 'Registration successful' : 'Registration successful. Please check your email to verify your account.',
     api_key: apiKey,
     session: sessionId,
     email_verified: isAdmin ? true : false
-  }, 201, cors);
+  };
+  // Additive, and only when the caller actually tried to bring an ORCID iD. An older page
+  // ignores unknown keys, so this can never break one; a page that knows them renders the
+  // notice next to the API key. orcid_linked is the machine-readable half — false is the
+  // honest answer to a form whose banner said the iD would be linked.
+  if (body.orcid_prefill) payload.orcid_linked = !!orcidFromOauth;
+  if (orcidPrefillFailed) {
+    payload.orcid_notice = ORCID_NOT_LINKED_NOTICE;
+    // Also folded into message, because a script POSTing /v1/auth/register directly prints
+    // message and nothing else. Telling only the browser would leave API callers with an
+    // account that silently lacks the ORCID link they asked for.
+    payload.message = payload.message + ' ' + ORCID_NOT_LINKED_NOTICE;
+  }
+  const res = jsonRes(payload, 201, cors);
 
   res.headers.set('Set-Cookie', `hfd_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
   return res;
 }
 
 async function handleLogin(request, env, cors, ip, ua, country) {
-  // Rate limit per IP
-  const rl = await checkRateLimit(env, ip, 'api:login');
+  // Peek only — a correct password must not spend anyone's budget. The charge happens in
+  // the failure branch below, so the counter measures wrong guesses rather than traffic.
+  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:login', { charge: false });
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   let body;
@@ -1962,6 +2937,9 @@ async function handleLogin(request, env, cors, ip, ua, country) {
   const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email.toLowerCase()).first();
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
+    // THIS is the attempt worth counting. Charged here and nowhere else, so five wrong
+    // guesses still lock the IP for five minutes while honest sign-ins cost nothing.
+    await checkRateLimit(env, rlIpKey(ip), 'api:login');
     // Log failed attempt
     if (user) {
       await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)')
@@ -2009,9 +2987,9 @@ async function handleLogin(request, env, cors, ip, ua, country) {
 
 async function handleLogout(request, env, cors) {
   const cookie = request.headers.get('cookie') || '';
-  const match = cookie.match(/hfd_session=([a-f0-9]+)/);
-  if (match) {
-    await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(match[1]).run();
+  const sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
+  if (sessionId) {
+    await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
   }
   const res = jsonRes({ message: 'Logged out' }, 200, cors);
   res.headers.set('Set-Cookie', 'hfd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
@@ -2146,14 +3124,27 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
   // Cap TOTP guesses per pending token (IP-independent brute-force cap). Same
   // hardening as the accounts.* /login/2fa endpoint — kept in sync so the two
   // 2FA surfaces don't drift.
-  const rl2 = await checkRateLimit(env, 'tfa:' + pending_token, 'api:2fa');
+  // Resolve the pending row FIRST so the guess counter can be keyed on the ACCOUNT.
+  // Keying it on the pending token was bypassable: whoever has the password mints a fresh
+  // token whenever the counter fills, and each new token starts a new budget — so the
+  // "5 guesses" cap never actually bounded anything, it just set the batch size. Since
+  // 2026-07-31 the login limiter charges only WRONG passwords, so minting those tokens
+  // became free too, taking a six-digit code from ~5 guesses/10 min to unlimited.
+  // Resolving first also means an unknown token costs no budget, so it cannot be used to
+  // lock a stranger out of their own second factor.
+  // §EXPIRY-COMPARE: datetime() on both sides. The row is written with toISOString(),
+  // so bare this gave a pending-2FA token stamped 10 minutes the rest of the UTC day —
+  // a stolen password plus a captured pending token had hours, not minutes, of runway.
+  const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND datetime(expires_at) > datetime("now")').bind(pending_token).first();
+  if (!pending) return jsonRes({ error: 'Invalid or expired login attempt. Please log in again.' }, 401, cors);
+
+  const rl2 = await checkRateLimit(env, 'tfa:u' + pending.user_id, 'api:2fa');
   if (!rl2.ok) {
-    await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pending_token).run();
+    // Drop EVERY pending row for this account, not just this token: leaving the others
+    // alive is exactly the minting loop this fix exists to close.
+    await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(pending.user_id).run();
     return jsonRes({ error: 'Too many attempts. Please log in again.' }, 429, cors);
   }
-
-  const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND expires_at > datetime("now")').bind(pending_token).first();
-  if (!pending) return jsonRes({ error: 'Invalid or expired login attempt. Please log in again.' }, 401, cors);
 
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
   if (!user || !user.totp_secret) return jsonRes({ error: 'Invalid state' }, 400, cors);
@@ -2260,7 +3251,11 @@ async function handleDeleteAccount(request, env, cors) {
       env,
       ADMIN_NOTIFY,
       `Account deleted: ${dbUser.email}`,
-      `<p>User <strong>${dbUser.email}</strong> has self-deleted their account. All personal data has been removed from the database.</p>`
+      // The address is user-chosen and the registration regex allows < > " and ' as long as
+      // there is no whitespace, so the raw interpolation put markup into the owner's inbox.
+      // The subject stays raw — Resend sends it as plain text, escaping it would print the
+      // entities. The accounts.* twin already does this (htmlEncode in handleAccountDelete).
+      `<p>User <strong>${escapeHtml(dbUser.email)}</strong> has self-deleted their account. All personal data has been removed from the database.</p>`
     );
   } catch (e) {}
 
@@ -2278,21 +3273,38 @@ async function handleUpdateProfile(request, env, cors) {
 
   const updates = [];
   const values = [];
-  if (body.name !== undefined) {
-    if (body.name.length > 100) return jsonRes({ error: 'Name too long' }, 400, cors);
-    updates.push('name = ?'); values.push(body.name);
-  }
-  if (body.institution !== undefined) {
-    if (body.institution.length > 200) return jsonRes({ error: 'Institution too long' }, 400, cors);
-    updates.push('institution = ?'); values.push(body.institution);
-  }
-  if (body.country !== undefined) {
-    if (body.country.length > 100) return jsonRes({ error: 'Country too long' }, 400, cors);
-    updates.push('country = ?'); values.push(body.country);
-  }
-  if (body.role !== undefined) {
-    if (body.role.length > 100) return jsonRes({ error: 'Role too long' }, 400, cors);
-    updates.push('role = ?'); values.push(body.role);
+  // Until 2026-07-31 these four fields were length-capped here and nothing else, which made
+  // the Latin-only filter at registration decorative: register as "Harvard University", then
+  // POST this endpoint once with markup in `institution`. handlePublicStats has no filter of
+  // its own, so the string lands in the public /v1/stats JSON that stats.html concatenates
+  // into innerHTML — arbitrary script on an unauthenticated page, planted by any account.
+  // So: trim, cap the length, and require the charset. The typeof guard is not cosmetic
+  // either — `{"name": 42}` threw on .length and surfaced as a 500.
+  //
+  // The charset check goes through latinOkOrUnchanged and NOT isLatinish directly. The
+  // first version of this loop called isLatinish on every submitted field, and account.html
+  // prefills all four inputs from the stored row and posts all four on every save, so a
+  // Google user whose stored name is Chinese/Cyrillic/Arabic got
+  // "Name must use English/Latin letters only." on the very save that was meant to fill in
+  // their institution — profile_complete could never reach 1 and they could never download
+  // again. Only a value that DIFFERS from what is already stored is a value the user is
+  // introducing; the reasoning is written out at latinOkOrUnchanged. `user` comes from
+  // getSessionUser, which SELECTs u.*, so user.name/institution/country/role are this
+  // request's own read of the row — no extra query.
+  //
+  // Blank is written, not skipped. Skipping it (also from the first version) meant clearing
+  // your institution answered "Saved." and kept the old value, and a save with all four
+  // boxes empty produced nothing to update and fell through to the 400 below, where the
+  // same request used to return 200. An empty string carries nothing to inject, so it never
+  // needed the special case.
+  for (const field of ['name', 'institution', 'country', 'role']) {
+    if (body[field] === undefined) continue;
+    const label = field.charAt(0).toUpperCase() + field.slice(1);
+    if (typeof body[field] !== 'string') return jsonRes({ error: `${label} must be a string` }, 400, cors);
+    const v = body[field].trim();
+    if (v.length > (field === 'institution' ? 200 : 100)) return jsonRes({ error: `${label} too long` }, 400, cors);
+    if (!latinOkOrUnchanged(v, user[field])) return jsonRes({ error: `${label} must use English/Latin letters only.` }, 400, cors);
+    updates.push(`${field} = ?`); values.push(v);
   }
   if (body.newsletter_subscribed !== undefined) {
     updates.push('newsletter_subscribed = ?'); values.push(body.newsletter_subscribed ? 1 : 0);
@@ -2343,7 +3355,31 @@ async function handleChangePassword(request, env, cors) {
   // uuid never equal to the integer user id, `id != <userId>` matched every row
   // and logged the user out on their current device too.
   const currentSession = user.session_id;
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, currentSession).run();
+
+  // …and `sessions` was ALL this deleted until 2026-07-31, while the response below told
+  // the user their other devices were logged out. They were not. The family SSO refresh
+  // chain lives in `sso_refresh_tokens`, and handleTokenRefresh validates against that
+  // table alone — so a stolen `ekd_rt` kept minting 15-minute access tokens for
+  // hfdatalibrary and econdatalibrary for another 30 days, no matter how many times the
+  // password changed. An unclicked reset link mailed earlier could also hand the password
+  // straight back. Somebody who changes their password because they think they are
+  // compromised was told the problem was solved while it wasn't.
+  //
+  // Opts, and why the other three are deliberately absent: this is the ordinary case. The
+  // caller typed the current password correctly six lines up, so they are the account
+  // owner, not someone taking the account off a squatter.
+  //  - keepSessionId — preserves the behaviour above: their own tab stays signed in.
+  //  - no rotateApiKey — that key is pasted into their notebooks and cron jobs. Killing it
+  //    on a routine password change is a support ticket, not remediation. The account page
+  //    has a deliberate regenerate button. handleReset does not rotate either, by the same
+  //    reasoning plus an explicit decision — see the comment there; the only caller that
+  //    passes rotateApiKey is the Google account-transfer.
+  //  - no clearForeignIdentities — the Google/ORCID iD on this row is the owner's own. It
+  //    is cleared only in the Google account-transfer, where the previous holder may have
+  //    planted it. Clearing it here would break the sign-in button they normally use.
+  //  - no clearTotp — it is their authenticator. Silently disabling someone's 2FA because
+  //    they changed a password is a downgrade they never asked for.
+  await revokeAllUserCredentials(env, userId, { keepSessionId: currentSession });
 
   return jsonRes({ message: 'Password changed. Other sessions have been logged out.' }, 200, cors);
 }
@@ -2374,8 +3410,10 @@ async function handleVerifyEmail(request, env, cors) {
   const { token } = body;
   if (!token) return jsonRes({ error: 'Required: token' }, 400, cors);
 
+  // §EXPIRY-COMPARE: datetime() on both sides. Written with toISOString(), so a
+  // verification link stamped 24 hours was honoured for up to 48.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > datetime("now")'
+    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired verification link' }, 400, cors);
@@ -2403,7 +3441,7 @@ async function handleResendVerification(request, env, cors) {
 
 async function handleResetRequest(request, env, cors) {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  const rl = await checkRateLimit(env, ip, 'api:reset');
+  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:reset');
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
   let body;
@@ -2436,8 +3474,12 @@ async function handleReset(request, env, cors) {
   const pw = checkPasswordStrength(password);
   if (!pw.ok) return jsonRes({ error: pw.error }, 400, cors);
 
+  // §EXPIRY-COMPARE: datetime() on both sides. Written with toISOString() one line
+  // below the comment that says "1 hour", and the reset email says one hour too —
+  // but bare, the link stayed redeemable until midnight UTC, up to a 24× widening of
+  // the window an intercepted reset mail can be used to take the account over.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > datetime("now")'
+    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired reset token' }, 400, cors);
@@ -2446,10 +3488,122 @@ async function handleReset(request, env, cors) {
   await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(passwordHash, reset.user_id).run();
   await env.DB.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').bind(reset.id).run();
 
-  // Invalidate all sessions
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(reset.user_id).run();
+  // Account recovery must actually recover the account. Until 2026-07-31 this deleted
+  // `sessions` and nothing else, so someone who had taken the account over kept it:
+  // the family SSO refresh chain lived another 30 days and went on minting access tokens
+  // for every site in the family. Everything that can act as the user dies here —
+  // every session, the SSO refresh chain, unspent SSO codes, unspent download tokens,
+  // any half-finished 2FA login, and every other reset link that was still outstanding.
+  //
+  // With ONE deliberate exception: no rotateApiKey. Ahmed's call, and it is a trade, not
+  // an oversight. Researchers paste that key into notebooks and cron jobs; rotating it on
+  // a password reset breaks running work silently, at the exact moment the user is already
+  // struggling to get back in, and there is no error message anywhere that would tell them
+  // their key changed. The cost is that a key stolen before the reset keeps working until
+  // it expires (API_KEY_DAYS) — the remedy is the Regenerate key button on the account
+  // page (POST /v1/auth/regenerate-key), which the user chooses knowingly and can schedule
+  // around their scripts. The Google account-transfer path still rotates, because there the
+  // account is being taken back off a squatter whose key must not survive the handover and
+  // no legitimate script can exist on an account its rightful owner has never used.
+  await revokeAllUserCredentials(env, reset.user_id);
 
   return jsonRes({ message: 'Password reset successful. Please log in.' }, 200, cors);
+}
+
+// ── Credential invalidation, in ONE place ─────────────────────────────────────
+// Before 2026-07-31 each recovery path invalidated a DIFFERENT subset: password reset
+// deleted `sessions` only, the Google account-transfer deleted sessions and rotated the API
+// key, admin deactivation deleted nothing. "Signed out everywhere" was never true.
+//
+// The family SSO refresh chain was the worst of the gaps. It survives 30 days and mints
+// fresh access tokens for hfdatalibrary, econdatalibrary and every future family site, so
+// an attacker retained the victim's account for a month after the victim "recovered" it.
+//
+// Anything that can act AS the user is revoked here. Every table below was checked against
+// api/migrations + schema*.sql for a user_id column before this was written.
+async function revokeAllUserCredentials(env, userId, opts) {
+  const o = opts || {};
+  const db = env.DB;
+  // `keepSessionId` exists for the two change-password handlers only. There the person
+  // typing the new password has just proved they know the old one, so they are the owner —
+  // throwing them out of the tab they are standing in turns routine hygiene into what looks
+  // like a failed request. Every OTHER session still dies. Pass the value from
+  // getSessionUser/getIdpSessionUser's `session_id`, which is sessions.id (a TEXT id, never
+  // equal to the integer user id — binding the user id here matches every row and signs the
+  // caller out too). The recovery paths — reset, hostile handover, admin deactivate — pass
+  // nothing and lose every session, which is the point of them.
+  if (o.keepSessionId) {
+    await db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, o.keepSessionId).run();
+  } else {
+    await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+  }
+  await db.prepare('UPDATE sso_refresh_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0').bind(userId).run();
+  await db.prepare('UPDATE sso_codes SET used = 1 WHERE user_id = ? AND used = 0').bind(userId).run();
+  await db.prepare('UPDATE download_tokens SET used = 1 WHERE user_id = ? AND used = 0').bind(userId).run();
+  // A pending-2FA row is a half-finished login; leaving one alive hands over a 10-minute
+  // re-entry window immediately after a takeover is supposedly remediated.
+  await db.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(userId).run();
+  // Burn OTHER outstanding reset/verification links. Only the row this caller consumed was
+  // ever marked used, so a second link mailed earlier stayed live and could undo the reset.
+  //
+  // §VERIFY-SURVIVES. password_resets stores TWO kinds of token and has no column that says
+  // which (schema_live_20260717.sql:62-70): password-reset links, written +1 h by
+  // handleResetRequest — the only writer of that kind — and email-VERIFICATION links,
+  // written +24 h by handleRegister, handleResendVerification and their accounts.* twins.
+  // Burning the lot killed a pending verification link every time the same person reset
+  // their password: register, the verification mail lands in spam, forget the password
+  // weeks later, reset it, then find the old mail and click it — "Invalid or expired
+  // verification link", and every download route above refuses an unverified account, so
+  // downloads stay refused with no button anywhere on hfdatalibrary.com to mail a fresh
+  // link (the only resend control lives on accounts.elkassabgidata.com/account). This
+  // function does not exist on origin/main, so that would have been new in production.
+  //
+  // The carve-out is the narrowest one possible without a migration, and it only ever does
+  // LESS than the line it replaces, so it cannot break a flow that works today:
+  //   * Only for an account that is still UNVERIFIED. A verified account has no use for a
+  //     pending verification link, so nothing is spared there and the burn is unchanged for
+  //     537 of the 572 accounts.
+  //   * Only for rows that cannot be a live reset link. A reset row is written +1 h, so at
+  //     every instant of its life its expires_at is less than an hour away; a row expiring
+  //     more than two hours out is a verification row, with an hour of margin for clock
+  //     skew between the Worker's Date.now() (the writer) and D1's datetime('now') (the
+  //     reader). datetime() on the column because these expiries are toISOString() strings
+  //     with a 'T' and a 'Z', which do not text-compare against SQLite's spelling —
+  //     see §EXPIRY-COMPARE at handleReset and handleVerifyEmail.
+  //   * If the users row cannot be read at all we fall through to the old unconditional
+  //     burn rather than guessing, so a lookup failure loses no security.
+  //
+  // A squatter who planted an account on someone else's address gains nothing: the
+  // verification link is mailed to the address ON the account, i.e. to the victim, and the
+  // squatter never sees it. Nor does the carve-out reach the hostile-handover path — the
+  // Google account-transfer sets email_verified = 1 in the UPDATE immediately before it
+  // calls this, so that caller still burns every outstanding row exactly as it did before.
+  const verifiedRow = await db.prepare('SELECT email_verified FROM users WHERE id = ?').bind(userId).first();
+  if (verifiedRow && !verifiedRow.email_verified) {
+    await db.prepare(
+      "UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0 AND datetime(expires_at) <= datetime('now','+2 hours')"
+    ).bind(userId).run();
+  } else {
+    await db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').bind(userId).run();
+  }
+  if (o.rotateApiKey) {
+    const freshKey = 'hfd_' + generateId();
+    const freshExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+    await db.prepare('UPDATE users SET api_key = ?, api_key_expires_at = ? WHERE id = ?')
+      .bind(freshKey, freshExpires, userId).run();
+  }
+  // Identity bindings that are themselves login credentials. Only for a hostile handover:
+  // an ordinary password reset must NOT unlink the owner's own Google/ORCID.
+  if (o.clearForeignIdentities) {
+    await db.prepare('UPDATE users SET orcid_id = NULL, orcid_profile_json = NULL WHERE id = ?')
+      .bind(userId).run();
+  }
+  // A TOTP secret enrolled by whoever held the account before the handover would lock the
+  // rightful owner out of password login permanently, with no self-service recovery.
+  if (o.clearTotp) {
+    await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?')
+      .bind(userId).run();
+  }
 }
 
 // ══════════════════════════════════════
@@ -2479,6 +3633,10 @@ async function handleToggleSubscribe(request, env, cors, subscribe) {
   return jsonRes({ message: subscribe ? 'Subscribed to newsletter' : 'Unsubscribed from newsletter', newsletter_subscribed: subscribe }, 200, cors);
 }
 
+// `bodyHtml` is deliberately raw — it is the campaign the admin composed in the console, and
+// escaping it would print the markup instead of rendering it. `userName` is not: it is the
+// recipient's own profile string, so it gets the same escapeHtml treatment as every other
+// user-written value that reaches an outbound template.
 function buildNewsletterHtml(subject, bodyHtml, userName, unsubscribeUrl) {
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2332;">
@@ -2486,7 +3644,7 @@ function buildNewsletterHtml(subject, bodyHtml, userName, unsubscribeUrl) {
         <h1 style="color: #d4a843; margin: 0; font-size: 1.5rem;">HF Data Library</h1>
       </div>
       <div style="padding: 2rem 1.5rem;">
-        <p>Hi ${userName},</p>
+        <p>Hi ${escapeHtml(userName)},</p>
         ${bodyHtml}
       </div>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 1rem 0;">
@@ -2504,7 +3662,11 @@ async function handleSendNewsletter(request, env, cors) {
   const { subject, body_html, test_only } = body;
   if (!subject || !body_html) return jsonRes({ error: 'Required: subject, body_html' }, 400, cors);
 
-  const user = await requireAuth(request, env);
+  // Session only, matching handleAdmin — this handler's sole route is
+  // POST /v1/admin/newsletter, so an is_admin check satisfied by a bare API key
+  // would have been a second door into the admin plane (one that mails every
+  // verified subscriber) if the dispatch above ever gained another entry point.
+  const user = await getSessionUser(request, env);
   if (!user || !user.is_admin) return jsonRes({ error: 'Admin access required' }, 403, cors);
 
   // Test mode: send only to the admin
@@ -2678,7 +3840,9 @@ async function handleDownloadToken(ticker, request, env, cors) {
   // and CSV, so token presence alone does NOT imply a website download.
   let user = await getSessionUser(request, env);
   let issuedVia = 'web';
-  if (!user) { user = await getUserByApiKey(request, env); issuedVia = 'api'; }
+  // allowQueryKey: this is a data route and reached the same way downloads are,
+  // so it keeps the ?api_key= form requireDataAuth keeps (see getUserByApiKey).
+  if (!user) { user = await getUserByApiKey(request, env, { allowQueryKey: true }); issuedVia = 'api'; }
   if (!user) { user = await validateFamilyToken(request, env); if (user) issuedVia = 'family'; }
   if (!user) return jsonRes({ error: await explainAuthFailure(request, env) }, 401, cors);
   if (!user.email_verified) return jsonRes({ error: 'Please verify your email before downloading data.' }, 403, cors);
@@ -2720,8 +3884,13 @@ async function handleDownload(ticker, request, env, cors, ip) {
   let tokenRecord = null;
 
   if (downloadToken) {
+    // §EXPIRY-COMPARE: datetime() on both sides. This is the worst of the bare
+    // compares: the token is stamped 10 minutes, travels inside the URL, and nothing
+    // else re-authenticates here — the user is resolved from the token row. Bare, a
+    // link sitting in browser history, a proxy log or a pasted chat message stayed
+    // redeemable for the rest of the UTC day.
     tokenRecord = await env.DB.prepare(
-      'SELECT * FROM download_tokens WHERE token = ? AND used = 0 AND expires_at > datetime("now")'
+      'SELECT * FROM download_tokens WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
     ).bind(downloadToken).first();
     if (!tokenRecord) return jsonRes({ error: 'Invalid or expired download link. Please request a new download.' }, 401, cors);
     if (tokenRecord.ticker !== ticker) return jsonRes({ error: 'Token does not match ticker' }, 400, cors);
@@ -2812,9 +3981,32 @@ async function handleDownload(ticker, request, env, cors, ip) {
 // ══════════════════════════════════════
 
 async function handleAdmin(path, request, env, cors, ip) {
-  const user = await requireAuth(request, env);
+  // getSessionUser, deliberately NOT requireAuth. requireAuth falls through to
+  // getUserByApiKey, so a bare data key was a complete console credential: no
+  // password, no 2FA (handleLogin refuses to issue a session until a totp_enabled
+  // user produces a code; the key path has no such step), and — until the change
+  // above — accepted straight out of the query string. That key is not an
+  // identity: handleSSO hands it to econdatalibrary.com and elkassabgidata.com in
+  // a URL fragment, the account page tells people to paste it into scripts, and
+  // it sits in plain text in every notebook that reads data. One copy of it read
+  // every user's row including their own api_key (the list query below returns
+  // it), set is_admin on a second account, or set is_active = 0 on the real
+  // admin. The privilege ordering was inverted: renaming yourself, changing your
+  // password, touching 2FA and regenerating your key all already demanded a
+  // session and refused a key, while the highest-privilege surface accepted less.
+  // Nothing legitimate breaks — admin.html has only ever sent
+  // Authorization: Bearer <session id> (pages/admin.html, authHeaders()).
+  const user = await getSessionUser(request, env);
   if (!user || !user.is_admin) {
     return jsonRes({ error: 'Admin access required' }, 403, cors);
+  }
+  // email_verified must gate PRIVILEGE, not just downloads. Setting email_verified = 0 for
+  // admin registrations (2026-07-31) did not by itself close the console takeover it was
+  // meant to close, because nothing on this path ever read the flag and handleLogin does
+  // not read it either: an is_admin row could still simply log in with the password chosen
+  // at registration and arrive here. Both halves are needed — the flag, and a check of it.
+  if (!user.email_verified) {
+    return jsonRes({ error: 'Verify your email address before using the admin console.' }, 403, cors);
   }
 
   // GET /v1/admin/audit — audit log
@@ -2976,9 +4168,20 @@ async function handleAdmin(path, request, env, cors, ip) {
     values.push(uid);
     await env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
 
-    // If deactivating, kill their sessions
+    // If deactivating, cut off everything that can still act as them. Until 2026-07-31 this
+    // deleted `sessions` and stopped, so deactivating an abusive or compromised account did
+    // not deactivate it: the family SSO refresh chain in `sso_refresh_tokens` kept minting
+    // access tokens for hfdatalibrary and econdatalibrary for up to 30 days, an unredeemed
+    // sso_code was still exchangeable for a session, and any download token already issued
+    // still resolved. The admin saw "Revoked" in the console and the user carried on.
+    //
+    // No opts. Deactivation is an admin judgement about the account and is reversible — it
+    // is not a claim that the owner lost control of their credentials, so nothing that would
+    // survive reactivation in a broken state is touched. The API key stays (and is inert
+    // while it is off: every key lookup requires is_active = 1), the owner's own Google/ORCID
+    // link stays, their authenticator stays. Reactivating gives back a working account.
     if (body.is_active === false || body.is_active === 0) {
-      await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(uid).run();
+      await revokeAllUserCredentials(env, uid);
     }
 
     // Audit log
@@ -3364,13 +4567,18 @@ async function hmacSign(secret, msg) {
 //    value lives only in a host-only HttpOnly cookie on accounts.* ──
 async function getIdpSessionUser(request, env) {
   const cookie = request.headers.get('cookie') || '';
-  const m = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
-  if (!m) return null;
-  const idHash = await sha256Hex(m[1]);
+  const raw = readCookie(cookie, 'ekd_session', '[A-Za-z0-9_-]+');
+  if (!raw) return null;
+  const idHash = await sha256Hex(raw);
+  // §EXPIRY-COMPARE: datetime() on both sides. This one was NOT broken —
+  // createIdpSession writes space format — but it reads the same `sessions.expires_at`
+  // that createSession fills with ISO text, and only the kind predicate keeps the two
+  // apart. Wrapping costs nothing on a space-format row and means a future writer on
+  // this column cannot silently reopen the hole.
   const row = await env.DB.prepare(
     "SELECT u.*, s.id AS session_id, s.kind AS session_kind, s.expires_at AS session_expires_at " +
     "FROM sessions s JOIN users u ON s.user_id = u.id " +
-    "WHERE s.id = ? AND s.kind = 'idp_master' AND s.expires_at > datetime('now')"
+    "WHERE s.id = ? AND s.kind = 'idp_master' AND datetime(s.expires_at) > datetime('now')"
   ).bind(idHash).first();
   if (!row || !row.is_active) return null;
   return row;
@@ -3530,7 +4738,10 @@ async function handleAuthorizeGet(request, env, url) {
     // orcid_id — default to the login tab (link to an existing account) with a
     // banner offering "or create a new account".
     const orcidTok = q.get('orcid_prefill') || '';
-    const orcidPre = orcidTok ? await verifyOrcidPrefill(env, orcidTok) : null;
+    // Read-only: renders the banner and pre-fills the name. Audience 'idp' plus the
+    // nonce cookie mean a token from api.* — or from anyone else's browser — draws no
+    // banner at all, so an attacker's iD can no longer even be shown to a victim here.
+    const orcidPre = orcidTok ? await verifyOrcidPrefill(env, request, orcidTok, 'idp') : null;
     const p = { clientId, redirectUri, state, codeChallenge, method };
     if (orcidPre) p.orcidPrefill = orcidTok;
     return new Response(
@@ -3540,8 +4751,8 @@ async function handleAuthorizeGet(request, env, url) {
   }
   // signed in → branded consent with a gesture-bound POST form
   const cookie = request.headers.get('cookie') || '';
-  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
-  const idpSessionHash = cm ? await sha256Hex(cm[1]) : '';
+  const rawEkd = readCookie(cookie, 'ekd_session', '[A-Za-z0-9_-]+');
+  const idpSessionHash = rawEkd ? await sha256Hex(rawEkd) : '';
   const gesture = await mintGestureToken(env, idpSessionHash, clientId, state, codeChallenge);
   return new Response(renderConsentPage(user, row, { clientId, redirectUri, state, codeChallenge, method }, gesture), { status: 200, headers: secHeaders });
 }
@@ -3573,8 +4784,8 @@ async function handleAuthorizePost(request, env, ip, ua) {
   if (!row.redirect_exact || row.redirect_exact !== redirectUri) return new Response('redirect_mismatch', { status: 400 });
 
   const cookie = request.headers.get('cookie') || '';
-  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
-  const idpSessionHash = cm ? await sha256Hex(cm[1]) : '';
+  const rawEkd = readCookie(cookie, 'ekd_session', '[A-Za-z0-9_-]+');
+  const idpSessionHash = rawEkd ? await sha256Hex(rawEkd) : '';
   if (!(await verifyGestureToken(env, gesture, idpSessionHash, clientId, state, codeChallenge))) {
     return new Response('bad_gesture', { status: 403 });
   }
@@ -3621,8 +4832,11 @@ async function handleTokenExchange(request, env, ip, ua, cors) {
 
   // atomic single-use consume — burns the code regardless of what follows
   const codeHash = await sha256Hex(code);
+  // §EXPIRY-COMPARE: datetime() on both sides. Already correct — mintSsoCode is the
+  // only writer and uses datetime() arithmetic — wrapped so every expiry compare in
+  // the file reads the same way and none of them depends on its writer staying put.
   const claim = await env.DB.prepare(
-    "UPDATE sso_codes SET used=1 WHERE code_hash=? AND used=0 AND expires_at>datetime('now')"
+    "UPDATE sso_codes SET used=1 WHERE code_hash=? AND used=0 AND datetime(expires_at)>datetime('now')"
   ).bind(codeHash).run();
   if (!claim.meta || claim.meta.changes !== 1) return jsonNoStore({ error: 'invalid_code' }, 400, cors);
   const row = await env.DB.prepare("SELECT * FROM sso_codes WHERE code_hash=?").bind(codeHash).first();
@@ -3660,9 +4874,12 @@ async function handleTokenRefresh(request, env, ip, ua, cors) {
   if (rt.audience !== client_origin) return jsonNoStore({ error: 'origin_mismatch' }, 403, cors);
 
   // Atomic single-use rotation claim (the used=0 predicate is the sole atomicity point).
+  // §EXPIRY-COMPARE: datetime() wraps the stored absolute_expires_at only. The two
+  // datetime('now') calls in the SET clause are WRITES, not comparisons — they are what
+  // keeps this table in space format and they stay exactly as they are.
   const claim = await env.DB.prepare(
     "UPDATE sso_refresh_tokens SET used=1, used_at=datetime('now'), grace_until=datetime('now','+" + RT_GRACE_SEC + " seconds') " +
-    "WHERE token_hash=? AND used=0 AND revoked=0 AND absolute_expires_at>datetime('now')"
+    "WHERE token_hash=? AND used=0 AND revoked=0 AND datetime(absolute_expires_at)>datetime('now')"
   ).bind(rtHash).run();
 
   if (claim.meta && claim.meta.changes === 1) {
@@ -3684,8 +4901,11 @@ async function handleTokenRefresh(request, env, ip, ua, cors) {
   if (cur.used === 0 && cur.revoked === 0) {
     return jsonNoStore({ error: 'invalid_grant' }, 401, cors);
   }
+  // §EXPIRY-COMPARE: datetime() on both sides. grace_until is written by the claim
+  // above in space format, and is NULL until a claim sets it — datetime(NULL) is NULL,
+  // so an unclaimed row still fails the predicate exactly as it did before.
   const inGrace = await env.DB.prepare(
-    "SELECT 1 FROM sso_refresh_tokens WHERE token_hash=? AND revoked=0 AND grace_until>datetime('now')"
+    "SELECT 1 FROM sso_refresh_tokens WHERE token_hash=? AND revoked=0 AND datetime(grace_until)>datetime('now')"
   ).bind(rtHash).first();
   if (inGrace) {
     const a = await mintFamilyAccessOnly(env, rt.user_id, client_origin, ip, ua, {
@@ -3702,9 +4922,9 @@ async function handleAccountsLogout(request, env, cors) {
   let body = {};
   try { body = await request.json(); } catch { /* optional */ }
   const cookie = request.headers.get('cookie') || '';
-  const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
-  if (cm) {
-    const idHash = await sha256Hex(cm[1]);
+  const rawEkd = readCookie(cookie, 'ekd_session', '[A-Za-z0-9_-]+');
+  if (rawEkd) {
+    const idHash = await sha256Hex(rawEkd);
     await env.DB.prepare("DELETE FROM sessions WHERE id=? AND kind='idp_master'").bind(idHash).run();
   }
   if (body && body.refresh_token) {
@@ -3883,8 +5103,8 @@ async function handleAccountLogout(request, env) {
   } else {
     // No valid session — still clear whatever ekd_session cookie is present.
     const cookie = request.headers.get('cookie') || '';
-    const cm = cookie.match(/ekd_session=([A-Za-z0-9_-]+)/);
-    if (cm) { const idHash = await sha256Hex(cm[1]); await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(idHash).run(); }
+    const rawEkd = readCookie(cookie, 'ekd_session', '[A-Za-z0-9_-]+');
+    if (rawEkd) { const idHash = await sha256Hex(rawEkd); await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(idHash).run(); }
   }
   const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
   return new Response(renderSignedOutPage(), { status: 200, headers: { ...accountPageHeaders, 'Set-Cookie': clear } });
@@ -3905,6 +5125,26 @@ async function handleAccountUpdateProfile(request, env) {
   const role = (form.get('role') || '').toString().trim().slice(0, 100);
   if (!institution || !country || !role) {
     return new Response(renderAccountPage(user, { notice: 'Institution, country and role are all required.' }), { status: 200, headers: accountPageHeaders });
+  }
+  // The .slice() caps above bound the length but not the character set, so this form was the
+  // second way past the Latin-only filter that registration applies: sign up with a clean
+  // institution, then edit it here to anything at all. These four columns are exactly what the
+  // public stats page renders (world map, institutions list) and what the admin notification
+  // emails print, so whatever is stored here is displayed to strangers and to the owner. Same
+  // check as handleRegister and the api.* handleUpdateProfile twin.
+  //
+  // Via latinOkOrUnchanged, for the same reason as that twin: renderAccountPage writes the
+  // stored row back into these four inputs, so every save re-posts values the user did not
+  // touch — including a name that Google supplied in a non-Latin script and that no filter
+  // ever saw. Checking those unconditionally made the Save button impossible to satisfy for
+  // those users, and this handler is the only thing on accounts.* that sets
+  // profile_complete = 1, so it took their downloads with it. A value identical to the one
+  // in the column is not something the user is introducing; a changed one still has to pass.
+  // `name` stays optional — latinOkOrUnchanged treats blank as fine, and institution,
+  // country and role are already required non-blank by the check above.
+  if (!latinOkOrUnchanged(name, user.name) || !latinOkOrUnchanged(institution, user.institution) ||
+      !latinOkOrUnchanged(country, user.country) || !latinOkOrUnchanged(role, user.role)) {
+    return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must use English/Latin letters only.' }), { status: 200, headers: accountPageHeaders });
   }
   await env.DB.prepare('UPDATE users SET name = ?, institution = ?, country = ?, role = ?, profile_complete = 1 WHERE id = ?')
     .bind(name || user.name || '', institution, country, role, user.id).run();
@@ -3931,7 +5171,15 @@ async function handleAccountChangePassword(request, env) {
   const newHash = await hashPassword(next);
   await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, user.id).run();
   // Sign out other devices; preserve THIS accounts.* session (user.session_id = the ekd_session hash).
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(user.id, user.session_id).run();
+  // Until 2026-07-31 that was one DELETE on `sessions`, which is exactly the gap the api.*
+  // twin had: the notice below promises the other devices are gone, and the family SSO
+  // refresh token in `sso_refresh_tokens` went on minting access tokens for every family
+  // site for 30 more days. This host is the identity provider — it is the one place where
+  // "signed out everywhere" has to be literally true. Same opts as handleChangePassword and
+  // for the same reasons: the current password was verified two lines up, so this is the
+  // owner doing hygiene — keep their tab, keep their API key, keep their Google/ORCID link,
+  // keep their authenticator. See the reasoning written out at handleChangePassword.
+  await revokeAllUserCredentials(env, user.id, { keepSessionId: user.session_id });
   return new Response(renderAccountPage(user, { notice: 'Password changed. Your other devices have been signed out.' }), { status: 200, headers: accountPageHeaders });
 }
 
@@ -4078,8 +5326,10 @@ async function verifyGoogleIdToken(env, idToken) {
 // row or null. Mirrors the sso_codes burn (changes===1 gate).
 async function consumeOauthState(env, brokerState, expectedProvider) {
   if (!brokerState) return null;
+  // §EXPIRY-COMPARE: datetime() on both sides. Already correct — the single writer
+  // uses datetime('now','+10 minutes') — wrapped to keep the invariant uniform.
   const claim = await env.DB.prepare(
-    "UPDATE sso_oauth_state SET used=1 WHERE state=? AND used=0 AND provider=? AND expires_at>datetime('now')"
+    "UPDATE sso_oauth_state SET used=1 WHERE state=? AND used=0 AND provider=? AND datetime(expires_at)>datetime('now')"
   ).bind(brokerState, expectedProvider).run();
   if (!claim.meta || claim.meta.changes !== 1) return null;
   return await env.DB.prepare('SELECT * FROM sso_oauth_state WHERE state=?').bind(brokerState).first();
@@ -4256,33 +5506,213 @@ async function handleAccountsGoogleCallback(request, env, ip, ua, country) {
 // (10 min): the user signs in (link the ORCID to their existing account) or
 // registers with an email (create + set orcid_id). A valid token proves ORCID auth
 // was completed, so it also stands in for the register CAPTCHA (ORCID = the human check).
-async function mintOrcidPrefill(env, orcidId, name) {
-  if (!env.CONSENT_HMAC_SECRET) return '';
-  const expMs = Date.now() + 10 * 60 * 1000;
-  const nameB64 = b64url(new TextEncoder().encode((name || '').slice(0, 100)));
-  const bodyStr = orcidId + '.' + nameB64 + '.' + expMs;
-  const sig = await hmacSign(env.CONSENT_HMAC_SECRET, bodyStr);
-  return bodyStr + '.' + sig;
+// ── The prefill token is BOUND, AUDIENCED and SINGLE-USE (2026-07-31) ──
+// The HMAC proves ORCID's OAuth was completed for this iD. Until now that was the
+// ONLY thing it proved: the token named no browser, no host and no single use, so
+// it was a transferable bearer credential. The attack that made possible:
+//   1. Attacker completes ORCID with a throwaway iD at api.hfdatalibrary.com and
+//      lifts the token out of their OWN address bar.
+//   2. Attacker sends the victim the genuine accounts.* /authorize link carrying
+//      it — right domain, right TLS, our branding.
+//   3. Victim signs in with their own email and password. loginAndRedirect called
+//      maybeLinkOrcid unconditionally, so the ATTACKER's orcid_id was written onto
+//      the VICTIM's row, announced only by a decorative banner.
+//   4. "Sign in with ORCID" resolves an account by orcid_id, so the attacker then
+//      signed in AS the victim. An iD that is a login credential had been attached
+//      by a request the victim never made.
+// Three changes close it and all three are needed:
+//   BINDING — mint puts a 256-bit nonce in a host-only HttpOnly SameSite=Lax
+//     cookie and signs sha256(nonce) into the token. A token pasted into anyone
+//     else's browser has no matching cookie and never verifies. §PF-DEPLOY-ORDER:
+//     on audience 'api' the cookie is enforced when present and OPTIONAL when
+//     absent, because the deployed download.html POSTs /register as a cross-origin
+//     fetch WITHOUT credentials, so the cookie the ORCID callback set is never
+//     sent. Requiring it there does not fail the registration — it silently drops
+//     the ORCID from an otherwise successful 201, right after the page promised
+//     the user their iD would be linked. The absent-cookie path is exactly the
+//     signed, audienced, single-use check that is live today; the moment the new
+//     page ships (credentials: 'include') every request carries the cookie and
+//     BINDING is unconditional again. Audience 'idp' stays strict: those pages are
+//     rendered by this worker, so they can never lag behind it.
+//   AUDIENCE — the signed body names the host that minted it ('api' or 'idp'), so
+//     an api.*-minted token can never authorize a link at accounts.*, or the
+//     reverse. The cookie name differs per audience too, belt and braces.
+//   SINGLE USE — mint writes sha256(token) into oauth_state; the statement that
+//     actually attaches the iD burns that row (DELETE, changes === 1) so a replay
+//     finds nothing. Same burn-on-consume shape as consumeApiOauthState.
+// Verification that only DISPLAYS the token — the banner, the CAPTCHA stand-in, a
+// re-render after a form error — must NOT burn it; only the write consumes.
+//
+// Field separator: the signing input joins fields with '.', so a field containing
+// a '.' could shift the parse. None can. aud is a literal key of the map below;
+// orcidId is regex-checked to the ORCID shape (digits, dashes, trailing X) at mint
+// AND at verify; nameB64 and sig are base64url; nonceHash is lowercase hex; expMs
+// is decimal. Verify additionally re-serialises the signing input from exactly the
+// split parts and demands 6 of them, so an ambiguous split cannot survive the HMAC.
+const ORCID_PREFILL_COOKIE = { api: '__Host-hfd_orcid_pf', idp: '__Host-ekd_orcid_pf' };
+const ORCID_PREFILL_TTL_MS = 10 * 60 * 1000;
+const ORCID_ID_RE = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/;
+// What we tell someone whose ORCID confirmation did not survive the time it took them to
+// fill the form. It has to name the outcome (not linked), reassure about the part that DID
+// work (the account exists), and give the exact control that fixes it — the account page
+// already has a "Link ORCID account" button, so this is one click, not a support ticket.
+const ORCID_NOT_LINKED_NOTICE =
+  'Your ORCID iD was not linked to this account: the ORCID confirmation could not be verified ' +
+  '(it is only valid for 10 minutes, and filling the form often takes longer). Your account is ' +
+  'created and works normally. To link your ORCID iD, open your account page and click ' +
+  '"Link ORCID account".';
+// __Host- prefix: a browser refuses to store such a cookie if it carries Domain,
+// so no sibling host can plant one. SameSite=Lax so it still rides the top-level
+// navigation back from the provider and the same-site form POST that follows.
+function orcidPrefillCookie(aud, nonce) {
+  return `${ORCID_PREFILL_COOKIE[aud]}=${nonce}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`;
 }
-async function verifyOrcidPrefill(env, token) {
+function readOrcidPrefillNonce(request, aud) {
+  const name = ORCID_PREFILL_COOKIE[aud];
+  if (!name || !request) return null;
+  const m = (request.headers.get('cookie') || '')
+    .match(new RegExp('(?:^|;\\s*)' + name + '=([A-Za-z0-9_-]+)'));
+  return m ? m[1] : null;
+}
+// Returns { token, cookie } — BOTH must reach the browser or the token is inert.
+// null means "no token could be minted": a missing CONSENT_HMAC_SECRET, an
+// audience we don't serve, or an iD that isn't ORCID-shaped. Callers must treat
+// null as an honest error, never as "carry on without the link" — this is the
+// fail-closed edge, and an unsigned prefill must never become an accepted one.
+async function mintOrcidPrefill(env, orcidId, name, aud) {
+  if (!env.CONSENT_HMAC_SECRET) return null;
+  if (!ORCID_PREFILL_COOKIE[aud]) return null;
+  if (!ORCID_ID_RE.test(String(orcidId || ''))) return null;
+  const nonce = generateToken() + generateToken();     // 256-bit; never leaves the browser
+  const nonceHash = await sha256Hex(nonce);
+  const expMs = Date.now() + ORCID_PREFILL_TTL_MS;
+  const nameB64 = b64url(new TextEncoder().encode((name || '').slice(0, 100)));
+  const bodyStr = aud + '.' + orcidId + '.' + nameB64 + '.' + nonceHash + '.' + expMs;
+  const sig = await hmacSign(env.CONSENT_HMAC_SECRET, bodyStr);
+  const token = bodyStr + '.' + sig;
+  // Single-use ledger. oauth_state already exists with exactly the columns needed
+  // (state PK, provider, expires_at); provider 'orcid_prefill' is a value no
+  // consumeApiOauthState call ever asks for, so these rows can't be mistaken for a
+  // Google/ORCID CSRF state.
+  await env.DB.prepare(
+    "INSERT INTO oauth_state (state, user_id, provider, expires_at) VALUES (?, NULL, 'orcid_prefill', datetime('now','+10 minutes'))"
+  ).bind(await sha256Hex(token)).run();
+  // These rows had no cleanup at all. consumeOrcidPrefill deletes one only when a
+  // link actually completes, and the note here used to claim mintApiOauthState's
+  // sweep expired them "for free" — it does not: that sweep runs only when somebody
+  // clicks Google/ORCID sign-in on api.hfdatalibrary.com, and this mint is reached
+  // from accounts.elkassabgidata.com. So every abandoned link-or-register flow on
+  // the identity provider left a permanent row, which is the unbounded growth that
+  // fills D1 and stops it accepting writes — i.e. stops logins. Same sweep, same
+  // table, same sampling, equally non-fatal.
+  await sweepOauthState(env);
+  return { token, cookie: orcidPrefillCookie(aud, nonce) };
+}
+// Read-only check. Returns { orcidId, name, bound, tokenHash } or null. tokenHash is
+// what consumeOrcidPrefill burns; holding it does nothing on its own. bound === false
+// means the nonce cookie was absent and the token was accepted on its signature alone
+// (§PF-DEPLOY-ORDER) — true is the state every request reaches once the pages ship.
+async function verifyOrcidPrefill(env, request, token, aud) {
   if (!env.CONSENT_HMAC_SECRET || !token) return null;
+  if (!ORCID_PREFILL_COOKIE[aud]) return null;
   const parts = String(token).split('.');
-  if (parts.length !== 4) return null;
+  // §PF-LEGACY — the deploy window. deploy.yml ships the Pages site and the Worker as two
+  // PARALLEL jobs, so for the first ten minutes after this worker goes live there are
+  // browsers holding a token the PREVIOUS worker minted. That token has FOUR parts
+  // (orcidId.nameB64.expMs.sig): no audience, no nonce hash, and no oauth_state ledger
+  // row, because none of those existed when it was issued. Demanding six parts rejects it
+  // outright, and the person holding it has already completed ORCID's OAuth — all they get
+  // is "your ORCID confirmation could not be verified" for as long as any of these are
+  // alive. Accept it on its signature alone, which is exactly what the worker that issued
+  // it did. Self-limiting: nothing mints the old format any more and each one carries its
+  // own 10-minute expMs, so the last one dies ten minutes after the deploy.
+  if (parts.length === 4) return await verifyLegacyOrcidPrefill(env, token, parts);
+  if (parts.length !== 6) return null;
+  const tokAud = parts[0], orcidId = parts[1], nameB64 = parts[2],
+        nonceHash = parts[3], expMsStr = parts[4], sig = parts[5];
+  if (tokAud !== aud) return null;                     // minted for another surface
+  if (!ORCID_ID_RE.test(orcidId)) return null;
+  if (!/^[0-9a-f]{64}$/.test(nonceHash)) return null;
+  const expMs = parseInt(expMsStr, 10);
+  if (!expMs || Date.now() > expMs) return null;
+  const expected = await hmacSign(env.CONSENT_HMAC_SECRET,
+    tokAud + '.' + orcidId + '.' + nameB64 + '.' + nonceHash + '.' + expMsStr);
+  if (!constantTimeEqual(sig, expected)) return null;
+  // The binding: only the browser that completed ORCID holds the nonce. Present →
+  // it must match, absent → see §PF-DEPLOY-ORDER above — enforced on 'idp' either
+  // way, waived on 'api' only until the page that sends the cookie is live.
+  const nonce = readOrcidPrefillNonce(request, aud);
+  if (nonce) {
+    if (!constantTimeEqual(await sha256Hex(nonce), nonceHash)) return null;
+  } else if (aud !== 'api') {
+    return null;
+  } else {
+    // Log it so the waiver is observable: once the new download.html/account.html
+    // are deployed this stops appearing, and the `aud !== 'api'` branch above can
+    // become an unconditional `return null`.
+    console.log(JSON.stringify({ evt: 'orcid_prefill_unbound', aud }));
+  }
+  let name = '';
+  try { name = new TextDecoder().decode(b64urlToBytes(nameB64)); } catch (e) {}
+  return { orcidId, name, bound: !!nonce, tokenHash: await sha256Hex(String(token)) };
+}
+// §PF-LEGACY reader. Runs the checks the previous worker ran and no more: shape, TTL,
+// HMAC over orcidId.nameB64.expMs. bound is false because there is no nonce to check,
+// and legacy is true because there is no ledger row to burn — burnOrcidPrefill reads
+// that flag, since asking consumeOrcidPrefill to delete a row that was never written
+// answers false and would turn "ORCID verified" into "that ORCID confirmation has
+// already been used" on the user's FIRST submit, which is the same regression by a
+// different door. The old format carries no audience, so it verifies on api.* and on
+// accounts.* alike; that is what it already did, and it stops mattering the moment the
+// last one expires.
+async function verifyLegacyOrcidPrefill(env, token, parts) {
   const orcidId = parts[0], nameB64 = parts[1], expMsStr = parts[2], sig = parts[3];
-  if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(orcidId)) return null;
+  if (!ORCID_ID_RE.test(orcidId)) return null;
   const expMs = parseInt(expMsStr, 10);
   if (!expMs || Date.now() > expMs) return null;
   const expected = await hmacSign(env.CONSENT_HMAC_SECRET, orcidId + '.' + nameB64 + '.' + expMsStr);
   if (!constantTimeEqual(sig, expected)) return null;
   let name = '';
   try { name = new TextDecoder().decode(b64urlToBytes(nameB64)); } catch (e) {}
-  return { orcidId, name };
+  // Logged on purpose: this line must stop appearing about ten minutes after a deploy.
+  // If it is still logging an hour later, something is still minting the old format and
+  // this branch is no longer a deploy-window concession but a live acceptance path.
+  console.log(JSON.stringify({ evt: 'orcid_prefill_legacy_accepted' }));
+  return { orcidId, name, bound: false, legacy: true, tokenHash: await sha256Hex(String(token)) };
+}
+// Burn the single-use row. Called ONLY by the code path that is about to write
+// orcid_id. false means the token was already spent (or expired between the verify
+// and here) — the caller must abandon the link rather than write anyway.
+async function consumeOrcidPrefill(env, tokenHash) {
+  const burn = await env.DB.prepare(
+    "DELETE FROM oauth_state WHERE state = ? AND provider = 'orcid_prefill' AND datetime(expires_at) > datetime('now')"
+  ).bind(tokenHash).run();
+  return !!(burn.meta && burn.meta.changes === 1);
+}
+// The burn every caller should go through. A §PF-LEGACY token has no ledger row, so
+// consumeOrcidPrefill answers false for it and the caller abandons the link — or, on the
+// register paths, refuses the account outright — over a row that was never written. That
+// is precisely the deploy-window failure this compatibility branch exists to prevent, so
+// treat legacy as already burned. A replayed legacy token still cannot mint a second
+// account wearing the same iD: the "already linked to an account" SELECT and the partial
+// UNIQUE index on users.orcid_id both sit in front of the INSERT. Passing null (no prefill
+// was sent at all) returns true, so `!(await burnOrcidPrefill(...))` reads the same as the
+// old `pre && !(await consumeOrcidPrefill(...))`.
+async function burnOrcidPrefill(env, pre) {
+  if (!pre) return true;
+  if (pre.legacy) return true;
+  return await consumeOrcidPrefill(env, pre.tokenHash);
 }
 // Link a verified orcid_id to an account ONLY if that account has none AND no other
 // account already owns it (atomic single statement → no cross-account takeover/dupe).
-async function maybeLinkOrcid(env, userId, token) {
-  const pre = await verifyOrcidPrefill(env, token);
+// Callers must additionally have proof the USER asked for this link — see the
+// link_orcid checkbox in renderAuthPage. This function no longer runs on every login.
+async function maybeLinkOrcid(env, request, userId, token, aud) {
+  const pre = await verifyOrcidPrefill(env, request, token, aud);
   if (!pre) return;
+  // burnOrcidPrefill: legacy tokens (§PF-LEGACY) carry no ledger row, and the raw burn
+  // would read that as "already spent" and silently drop a link the user did ask for.
+  if (!(await burnOrcidPrefill(env, pre))) return;                // replay / already spent
   await env.DB.prepare(
     "UPDATE users SET orcid_id = ? WHERE id = ? AND (orcid_id IS NULL OR orcid_id = '') " +
     "AND NOT EXISTS (SELECT 1 FROM users u2 WHERE u2.orcid_id = ? AND u2.id != ?)"
@@ -4320,9 +5750,23 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
     const name = (profile && profile.fullName) || (tokenData.name || 'ORCID User');
     // Frictionless auto-create ONLY when ORCID gave a UNIQUE public email.
     if (profEmail && !(await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(profEmail).first())) {
-      const inst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
-      const role = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
-      const ctry = (profile && profile.country) || country || '';
+      // Everything ORCID hands back here is typed by the profile's owner, and it goes straight
+      // into the four columns the public stats page renders and the admin emails print — the
+      // one write path to those columns with no Latin-only check at all, so it reopened by
+      // itself what the register and update-profile handlers filter. Sanitized rather than
+      // rejected: a researcher whose ORCID record is in Cyrillic is legitimate, and refusing
+      // their login would be the wrong answer to a display problem. A dropped institution or
+      // role is the state ORCID already produces when it returns no employment record — the
+      // account page prompts for them. The name falls back the way the Google path does.
+      const rawInst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
+      const rawRole = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
+      const rawCtry = (profile && profile.country) || country || '';
+      const inst = isLatinish(rawInst) ? rawInst.trim().slice(0, 200) : '';
+      const role = isLatinish(rawRole) ? rawRole.trim().slice(0, 100) : '';
+      const ctry = isLatinish(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
+      const emailLocal = profEmail.split('@')[0];
+      const safeName = isLatinish(name) ? name.trim().slice(0, 100)
+        : (isLatinish(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
       const profileJson = profile ? JSON.stringify(profile) : null;
       const apiKey = 'hfd_' + generateId();
       const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
@@ -4335,21 +5779,25 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
       try {
         await env.DB.prepare(
           'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1)'
-        ).bind(name, profEmail, pwHash, inst, ctry, role, apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, orcidId, profileJson).run();
+        ).bind(safeName, profEmail, pwHash, inst, ctry, role, apiKey, apiKeyExpires, isAdmin, unsub, ip, ua, orcidId, profileJson).run();
         created = true;
       } catch (e) { /* concurrent same-orcid create won the UNIQUE index → use theirs */ }
       user = await env.DB.prepare('SELECT * FROM users WHERE orcid_id=?').bind(orcidId).first();
       if (created && user) {
         try {
-          await sendEmail(env, ADMIN_NOTIFY, 'New registration via ORCID (family SSO): ' + name,
-            adminNotificationEmail({ name, email: profEmail, institution: inst || '(via ORCID / accounts)', country: ctry, role: role || 'Not specified' }, ip, ua, country));
+          // safeName, not name: the notification should say what is actually in the row. The
+          // untouched ORCID record is still on the row in orcid_profile_json.
+          await sendEmail(env, ADMIN_NOTIFY, 'New registration via ORCID (family SSO): ' + safeName,
+            adminNotificationEmail({ name: safeName, email: profEmail, institution: inst || '(via ORCID / accounts)', country: ctry, role: role || 'Not specified' }, ip, ua, country));
         } catch (e) { /* non-fatal */ }
       }
     } else {
       // No unique email (private or already taken) → link-or-register: bounce to the
       // auth page carrying a signed prefill of the VERIFIED orcid_id. The user signs
       // in to link it, or registers with an email.
-      const prefill = await mintOrcidPrefill(env, orcidId, name);
+      // Audience 'idp': valid on accounts.elkassabgidata.com only, and only in this
+      // browser (the nonce cookie goes out with the 303 below). null → fail closed.
+      const prefill = await mintOrcidPrefill(env, orcidId, name, 'idp');
       if (!prefill) return oauthErrorPage('orcid_link_unavailable');
       const reg = await getRegistry(env);
       const client = reg.get(st.client_origin);
@@ -4359,8 +5807,11 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
         + '&redirect_uri=' + encodeURIComponent(client.redirect_exact)
         + '&state=' + encodeURIComponent(st.family_state || '')
         + '&code_challenge=' + encodeURIComponent(st.family_code_challenge || '')
-        + '&code_challenge_method=S256&orcid_prefill=' + encodeURIComponent(prefill);
-      return new Response(null, { status: 303, headers: { 'Location': dest, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' } });
+        + '&code_challenge_method=S256&orcid_prefill=' + encodeURIComponent(prefill.token);
+      // The nonce cookie is half the credential — without it the token verifies
+      // nowhere, including here. Referrer-Policy still no-referrer so the token in
+      // the Location doesn't leak onward.
+      return new Response(null, { status: 303, headers: { 'Location': dest, 'Set-Cookie': prefill.cookie, 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' } });
     }
   }
   if (!user || !user.is_active) return oauthErrorPage('account_unavailable');
@@ -4455,6 +5906,8 @@ function paramsFromForm(body) {
     codeChallenge: body.get('code_challenge') || '',
     method: body.get('code_challenge_method') || '',
     orcidPrefill: body.get('orcid_prefill') || '',
+    // The user's explicit "link this ORCID" tick. Absent = do not touch orcid_id.
+    linkOrcid: body.get('link_orcid') === '1',
   };
 }
 
@@ -4471,10 +5924,15 @@ async function applyNewsletterPrefs(env, userId, prefs) {
 }
 
 // Shared success tail: set ekd_session + 303 to the family callback with the code.
-async function loginAndRedirect(env, userId, ip, ua, p) {
-  // If this login/register completed an ORCID link-or-register, bind the verified
-  // orcid_id now (takeover-safe: only if this account has none and no other owns it).
-  if (p && p.orcidPrefill) await maybeLinkOrcid(env, userId, p.orcidPrefill);
+async function loginAndRedirect(env, request, userId, ip, ua, p) {
+  // ORCID is attached ONLY when the user ticked the box on the login form. This ran
+  // on EVERY login that carried a prefill, which made "sign in with your password"
+  // enough to have a stranger's ORCID iD written onto your account — and that iD is
+  // itself a login credential, so the stranger could then sign in as you. An identity
+  // that doubles as a credential must never be attached by a request the user did not
+  // knowingly make; p.linkOrcid is that knowing act, and maybeLinkOrcid still checks
+  // the token's browser binding, audience and single use on top.
+  if (p && p.orcidPrefill && p.linkOrcid) await maybeLinkOrcid(env, request, userId, p.orcidPrefill, 'idp');
   const idp = await createIdpSession(env, userId, ip, ua);
   const resp = await mintCodeAndRedirect(env, userId, p.clientId, p.row.redirect_exact, p.state, p.codeChallenge, 303);
   resp.headers.append('Set-Cookie', idp.cookie);
@@ -4489,7 +5947,10 @@ async function loginAndRedirect(env, userId, ip, ua, p) {
 // popup without continuing is harmless: the account exists, the email is sent, and
 // the IdP session makes the next site login one click.
 async function registerVerifyNotice(env, userId, ip, ua, p, email) {
-  if (p && p.orcidPrefill) await maybeLinkOrcid(env, userId, p.orcidPrefill);
+  // No maybeLinkOrcid here any more. Its only caller, handleAccountsRegister, already
+  // writes orcid_id in the INSERT itself (so the partial UNIQUE index arbitrates
+  // concurrent sign-ups) and burns the prefill row there. Running it again could only
+  // link an iD to an account this request did not create.
   const idp = await createIdpSession(env, userId, ip, ua);
   // 10-min code TTL: the user may detour to their inbox/spam (as the notice invites)
   // before clicking Continue, so the sub-second 60s default would expire the handoff.
@@ -4546,7 +6007,15 @@ function renderAuthPage(row, p, opts) {
   // ORCID link-or-register: banner + prefilled name + NO CAPTCHA (ORCID auth is the
   // human check; the signed orcid_prefill token stands in for Turnstile).
   const orcid = opts.orcid || null;
-  const orcidBanner = orcid ? '<div class="ok">&#10003; ORCID <strong>' + htmlEncode(orcid.orcidId) + '</strong> verified &mdash; <strong>Log in</strong> to link it to your ElkassabgiData account, or <strong>Sign up</strong> to create a new one.</div>' : '';
+  const orcidBanner = orcid ? '<div class="ok">&#10003; ORCID <strong>' + htmlEncode(orcid.orcidId) + '</strong> verified &mdash; <strong>Log in</strong> and tick the box to link it to your existing ElkassabgiData account, or <strong>Sign up</strong> to create a new one.</div>' : '';
+  // Opt-in, never pre-ticked. Linking an ORCID iD hands that iD the power to sign in
+  // as this account, so it takes a deliberate click — logging in must not do it by
+  // itself. A failed password attempt re-renders with the user's own earlier tick
+  // preserved (their choice, from their own same-origin POST), never invented.
+  const orcidLinkOptIn = orcid
+    ? '<label class="nl" style="margin:.6rem 0"><input type="checkbox" name="link_orcid" value="1"' + (p.linkOrcid ? ' checked' : '') +
+      '> Link ORCID ' + htmlEncode(orcid.orcidId) + ' to this account (you will be able to sign in with ORCID)</label>'
+    : '';
   const regNameVal = orcid ? htmlEncode(orcid.name || '') : '';
   const turnstileWidget = orcid ? '' : '<div class="cf-turnstile" data-sitekey="0x4AAAAAAC5ydfuRj9dEK0kY" data-response-field-name="turnstile_token" data-theme="auto"></div>';
   const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}" +
@@ -4575,6 +6044,7 @@ function renderAuthPage(row, p, opts) {
     '<div class="panel" id="pl"><form method="POST" action="/login">' + hiddenAuthParams(p) +
     '<input type="email" name="email" placeholder="Email" value="' + em + '" required autocomplete="email">' +
     '<input type="password" name="password" placeholder="Password" required autocomplete="current-password">' +
+    orcidLinkOptIn +
     '<button type="submit">Log in</button></form>' +
     '<p style="text-align:center;margin:.5rem 0 0"><a href="https://hfdatalibrary.com/pages/reset" target="_blank" rel="noopener" style="color:#9ca3af;font-size:.8rem;text-decoration:none">Forgot password?</a></p>' +
     '<div class="oauth"><a href="/v1/auth/google/start?' + oauthQ + '">Continue with Google</a>' +
@@ -4601,6 +6071,10 @@ function renderTwoFactorPage(pendingToken, p, error) {
   const S = "body{font-family:system-ui,sans-serif;background:#0f1729;color:#e5e7eb;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{background:#141c2e;border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:1.6rem;max-width:360px;width:92%;text-align:center}h1{font-size:1.1rem;color:#d4a843}input{width:100%;box-sizing:border-box;padding:.6rem;margin:.4rem 0;border-radius:8px;border:1px solid #2a3550;background:#0f1729;color:#e5e7eb;text-align:center;letter-spacing:.3em;font-size:1.2rem}button{width:100%;background:#d4a843;color:#0f1729;border:0;border-radius:8px;padding:.7rem;font-weight:700;cursor:pointer}.err{background:#7f1d1d;color:#fee;padding:.5rem;border-radius:8px;margin-bottom:.6rem;font-size:.9rem}";
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Two-factor</title><style>' + S + '</style></head><body><div class="card"><h1>Enter your 2FA code</h1>' + err +
     '<form method="POST" action="/login/2fa">' + hiddenAuthParams(p) +
+    // Carry the login form's ORCID tick across the second factor. Without it the
+    // user's explicit choice would be dropped on every 2FA account, and the link
+    // would silently not happen — the opposite failure, but still a surprise.
+    (p.linkOrcid ? '<input type="hidden" name="link_orcid" value="1">' : '') +
     '<input type="hidden" name="pending_token" value="' + htmlEncode(pendingToken) + '">' +
     '<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required autofocus>' +
     '<button type="submit">Verify</button></form></div></body></html>';
@@ -4609,7 +6083,8 @@ function renderTwoFactorPage(pendingToken, p, error) {
 // ── POST /login ──
 async function handleAccountsLogin(request, env, ip, ua, country) {
   if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
-  const rl = await checkRateLimit(env, ip, 'api:login');
+  // Peek only; the charge is in the wrong-password branch below (see handleLogin).
+  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:login', { charge: false });
   if (!rl.ok) return new Response('Too many attempts. Try again later.', { status: 429, headers: authPageHeaders });
   let body;
   try { body = await request.formData(); } catch { return new Response('Bad request', { status: 400, headers: { 'Cache-Control': 'no-store' } }); }
@@ -4617,11 +6092,14 @@ async function handleAccountsLogin(request, env, ip, ua, country) {
   const v = await validateAuthorizeParams(env, p);
   if (!v.ok) return new Response('<h1>Invalid request</h1>', { status: v.status, headers: authPageHeaders });
   p.row = v.row;
-  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, p.orcidPrefill) : null;
+  // Read-only (banner + the link checkbox's label). The actual link happens in
+  // loginAndRedirect, and only if the user ticked the box.
+  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, request, p.orcidPrefill, 'idp') : null;
   const email = (body.get('email') || '').toLowerCase();
   const password = body.get('password') || '';
   const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
   if (!user || !(await verifyPassword(password, user.password_hash))) {
+    await checkRateLimit(env, rlIpKey(ip), 'api:login');   // only wrong guesses cost anything
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
     return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Invalid email or password', loginEmail: email, orcid: orcidPre }), { status: 200, headers: authPageHeaders });
   }
@@ -4636,7 +6114,7 @@ async function handleAccountsLogin(request, env, ip, ua, country) {
   }
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
-  return await loginAndRedirect(env, user.id, ip, ua, p);
+  return await loginAndRedirect(env, request, user.id, ip, ua, p);
 }
 
 // ── POST /login/2fa ──
@@ -4650,15 +6128,21 @@ async function handleAccounts2faVerify(request, env, ip, ua, country) {
   p.row = v.row;
   const pendingToken = body.get('pending_token') || '';
   const code = body.get('code') || '';
-  // Cap TOTP guesses per pending token (IP-independent), so a compromised
-  // password can't brute-force the 6-digit code within the 10-min pending window.
-  const rl2 = await checkRateLimit(env, 'tfa:' + pendingToken, 'api:2fa');
+  // Cap TOTP guesses per ACCOUNT, not per pending token — see the api.* twin for the full
+  // reasoning: a token-keyed counter is only a batch size when whoever holds the password
+  // can mint a fresh token for each new batch. Pending row resolved first so the counter
+  // has a user to key on, and so an unknown token spends nobody's budget.
+  // §EXPIRY-COMPARE: datetime() on both sides, same as the api.* twin — this row is
+  // toISOString() too, so the 10-minute pending window really ran until midnight UTC.
+  const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND datetime(expires_at) > datetime("now")').bind(pendingToken).first();
+  if (!pending) return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Login expired — please sign in again.' }), { status: 200, headers: authPageHeaders });
+  const rl2 = await checkRateLimit(env, 'tfa:u' + pending.user_id, 'api:2fa');
   if (!rl2.ok) {
-    await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pendingToken).run();
+    // Every pending row for the account, not just this token: leaving the rest alive is
+    // precisely the minting loop this change exists to close.
+    await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(pending.user_id).run();
     return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Too many attempts — please sign in again.' }), { status: 200, headers: authPageHeaders });
   }
-  const pending = await env.DB.prepare('SELECT * FROM totp_pending WHERE token = ? AND expires_at > datetime("now")').bind(pendingToken).first();
-  if (!pending) return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Login expired — please sign in again.' }), { status: 200, headers: authPageHeaders });
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
   if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code))) {
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
@@ -4667,13 +6151,14 @@ async function handleAccounts2faVerify(request, env, ip, ua, country) {
   await env.DB.prepare('DELETE FROM totp_pending WHERE token = ?').bind(pendingToken).run();
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?').bind(ip, ua, user.id).run();
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
-  return await loginAndRedirect(env, user.id, ip, ua, p);
+  return await loginAndRedirect(env, request, user.id, ip, ua, p);
 }
 
 // ── POST /register ──  (duplicates handleRegister's validation/creation; api.* untouched)
 async function handleAccountsRegister(request, env, ip, ua, country) {
   if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
-  const rl = await checkRateLimit(env, ip, 'api:register');
+  // Flood guard only; the account cap is charged just before the INSERT (see handleRegister).
+  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:register:burst');
   if (!rl.ok) return new Response('Too many attempts. Try again later.', { status: 429, headers: authPageHeaders });
   let body;
   try { body = await request.formData(); } catch { return new Response('Bad request', { status: 400, headers: { 'Cache-Control': 'no-store' } }); }
@@ -4683,7 +6168,11 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   p.row = v.row;
   // ORCID link-or-register: a valid signed prefill proves ORCID auth (the human
   // check), so it stands in for the CAPTCHA and re-renders the banner on error.
-  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, p.orcidPrefill) : null;
+  // Verification is read-only — the CAPTCHA stand-in and the banner must survive a
+  // rejected form so an honest retry still works; the row is burned at the INSERT.
+  // Since the token is now bound to this browser and audienced to 'idp', a stranger's
+  // token cannot skip the CAPTCHA here either.
+  const orcidPre = p.orcidPrefill ? await verifyOrcidPrefill(env, request, p.orcidPrefill, 'idp') : null;
   const rerr = (msg, tab, extra) => new Response(renderAuthPage(v.row, p, Object.assign({ tab: tab || 'register', error: msg, orcid: orcidPre }, extra || {})), { status: 200, headers: authPageHeaders });
 
   if (!orcidPre && !(await verifyTurnstile(env, body.get('turnstile_token'), ip))) return rerr('CAPTCHA verification failed. Please try again.');
@@ -4710,11 +6199,30 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
     if (orcidTaken) return rerr('This ORCID is already linked to an ElkassabgiData account — please log in instead.', 'login');
   }
 
+  // Account cap, charged only now that the request is going to create something. The entry
+  // check above is the flood guard; see the api:register notes in RATE_LIMITS.
+  const acct = await checkRateLimit(env, rlIpKey(ip), 'api:register');
+  if (!acct.ok) return new Response('Too many attempts. Try again later.', { status: 429, headers: authPageHeaders });
+
   const passwordHash = await hashPassword(password);
   const apiKey = 'hfd_' + generateId();
   const unsubscribeToken = generateId();
-  const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase()) ? 1 : 0;
+  // NO SELF-SERVICE ADMIN. This used to be `ADMIN_EMAILS.includes(email) ? 1 : 0`, so
+  // anyone who registered one of the two (published, guessable) owner addresses received
+  // is_admin = 1 from a public unauthenticated endpoint. The only thing preventing it was
+  // that rows for both addresses already exist and a duplicate email 409s first — one
+  // deleted row from a full console takeover. Admin is granted out-of-band now: by the
+  // authenticated admin PUT, or directly in D1. A registration form must never mint it.
+  const isAdmin = 0;
   const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
+  // Burn the prefill now, after every rejection that a retry could fix, and before the
+  // one statement that writes orcid_id. Past this line the token is spent: posting the
+  // same string a second time creates no second account carrying that ORCID iD.
+  // burnOrcidPrefill: a §PF-LEGACY token has no ledger row, and the raw burn's "false" for
+  // a row that was never written would refuse an in-flight ORCID sign-up on its first try.
+  if (!(await burnOrcidPrefill(env, orcidPre))) {
+    return rerr('That ORCID confirmation has already been used. Please sign in with ORCID again.', 'login');
+  }
   // Set orcid_id in the INSERT itself (not deferred) so the partial UNIQUE index on
   // users.orcid_id makes concurrent same-token registrations COLLIDE — exactly one
   // account per ORCID login, no CAPTCHA-skip amplification. A UNIQUE collision (email
@@ -4722,23 +6230,30 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   try {
     await env.DB.prepare(
       'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
-    ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, isAdmin ? 1 : 0, hfSelected ? 1 : 0, unsubscribeToken, ip, ua, orcidPre ? orcidPre.orcidId : null, null).run();
+    // email_verified is 0 for EVERYONE. It was `isAdmin ? 1 : 0`, which on THIS path meant
+    // that registering an address from ADMIN_EMAILS produced a verified admin row, sent no
+    // verification email at all, and handed the registrant an admin session on the spot
+    // (see below) — a complete console takeover in one request, from a guessable address.
+    // The only thing preventing it was that rows for both admin addresses already exist.
+    ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, 0, hfSelected ? 1 : 0, unsubscribeToken, ip, ua, orcidPre ? orcidPre.orcidId : null, null).run();
   } catch (e) {
     return rerr('That account could not be created — the email or ORCID may already be registered. Please log in.', 'login', { loginEmail: email.toLowerCase() });
   }
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
   await applyNewsletterPrefs(env, user.id, prefs);
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, userCountry).run();
-  if (!isAdmin) {
+  {
+    // Sent to EVERYONE now, admins included. Admin rows are no longer born verified, so an
+    // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString();
     await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
     try { await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) { /* non-blocking */ }
   }
   try { await sendEmail(env, ADMIN_NOTIFY, `New registration: ${name} (${institution})`, adminNotificationEmail({ name, email: email.toLowerCase(), institution, country: userCountry, role }, ip, ua, country)); } catch (e) { /* non-blocking */ }
-  // Admins are auto-verified (email_verified=1) → straight into the site. Everyone
-  // else must confirm their email before downloading, so instead of the silent 303
-  // we show a "check your inbox — and your spam folder" notice with a Continue link.
-  if (isAdmin) return await loginAndRedirect(env, user.id, ip, ua, p);
+  // EVERYONE must confirm their email before downloading, so instead of a silent 303 we
+  // show a "check your inbox — and your spam folder" notice with a Continue link.
+  // Admins used to be auto-verified and logged straight in from here. Both are gone:
+  // together they turned "register with a guessable address" into an admin session.
   return await registerVerifyNotice(env, user.id, ip, ua, p, email.toLowerCase());
 }
