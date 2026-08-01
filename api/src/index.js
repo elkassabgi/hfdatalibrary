@@ -3151,6 +3151,21 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     return jsonRes({ error: 'That ORCID confirmation has already been used. Please sign in with ORCID again.' }, 409, cors);
   }
 
+  // The duplicate checks above are READ-THEN-WRITE and cannot be authoritative on their own:
+  // two registrations carrying the same email or the same verified ORCID iD can both pass their
+  // SELECT before either INSERT lands. What actually settles it is the database — a UNIQUE index
+  // on email and the partial UNIQUE idx_users_orcid on orcid_id (which existed in production and
+  // in no migration until 2026-08-01; see that file for why it is load-bearing rather than an
+  // optimisation).
+  //
+  // Unhandled, that arrived as an exception and a 500: the loser of the race was told the server
+  // was broken, when the truthful answer is the same 409 the SELECT would have produced a
+  // millisecond earlier. Rare, but it is exactly the moment a user is most likely to retry, and a
+  // 500 invites them to retry a request that will never succeed.
+  //
+  // Matching on the message rather than a code because D1 surfaces SQLite's text; anything that
+  // is NOT a constraint violation is re-thrown untouched, so this cannot swallow a real fault.
+  try {
   await env.DB.prepare(
     'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
   // email_verified is 0 for EVERYONE, admins included. It used to be `isAdmin ? 1 : 0`, so
@@ -3160,6 +3175,18 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // rows for them already exist (a duplicate email 409s above) — one deleted row and the
   // console was open to whoever registered first. Admins verify by email like everyone else.
   ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
+  } catch (e) {
+    const msg = String((e && e.message) || '');
+    if (/UNIQUE constraint failed|constraint failed/i.test(msg)) {
+      // Which constraint decides which answer the loser gets. Naming the wrong one would send
+      // someone to "log in with ORCID" for an address collision, or vice versa.
+      if (/orcid/i.test(msg)) {
+        return jsonRes({ error: 'That ORCID iD is already linked to an account. Please log in.' }, 409, cors);
+      }
+      return jsonRes({ error: 'Email already registered. Please log in.' }, 409, cors);
+    }
+    throw e;   // not a constraint problem — must not be disguised as one
+  }
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
 
