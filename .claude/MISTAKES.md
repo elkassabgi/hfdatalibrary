@@ -3258,3 +3258,28 @@ amount of re-reading my own output would have revealed.
 3. `catalog.db` is a shared writer. Anything writing it while the updater runs needs a
    busy_timeout, or it will lose work at random depending on lock timing — which is worse than
    failing consistently, because it fails on some items and not others.
+
+### R211 — I read a source's silence as "busy", and parked real work as blocked
+
+Task #34 said the noaa re-key was "blocked — the workstation pass owns those files". It was
+not blocked. The pass never touched noaa and never would: noaa has no adapter, and the
+orchestrator's no-adapter branch was the one `continue` in that loop that printed nothing.
+
+The log went `NOT DUE istat` → `>>> oecd/_all` with noaa sitting between them in the unit
+order and not one character about it in stdout or stderr. I filled that gap with a story —
+"it must be working on noaa" — and the story became a blocker in the task list that stopped
+me doing hours of available work.
+
+The branch even carried a comment asserting it was "never a silent skip", on the strength of
+a `PENDING` line printed AFTER the loop. During a multi-hour run that line does not exist yet,
+and if the run is killed it never exists at all. Every other `continue` in that loop prints
+where the reader is actually looking; this one only claimed to.
+
+**The rules.**
+1. Silence is not a status. Before recording anything as blocked BY a running job, find the
+   line where that job says it is doing the thing. If there is no such line, the blocker is
+   unproven and the observability defect is the real finding.
+2. A skip announced only in an end-of-run summary is a silent skip for the entire run. Print
+   it inline as well; the summary restates, it does not substitute.
+3. When a caller names an explicit work list, reconcile it. `--source` now fails fast on any
+   name that matches no unit, so a typo or a renamed source cannot quietly shrink the run.
