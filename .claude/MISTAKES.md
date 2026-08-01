@@ -3436,3 +3436,41 @@ response builder for the field name — and here it would have taken one command
 nothing, which is the answer. Same family as [[R213]] (a zero-test is not a completeness test)
 and R207 (present is not runnable): each time, the check I ran was real and the thing it proved
 was not the thing I reported.
+
+## R217 — I rebuilt a bug the same file had already fixed, twenty lines from the fix
+
+**What happened.** I added a cross-site "silent resume" so signing in on one family site is
+recognised on the others. It needed a guard against redirect loops, so I wrote a sessionStorage
+flag, `ekd_silent_done`, set before anything could fail and checked before bouncing. Loop-safe,
+and I verified that carefully.
+
+Ahmed then reported: log out of econ, log out of hf, log back in to hf, go to econ — still
+signed out. The flag was set by the earlier signed-out visit and never expired, so the site kept
+answering with the state from BEFORE the sign-in for the rest of the browser session.
+
+**Why this one stings.** The file I was editing had already hit this exact defect and already
+fixed it. Twenty lines below my new code, `assets/sso.js` carries `RECHECK_MS` and `MAX_TRIES`
+for its own older flag, under a comment that describes Ahmed's sequence almost verbatim:
+
+> open a browser → visit Econ (no session yet) → we ask HF, get "none", and set the flag → go to
+> hfdatalibrary and sign in → come back to Econ → the flag is still set, so we never ask again
+> and the visitor stays signed out for the rest of the session.
+
+I read that comment while placing my code — it is how I knew where step 1 ended and step 2
+began — and still wrote a permanent flag. The distinction I missed is that a flag can be
+correct as a LOOP GUARD and wrong as a CACHE: mine was doing both jobs, and the second job needs
+an expiry the first does not.
+
+**The tell.** A negative answer about someone else's state is a cached observation, not a fact.
+"No session at 14:02" stays true forever; "no session" does not. Any flag that records the
+absence of something the user can go and create needs to say WHEN, and mine stored `'1'`.
+
+**The rule.** Before adding state that suppresses a check, search the file for existing
+suppression state and read why it looks the way it does. If a neighbouring flag has an expiry, a
+counter, or a re-arm condition, the burden is on the new flag to justify having none — the
+neighbour paid for those in production. Concretely: `grep` the file for `sessionStorage`/
+`localStorage` writes before adding one, and diff your design against what is already there.
+
+Related: [[feedback_example_means_class]] and R208 — but inverted again. Those are about failing
+to generalise a fix ACROSS instances. This is failing to carry a fix FORWARD in time: the
+codebase had the answer, in the same file, and I wrote the pre-fix version anyway.
