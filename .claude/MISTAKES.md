@@ -3513,3 +3513,31 @@ last word before a live break.
 
 Related: R216 (tested the renderer, not the feature) and R207 (present is not runnable). Same
 family — the check I ran was real, and it was not a check of the thing I claimed.
+
+### R215 — I was one command from publishing data under a citation I had never checked
+
+I built the whr catalogue, resolved 164 country names, dry-ran it clean, and was about to run
+`--apply`. The citation I had written named the World Happiness Report and the Gallup World Poll,
+because that is what the source id and the registry said.
+
+What stopped me was a detail in the dry-run output: 14 of the 178 geography codes were `OWID_WRL`,
+`OWID_HIC`, `OWID_AFR` — Our World In Data's own aggregate codes, which the World Happiness Report
+does not publish. Reading the ingest log confirmed it: every direct WHR path returns 403 or 404
+and the run falls through to `ourworldindata.org/grapher/happiness-cantril-ladder.csv`.
+
+So the citation would have been wrong, the written permission on file is from Gallup/WHR for data
+we did not get from them, and the owner had already corrected me once for exactly this — taking
+data from an aggregator instead of the source, which is why two DBnomics fetchers were reverted.
+
+I checked the class rather than the instance and found two more: transparency_ti fetches OWID as
+its PRIMARY url with TI's own CDN as a "frequently 403" fallback, and gpi lists an OWID grapher
+CSV among its candidates. Both are LIVE and cited to their primary publisher.
+
+**The rules.**
+1. Before publishing a source, read where the data ACTUALLY came from — the ingest's URL list and
+   its log — not the source id, not the registry name, not the provider sidecar. Those record
+   intent; the log records what happened.
+2. A licence grant is from a specific party for specific data. If the retrieval path is a third
+   party, the grant may not cover it and the terms that apply may be someone else's.
+3. Odd values in a dry run are evidence, not noise. Fourteen unfamiliar country codes were the
+   only visible symptom of a wrong provenance chain, and I nearly scrolled past them.
