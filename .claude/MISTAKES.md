@@ -3582,3 +3582,50 @@ counts, because that group cannot object.
 
 Related: R216 and R218 are about verifying the wrong thing. This is about verifying the right
 thing and still being wrong, because correctness was never the question in doubt.
+
+## R220 — four first-pass checks gave me confident wrong answers in one day, in four different ways
+
+**The pattern.** Every one of these ran cleanly, produced a definite answer, and the answer was
+not about the thing I was claiming:
+
+    check I ran                        it said            the truth
+    ------------------------------------------------------------------------------------
+    node --check on the worker         syntax OK          esbuild: "Expected )" — the deploy
+                                                          had silently not happened
+    scan for response builders that    all clean          it matched the FIRST `return
+    drop a computed field                                 jsonRes({` in a 400-line function,
+                                                          not the one at that line
+    synthetic-token test for the       (never ran)        precondition never applied; the
+    reset reader                                          "result" was of an unmodified file
+    line-by-line scan for unguarded    19 hits            18 were fine; one was MY OWN code,
+    method calls on API fields                            guarded four lines above the use
+
+Two said "clean" when they had checked nothing. Two raised alarms that were artefacts. In every
+case the check was real code that executed successfully — the defect was in what it was
+measuring, not whether it ran.
+
+**What the four have in common.** Each is a PROXY: a cheap thing correlated with the expensive
+thing I actually cared about. `node --check` proxies for "the build will accept this". A regex
+scan proxies for "a human read every call site". A synthetic row proxies for "a real user's
+flow". Proxies are worth using — they are how one gets through 400 lines — but a proxy's result
+is a LEAD, and I kept filing it as a CONCLUSION.
+
+**The tell, and it is the same every time.** A proxy that agrees with what you hoped, on the
+first try, with no surprises. Three of these four came back exactly as expected and I nearly
+moved on. The one that saved me was noticing the deploy hadn't changed the live version — an
+observation from outside the check entirely.
+
+**The rules.**
+1. Verify with the tool that will actually process the artefact. For a Cloudflare worker that is
+   `wrangler deploy --dry-run` (real esbuild), not `node --check`.
+2. Assert the precondition INSIDE the test. Every one of these would have been caught by a line
+   asserting that the thing being tested was in the state assumed — `assert count == 1` before a
+   replace, `assert the reconstruction differs from the original` before running it.
+3. When a scan reports a defect, read the code before acting. When it reports NO defect, read a
+   sample anyway — "clean" is the answer that gets audited least and deserves it most.
+4. Corroborate from outside the check. `wrangler deployments list` after a deploy; the live URL
+   after a publish; the actual rendered output after a template change.
+
+Related: R216 (tested the renderer, not the feature), R218 (one instance of this), R213. The
+common ancestor is reporting the result of a check that could not have failed for the reason the
+thing was broken.
