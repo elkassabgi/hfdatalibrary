@@ -178,6 +178,17 @@
       if (sessionStorage.getItem('ekd_silent_done')) return;
       // Never bounce from the callback itself — that is the flow returning, not starting.
       if (location.pathname.indexOf('/auth/callback') === 0) return;
+
+      // NEVER bounce a crawler. Googlebot renders JavaScript, so without this it would execute
+      // the redirect and be carried off hfdatalibrary.com to accounts.elkassabgidata.com on the
+      // first view of every page it visits — turning every indexable URL into a redirect to a
+      // noindex auth host. That is an SEO self-inflicted wound on a site whose whole purpose is
+      // being found, and it would be invisible in testing because a human browser is signed in
+      // or bounces once and forgets. A bot is never signed in, so it would pay it on every page,
+      // every crawl. navigator.webdriver additionally covers headless/automation.
+      var ua = (navigator.userAgent || '');
+      if (navigator.webdriver) return;
+      if (/bot|crawl|spider|slurp|bingpreview|duckduckbot|baiduspider|yandex|facebookexternalhit|embedly|quora link preview|showyoubot|outbrain|pinterest|slackbot|vkshare|w3c_validator|whatsapp|telegrambot|discordbot|googlebot|applebot|petalbot|semrush|ahrefs|mj12bot|dotbot|lighthouse|headless/i.test(ua)) return;
       // PKCE needs SubtleCrypto, which needs a secure context. Without it, stay signed-out
       // rather than start a flow that cannot be completed.
       if (!(window.isSecureContext !== false && window.crypto && crypto.subtle && crypto.getRandomValues)) return;
