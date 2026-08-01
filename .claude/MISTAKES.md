@@ -2945,3 +2945,34 @@ when a script spans directories. And when a check contradicts an action that rep
 success, suspect the check first: an Edit that returned success has already proved the bytes
 changed, so a probe that disagrees is claiming something stronger than the tool that did the
 work. Confirm with a second method that resolves paths differently before believing it.
+
+### R206 — a helper that returns {} on failure cannot tell "nothing changed" from "I cannot read your data"
+
+I fixed five fetchers that merged data without reporting which series changed, so the
+orchestrator could re-derive their CSVs (contract §5.7). The commit said bls now reported
+cursors. It did not.
+
+bls stores `(series_id, obs_date, value, period)` — its DEDUP is
+`('series_id','obs_date','period')` — while `cursors_from_table` defaults to
+`key_col="series_key"`. The column lookup raised inside the helper, its `except: return {}`
+swallowed the error, and the fetcher reported an empty cursor set while looking perfectly
+wired up. Measured on a real store file: **0 cursors with the default key, 25 with
+`key_col="series_id"`**. bls holds 270,512,048 observations, so the practical effect was every
+one of its CSVs staying stale after a merge — the exact defect I was in the middle of fixing.
+
+**Why it survived my testing.** I proved the helper on a five-row table I built myself, which
+of course used the column names I had just typed. That tests the algorithm and nothing about
+the data. The bug lives entirely in the gap between the helper's assumed schema and each
+store's real one, so only a real parquet could show it. Running the same check against actual
+stores found it immediately, and a sweep of every fetcher that now reports cursors against its
+store's real columns showed bls was the only mismatch.
+
+**The rules.**
+1. A best-effort helper that returns an empty result on failure is indistinguishable from a
+   correct one that found nothing. Never accept "it ran without error" as evidence it worked —
+   count what it produced, on real data.
+2. Verify a change against the actual artefact, not a fixture you authored. A synthetic input
+   inherits your assumptions, including the wrong one.
+3. When several sources share a helper, the shared assumption (here: the key column) is the
+   thing to sweep. One mismatch out of seven is exactly the hit rate that makes spot-checking
+   useless and sweeping necessary.
