@@ -508,7 +508,12 @@ function fmtVol30(bytes, count) {
   const b = Number(bytes || 0);
   if (!b) return '<span class="muted">-</span>';
   const gb = b / 1e9;
-  const txt = gb >= 1 ? gb.toFixed(1) + ' GB' : Math.round(b / 1e6) + ' MB';
+  // Step up to TB past four digits of GB. The heaviest account on 2026-08-01 sits at
+  // 1,105 GB, and "1105.5 GB" is a number you have to stop and parse; "1.11 TB" is one you
+  // read. Same base (1e9/1e12) so the fair-use box and the column agree.
+  const txt = gb >= 1000 ? (b / 1e12).toFixed(2) + ' TB'
+            : gb >= 1    ? gb.toFixed(1) + ' GB'
+            : Math.round(b / 1e6) + ' MB';
   const style = gb >= 100 ? 'color:#b91c1c; font-weight:700;'
               : gb >= 50  ? 'color:#b45309; font-weight:600;' : '';
   const title = (count || 0) + ' download' + (count === 1 ? '' : 's') + ' in the last 30 days';
