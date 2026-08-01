@@ -148,6 +148,51 @@
 
   var EKD_READY = false, sdkSettled = false, paintGen = 0, paintedSignedIn = false, loggingOut = false;
 
+
+  // ── Camouflaged visitor counter ──
+  //
+  // Ahmed wanted the number present but not on display: readable if you select the text, and
+  // findable in the page source. Two mechanisms, because they are visible in different places:
+  //
+  //   1. A line in the footer coloured EXACTLY the footer background (#1a2332). Invisible while
+  //      unselected; drag across it and the selection highlight makes it readable. Deliberately
+  //      not `color:transparent` or `opacity:0` — several browsers keep transparent glyphs
+  //      transparent when selected, so the reveal would not work.
+  //   2. A comment node carrying the same numbers, so it shows in DevTools' element inspector.
+  //
+  // NOTE ON "VIEW SOURCE": view-source shows the raw HTML the server sent, and anything JS adds
+  // is NOT in it — it only appears in Inspect. The static comment baked into each page's footer
+  // at deploy time is what makes view-source work; this keeps the DOM copy current between
+  // deploys.
+  //
+  // Cost is nil: /v1/public-stats has been edge-cached for 5 minutes since 2026-08-01, so this
+  // is a cache hit for essentially every visitor and never touches D1.
+  function injectVisitorCounter() {
+    try {
+      var foot = document.querySelector('footer.footer .container') || document.querySelector('footer.footer');
+      if (!foot || document.getElementById('vc-line')) return;
+      fetch(API_BASE + '/v1/public-stats')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d || !foot) return;
+          var v = Number(d.total_visitors || 0).toLocaleString();
+          var pv = Number(d.total_page_views || 0).toLocaleString();
+          var c = Number(d.visitor_country_count || 0).toLocaleString();
+          var txt = 'Visitors: ' + v + '  ·  Page views: ' + pv + '  ·  Countries: ' + c;
+          var el = document.createElement('p');
+          el.id = 'vc-line';
+          // Same colour as the footer background = invisible until selected.
+          el.style.cssText = 'color:#1a2332; font-size:0.72rem; margin:1.25rem 0 0; letter-spacing:0.02em; user-select:text;';
+          el.textContent = txt;
+          foot.appendChild(el);
+          foot.appendChild(document.createComment(' ' + txt + ' '));
+        })
+        .catch(function () { /* cosmetic — never disturb the page */ });
+    } catch (e) {}
+  }
+  if (document.readyState !== 'loading') injectVisitorCounter();
+  else document.addEventListener('DOMContentLoaded', injectVisitorCounter);
+
   // ── §SILENT-RESUME — ask the IdP once whether this browser already has a family session ──
   //
   // Sign in on econdatalibrary, open hfdatalibrary, and you were told "Sign in". Not because
