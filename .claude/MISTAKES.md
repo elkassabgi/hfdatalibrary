@@ -3047,3 +3047,45 @@ was merely recorded — the same shape as R202. A comment in one file protects o
 on real stores (boc 2,741,005 rows / 12,862 keys; tcmb 511,229; riksbank 864,822; plus three
 smaller) and produce IDENTICAL cursor maps. A replacement that only stops crashing is worthless
 if it changes which series are reported fresh.
+
+## R208 — three consecutive rejections for fixing the instance named and not the class
+
+**What happened.** Building a bridge so a family sign-in on hfdatalibrary would be visible to
+econdatalibrary, I had three versions rejected 0/3 by adversarial review. Every rejection was
+the same shape: I fixed exactly the paths the previous attackers named, and missed their
+siblings.
+
+  v1  Minted a web session with `kind = NULL` via createSession. No logout path deletes a
+      NULL row, so the session was unrevocable for 30 days. Attackers found it.
+  v2  I made the session `kind='web'` and added the missing DELETE to "log out everywhere"
+      and to the SDK logout — and NOT to the token-reuse branch, the one that fires when a
+      credential is actually stolen. So the designed theft response killed the victim's
+      tokens and left the attacker's session alive. I also cleared the sessionStorage guard
+      in the nav's logout button and nowhere else, so an expired session left it set and the
+      account-switch bug returned unchanged.
+
+Each time I verified the specific findings were closed, reported them closed, and was right
+about that — and each time the attackers found the same defect one path over.
+
+**The tell I ignored.** In both rounds the finding was phrased as a list ("path A, path B do
+not delete it"). I treated the list as the specification. A list in a finding is a SAMPLE of
+where the reviewer looked, never an inventory of where the defect lives. The correct response
+to "these two logout paths miss it" is to enumerate every logout path in the file and check
+all of them, which takes one grep and would have caught the reuse branch both times.
+
+**What broke the run.** On the fourth change — making "log out everywhere" NULL-aware — I
+swept first: every predicate on `sessions.kind` and every `DELETE FROM sessions` in the file,
+classified one by one. That took a single search and found exactly one defective instance,
+which is now the whole fix. Had I done that in v1 the intervening two rounds would not exist.
+
+**The rule.** When a review names N instances of a defect, the deliverable is the ENUMERATION
+of that defect across the file, not N fixes. Before claiming a class is closed, run the search
+that would surface a missed sibling and paste its output. "I fixed the ones you found" is a
+different and much weaker claim than "here is every place this pattern occurs, and here is its
+status" — and only the second is worth reporting.
+
+**Related, and the reason this is expensive.** This is the same disease as
+[[feedback_example_means_class]] — a reported example is one instance of a class, sweep the
+whole surface, prove it with a zero-result check. That guidance was already in memory before
+this session started. Having the rule written down did not make me apply it; what made me
+apply it was three rejections in a row.
