@@ -4192,7 +4192,19 @@ async function handleAdmin(path, request, env, cors, ip) {
       // Fair use: trailing-30-day volume, the two columns this console is judged on.
       bytes_30d: 'bytes_30d', downloads_30d: 'downloads_30d',
     };
-    const sortCol = SORT_COLS[url.searchParams.get('sort')] || SORT_COLS.created_at;
+    // hasOwnProperty, not a bare lookup. SORT_COLS is an object literal, so it inherits from
+    // Object.prototype and a bare `SORT_COLS[input] || default` is not actually a whitelist:
+    // ?sort=constructor resolves to Object's constructor, ?sort=toString and ?sort=valueOf to
+    // native functions, ?sort=__proto__ to an object — all truthy, so none fall through to the
+    // default, and each is then string-interpolated straight into ORDER BY, producing e.g.
+    // `ORDER BY function Object() { [native code] } DESC`. The comment one line above says
+    // "never interpolate raw input into SQL", which is exactly what this did for four inputs.
+    // Behind the admin gate, so the reachable damage is a 500 rather than injection — but a
+    // whitelist that admits four keys nobody put in it is not a whitelist.
+    const sortKey = url.searchParams.get('sort') || '';
+    const sortCol = Object.prototype.hasOwnProperty.call(SORT_COLS, sortKey)
+      ? SORT_COLS[sortKey]
+      : SORT_COLS.created_at;
     const dir = (url.searchParams.get('dir') || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     // Abuse signals computed across ALL users (needed for row enrichment, the
@@ -4335,7 +4347,17 @@ async function handleAdmin(path, request, env, cors, ip) {
         created_at: u.created_at, last_login_at: u.last_login_at, last_login_ip: u.last_login_ip, last_login_ua: u.last_login_ua,
         login_count: u.login_count, download_count: u.download_count, total_bytes_downloaded: u.total_bytes_downloaded,
         notes: u.notes,
-        hide_institution: u.hide_institution ? true : false
+        hide_institution: u.hide_institution ? true : false,
+        // Computed above, then dropped on the floor. This handler returns an explicit field
+        // list rather than spreading `u`, so assigning u.bytes_30d / u.downloads_30d put them
+        // on an object the response never serialises. The list branch DOES spread, which is
+        // why the column worked and hid this: the panel rendered fmtVol30(undefined) as "-"
+        // and "in 0 dl" for every account, including the 1.10 TB one. That is not a blank, it
+        // is an affirmative statement of zero — on the one screen whose entire purpose is
+        // deciding whether a volume warrants revoking, directly contradicting the row it was
+        // opened from. The aggregate query was already running; only its result was lost.
+        bytes_30d: u.bytes_30d,
+        downloads_30d: u.downloads_30d
       },
       recent_logins: logins.results,
       recent_downloads: downloads.results
