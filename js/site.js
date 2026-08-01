@@ -175,9 +175,33 @@
       // Only when this origin genuinely has nothing. A stored credential means the normal
       // paths already work and must not be disturbed.
       if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
-      if (sessionStorage.getItem('ekd_silent_done')) return;
       // Never bounce from the callback itself — that is the flow returning, not starting.
       if (location.pathname.indexOf('/auth/callback') === 0) return;
+
+      // A "no session" ANSWER GOES STALE, so the flag has to re-arm.
+      //
+      // ekd_silent_done was a bare flag with no expiry: once a signed-out visit set it, this
+      // browser session never asked again. That produced exactly the sequence Ahmed reported on
+      // the econ side — log out of both, log back in to ONE, visit the OTHER, and be shown
+      // "Sign in" because the stale answer from before the sign-in was still on file.
+      //
+      // Re-armed on the two signals that mean the answer may have changed: arriving from a
+      // family site (the "I just signed in over there" case), and age (a bookmark, a typed
+      // address or an already-open tab carries no referrer). Bounded by a try counter so it can
+      // never run away — the clock decides responsiveness, the counter decides whether a loop is
+      // possible. Same division econ's older check settled on after the same bug.
+      var RESUME_RECHECK_MS = 60 * 1000, RESUME_MAX_TRIES = 3, TRIES_K = 'ekd_silent_tries';
+      var famRef = /^https:\/\/(www\.)?(econdatalibrary|elkassabgidata|ipdatalibrary)\.com(\/|$)/;
+      var doneAt = parseInt(sessionStorage.getItem('ekd_silent_done') || '0', 10) || 0;
+      var tries = parseInt(sessionStorage.getItem(TRIES_K) || '0', 10) || 0;
+      // '1' is what the first build wrote — treat as "checked, time unknown" and expire at once.
+      if (doneAt && tries < RESUME_MAX_TRIES &&
+          ((document.referrer && famRef.test(document.referrer)) || doneAt === 1 || (Date.now() - doneAt) > RESUME_RECHECK_MS)) {
+        sessionStorage.removeItem('ekd_silent_done');
+        doneAt = 0;
+      }
+      if (doneAt) return;
+      sessionStorage.setItem(TRIES_K, String(tries + 1));
 
       // NEVER bounce a crawler. Googlebot renders JavaScript, so without this it would execute
       // the redirect and be carried off hfdatalibrary.com to accounts.elkassabgidata.com on the

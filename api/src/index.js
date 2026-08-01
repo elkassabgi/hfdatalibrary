@@ -4704,7 +4704,51 @@ async function handleAdmin(path, request, env, cors, ip) {
 
 // ── Status ──
 
+// Cached for PUBLIC_STATS_TTL. This route is unauthenticated, has no rate limit — it is not even
+// passed `ip`, so it could not have one without a signature change — and every single call ran
+// TEN full-table D1 aggregates (COUNT over users, COUNT and SUM over download_log, day and week
+// windows, a DISTINCT-user country CTE, institutions, top tickers, by-version, registration
+// trend) plus an outbound Cloudflare GraphQL request. Anyone with curl could hold the database
+// at full scan indefinitely, and D1 refuses WRITES when it is saturated, so the failure lands on
+// logins and download logging rather than on this endpoint.
+//
+// A cache is the right control here rather than a limiter: the answer is identical for every
+// caller, so there is nothing to throttle per-client — the work simply should not be repeated.
+// Five minutes is far fresher than the numbers need (they move by single-digit counts a day) and
+// turns any volume of traffic into at most 12 computations an hour.
+//
+// ONLY THE BODY IS CACHED, never the Response. CORS headers are per-origin here (corsDecision
+// returns a different Access-Control-Allow-Origin for each registered family site), so storing a
+// whole Response would serve one origin's CORS headers to another the moment a second site asked
+// — a caching bug that presents as an intermittent CORS failure and is miserable to diagnose.
+// Re-wrapping the cached JSON with the CURRENT request's cors object makes that impossible.
+const PUBLIC_STATS_TTL = 300;
+
 async function handlePublicStats(env, cors) {
+  let cache = null;
+  const cacheKey = new Request('https://api.hfdatalibrary.com/__cache/public-stats', { method: 'GET' });
+  try {
+    cache = caches.default;
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      const body = await hit.text();
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+          'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL,
+          'X-Cache': 'HIT',
+          ...cors,
+        },
+      });
+    }
+  } catch (e) {
+    cache = null;   // Cache API unavailable (e.g. workers.dev) → compute, exactly as before
+  }
+
   // Public stats — no auth required. All data is aggregated, no PII exposed.
   // Total registered accounts (all rows, incl. deactivated) — matches the admin "Total Users" count.
   const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
@@ -4857,7 +4901,7 @@ async function handlePublicStats(env, cors) {
     // Analytics fetch failed — return stats without visitor data
   }
 
-  return jsonRes({
+  const payload = ({
     total_users: totalUsers?.c || 0,
     total_downloads: totalDownloads?.c || 0,
     total_bytes_served: totalBytes?.s || 0,
@@ -4875,7 +4919,28 @@ async function handlePublicStats(env, cors) {
     by_version: byVersion.results,
     registration_trend: regTrend.results,
     generated_at: new Date().toISOString(),
-  }, 200, cors);
+  });
+  const body = JSON.stringify(payload, null, 2);
+  // Store the BODY only — see the note above on why a whole Response would leak per-origin CORS.
+  if (cache) {
+    try {
+      await cache.put(cacheKey, new Response(body, {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL },
+      }));
+    } catch (e) { /* caching is an optimisation; never fail the request for it */ }
+  }
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL,
+      'X-Cache': 'MISS',
+      ...cors,
+    },
+  });
 }
 
 async function handleStatus(env, cors) {

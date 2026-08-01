@@ -94,7 +94,11 @@
     // is absent, so setting it here is what guarantees at most one bounce per browser session
     // — including when the IdP says login_required, when the state does not match, and when
     // the exchange errors. Any path that leaves the flag unset is a redirect loop.
-    ssSet(SS.done, '1');
+    // A TIMESTAMP, not '1'. The bouncer re-arms this flag once it goes stale, so it needs to
+    // know WHEN the answer was given. Writing a bare '1' is what made a signed-out answer
+    // permanent for the whole browser session and left someone who had just signed in on
+    // another family site looking signed out.
+    ssSet(SS.done, String(Date.now()));
 
     // login_required is the normal, expected answer for a signed-out visitor. Not an error.
     if (err || !code) { goBack(); return; }
