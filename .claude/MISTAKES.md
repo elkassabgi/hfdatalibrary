@@ -3118,3 +3118,51 @@ believe, and make the write conditional on exactly that being true. Two smells t
 have caught it while writing: the stamp was unconditional in a function whose own exit code
 was right there in scope, and the word "ran" in my comment was doing work that "succeeded"
 should have been doing.
+
+## R209 — my key-sharing detector silently dropped IPv6, and would have named three innocent users as thieves
+
+**The task.** Ahmed named his actual threat: "i dont want someone to take an api and share it
+with another person or sell it." Before building any control I went to measure whether sharing
+is happening, using `download_log` (user_id, api_key, ip_address, timestamp).
+
+**The chain of wrong answers, each corrected by the next test.**
+
+    metric                          top "offender"   verdict
+    distinct IPs                    206 (438 IPs)    WRONG - 3 subnets = one NAT pool
+    distinct /16 subnets            565 (12 nets)    WRONG - strictly sequential = one job
+    same-minute concurrency         26 accounts      WRONG - contaminated, see below
+    same-minute + same-ticker       206, 172, 216    WRONG - dual-stack artefact
+
+Every ranking I produced was overturned by the next, sharper test. That part is fine; it is
+what the tests are for. The defect is what I nearly did at step four.
+
+**The bug.** I extracted the subnet in SQL with `instr(ip_address,'.')`. For an IPv6 address
+there is no dot, `instr` returns 0, and `substr(...,1,0)` returns the empty string. So every
+IPv6 address on the service collapsed into ONE bucket named `''` — which my query then counted
+as a single subnet. It did not error, return NULL, or warn. It produced a plausible number.
+
+The damage that hid behind it: user 206's `''` bucket held 414 distinct IPv6 addresses. The
+prefixes were `2a09:bac5`/`2a09:bac1` and the IPv4 side was `104.28.` — all three are
+**Cloudflare WARP**. 206 is one person on a VPN whose client uses v6 and v4 at the same time:
+1,035 minutes with both stacks active. My "definitive" test scored that as 1,033 sharing
+events. 43 accounts use both stacks, so the entire 26-account concurrency set was the same
+artefact. The true answer is that there is NO evidence of key sharing anywhere in the data.
+
+**What saved it.** Not judgement — the `''` was visible in the output as a subnet with 414 IPs
+and an empty name, and I stopped to explain it instead of ranking it. Had the parse failed to
+something that *looked* like a subnet, I would have reported three named users to Ahmed as
+having shared or sold their keys. Those are real people, and that accusation does not come back.
+
+**The rule.** A detector's output is not evidence until its parser has been shown the shapes it
+will actually meet. Before ranking anything, assert the parse: count the rows where the
+extracted field is empty, NULL, or unchanged from the input, and require that count to be zero
+or explained. Here one line — `SELECT COUNT(*) WHERE instr(ip_address,'.')=0` — was the whole
+check, and it was available before the first ranking rather than after the fourth.
+
+The second half is dosage. Every benign explanation I found (NAT pool, cloud re-run, dual
+stack, dynamic IP) was one I only looked for BECAUSE I had decided not to accuse anyone on a
+single metric. An abuse detector is an accusation machine; the burden of proof scales with what
+being wrong costs the accused, and here it costs someone their account and their reputation
+with Ahmed. Related: [[feedback_example_means_class]] — but inverted. There the sin was fixing
+one instance of a real defect; here it was generalising from one metric to a defect that did
+not exist.
