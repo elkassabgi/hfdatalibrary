@@ -2003,13 +2003,50 @@ async function generateTotp(secret, timestamp) {
   return String(code % 1000000).padStart(6, '0');
 }
 
-async function verifyTotp(secret, userCode) {
+// CONSUMES the code, it does not merely check it.
+//
+// The ±1 window is standard and stays — clocks drift. What was missing is that a matching code
+// was accepted every time it was presented, so the same six digits remained valid for the whole
+// 90-second span. Anyone who observes one (a glance at a screen, a share, a code read aloud, a
+// proxy that logs form bodies) could replay it until it rolled. A second factor is meant to be a
+// ONE-TIME password; without consumption it was a 90-second password.
+//
+// The consume is a CONDITIONAL UPDATE, not a read-then-write. `totp_last_step < ?` inside the
+// statement means the database decides the race: two requests presenting the same code at the
+// same instant both compute the same step, both attempt the update, and exactly one reports
+// changes === 1. A SELECT-then-compare-then-UPDATE would let both through, which is the shape of
+// the very attack being closed.
+//
+// Strictly-newer also closes the drift side of the hole: after accepting a code, neither it nor
+// the previous window's code can be used again, so tolerating drift no longer means tolerating
+// replay of anything inside it.
+//
+// env/userId are optional so the function keeps working for a pure "is this code shaped right"
+// check, but every real call site passes them — a caller that omits them verifies without
+// consuming, which is the pre-existing behaviour and must never be the default for a login path.
+async function verifyTotp(secret, userCode, env, userId) {
   if (!userCode || !/^\d{6}$/.test(userCode)) return false;
   const now = Date.now();
   // Allow ±1 window (30s drift)
   for (let i = -1; i <= 1; i++) {
-    const expected = await generateTotp(secret, now + i * 30000);
-    if (expected === userCode) return true;
+    const t = now + i * 30000;
+    const expected = await generateTotp(secret, t);
+    if (expected === userCode) {
+      if (!env || !userId) return true;                       // shape-only check, no consumption
+      const step = Math.floor(t / 30000);
+      try {
+        const r = await env.DB.prepare(
+          'UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)'
+        ).bind(step, userId, step).run();
+        // 0 rows changed = this step was already spent (a replay) or an older window was
+        // presented after a newer one. Both are refusals.
+        return !!(r && r.meta && r.meta.changes === 1);
+      } catch (e) {
+        // A failed consume must FAIL CLOSED. Returning true here would restore the replay hole
+        // exactly when the database is unhealthy.
+        return false;
+      }
+    }
   }
   return false;
 }
@@ -3365,7 +3402,7 @@ async function handle2faEnable(request, env, cors) {
   const dbUser = await env.DB.prepare('SELECT totp_secret FROM users WHERE id = ?').bind(userId).first();
   if (!dbUser || !dbUser.totp_secret) return jsonRes({ error: 'Run setup first' }, 400, cors);
 
-  const valid = await verifyTotp(dbUser.totp_secret, code);
+  const valid = await verifyTotp(dbUser.totp_secret, code, env, userId);
   if (!valid) return jsonRes({ error: 'Invalid code. Check your authenticator app and try again.' }, 400, cors);
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').bind(userId).run();
@@ -3392,7 +3429,7 @@ async function handle2faDisable(request, env, cors) {
   const passwordOk = await verifyPassword(password, dbUser.password_hash);
   if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
 
-  const codeOk = await verifyTotp(dbUser.totp_secret, code);
+  const codeOk = await verifyTotp(dbUser.totp_secret, code, env, userId);
   if (!codeOk) return jsonRes({ error: 'Invalid 2FA code' }, 401, cors);
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').bind(userId).run();
@@ -3438,7 +3475,7 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
   if (!user || !user.totp_secret) return jsonRes({ error: 'Invalid state' }, 400, cors);
 
-  const valid = await verifyTotp(user.totp_secret, code);
+  const valid = await verifyTotp(user.totp_secret, code, env, user.id);
   if (!valid) {
     await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)')
       .bind(user.id, ip, ua, country).run();
@@ -6767,7 +6804,7 @@ async function handleAccounts2faVerify(request, env, ip, ua, country) {
     return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Too many attempts — please sign in again.' }), { status: 200, headers: authPageHeaders });
   }
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
-  if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code))) {
+  if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code, env, user.id))) {
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
     return new Response(renderTwoFactorPage(pendingToken, p, 'Invalid 2FA code'), { status: 200, headers: authPageHeaders });
   }

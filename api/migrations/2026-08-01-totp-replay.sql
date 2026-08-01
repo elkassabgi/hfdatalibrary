@@ -1,0 +1,20 @@
+-- TOTP codes were verified but never CONSUMED.
+--
+-- verifyTotp accepts a ±1 window to tolerate clock drift, which is standard and correct — but it
+-- returned true every time the code matched and recorded nothing, so the same six digits stayed
+-- valid for the whole 90-second span. Anyone who observes one (a shoulder glance, a screen share,
+-- a code read aloud over the phone, a proxy that logs form bodies) can replay it until it rolls.
+-- A second factor is supposed to be a ONE-TIME password; without consumption it is a 90-second
+-- password.
+--
+-- totp_last_step stores the RFC-6238 time step (unix seconds / 30) of the most recently accepted
+-- code. Verification now advances it with a conditional UPDATE that only succeeds when the
+-- presented step is strictly newer, so a replay of the same code updates 0 rows and is refused —
+-- and so is any older code from earlier in the window, which closes the drift-tolerance side of
+-- the same hole.
+--
+-- NULL means "no code accepted yet", which every existing row is: measured 2026-08-01, 0 of 599
+-- accounts have 2FA enabled, so this column starts empty and nobody is affected by its
+-- introduction. INTEGER rather than a timestamp because the comparison must be on the step
+-- itself; comparing wall-clock times would let two codes inside one step both pass.
+ALTER TABLE users ADD COLUMN totp_last_step INTEGER;
