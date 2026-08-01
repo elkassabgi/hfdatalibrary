@@ -5047,6 +5047,44 @@ async function handleAuthorizeGet(request, env, url) {
     return new Response('<h1>Redirect URI mismatch</h1>', { status: 400, headers: secHeaders });
   }
   const user = await getIdpSessionUser(request, env);
+
+  // §PROMPT-NONE — silent cross-site resume.
+  //
+  // THE PROBLEM THIS SOLVES. ekd_session is host-only on accounts.elkassabgidata.com, and the
+  // SDK's tokens live in localStorage, which is per-origin. So signing in on econdatalibrary
+  // leaves hfdatalibrary with an empty localStorage: EKD.getAccessToken() returns null without
+  // ever asking the IdP, js/site.js paints "Sign in", and the user who just signed in one tab
+  // ago is told they are a stranger. The IdP knew all along — nobody asked it.
+  //
+  // Nothing could ask it silently. GET /authorize with a live session renders a CONSENT PAGE
+  // that needs a click, and EKD.login() opens a popup that needs a click. prompt=none is the
+  // missing third door: same validation, no UI, answer immediately either way.
+  //
+  // WHY SKIPPING CONSENT IS SOUND HERE. The consent page and its gesture token defend the POST
+  // against cross-site form submission. There is no POST on this path — it mints a code bound
+  // to (user, client_id, redirect_exact, state, code_challenge) and 303s it to the client's
+  // OWN pre-registered callback. A hostile site can start this flow, but the code lands on
+  // hfdatalibrary.com/auth/callback, not on the attacker, and redeeming it needs the PKCE
+  // verifier that never left the initiating page. What an attacker does learn is one bit —
+  // whether this browser has a family session — which is why it is confined to clients already
+  // in the registry with status active and an exact redirect match, all checked above. These
+  // are Ahmed's own sites sharing one account by design; asking a user to re-consent to
+  // hfdatalibrary on every visit is friction that buys nothing.
+  //
+  // The error goes in the FRAGMENT, not the query string, for the same reason the success code
+  // does: a fragment is not sent to the server, so it stays out of Cloudflare's access log,
+  // out of Referer, and out of anything downstream of the callback.
+  if (q.get('prompt') === 'none') {
+    if (!user) {
+      const dest = redirectUri + '#error=login_required&state=' + encodeURIComponent(state);
+      return new Response(null, {
+        status: 303,
+        headers: { 'Location': dest, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
+      });
+    }
+    return await mintCodeAndRedirect(env, user.id, clientId, redirectUri, state, codeChallenge, 303);
+  }
+
   if (!user) {
     // No IdP session → the real login/register auth page (M2b-2a). Uses the
     // Turnstile-permitting CSP; on submit, /login or /register sets ekd_session

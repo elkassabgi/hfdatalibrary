@@ -20,23 +20,104 @@
   <div class="m"><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in…</p><p class="ret"><a href="/">Return to the site</a></p></div>
   <script>
   (function () {
-    var hasCode = false, hasOpener = false;
-    try {
-      var p = new URLSearchParams(location.hash.slice(1));
-      var msg = { type: 'ekd_auth', code: p.get('code') || '', state: p.get('state') || '' };
-      hasCode = !!msg.code;
-      try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) {}
-      try { history.replaceState(null, '', location.pathname); } catch (e) {}
-      // Deliver on BOTH channels every time; the SDK de-dupes by state.
-      try { if (hasOpener) window.opener.postMessage(msg, location.origin); } catch (e) {}
+    'use strict';
+    // This page now serves TWO arrivals, and they are told apart by window.opener.
+    //
+    //  1. POPUP (unchanged)  — EKD.login() opened us; the SDK is alive in the opener and owns
+    //     the PKCE verifier, so we hand the code over by postMessage/BroadcastChannel and close.
+    //  2. TOP-LEVEL (new)    — the silent prompt=none bounce navigated this tab here. There is
+    //     no opener and no SDK listening: whatever we do not do here is not done at all. So we
+    //     redeem the code ourselves, write the tokens into THIS origin's localStorage in the
+    //     exact shape the SDK reads, and navigate back to the page the user was on.
+    //
+    // Without branch 2 the silent flow ends on this screen: the code is delivered to nobody
+    // and the user lands on "Completing sign-in…" forever.
+    var ACCOUNTS = 'https://accounts.elkassabgidata.com';
+    var SS = { v: 'ekd_silent_v', s: 'ekd_silent_s', r: 'ekd_silent_r', done: 'ekd_silent_done' };
+
+    function ss(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+    function ssDel(k) { try { sessionStorage.removeItem(k); } catch (e) {} }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
+
+    // Same-origin only. The return URL comes from sessionStorage, which is same-origin by
+    // definition, but it is still a value that gets fed to location.replace — so it is checked
+    // rather than trusted. A single leading slash and no second slash rules out "//evil.com"
+    // (protocol-relative) and any absolute URL.
+    function safeReturn(u) {
+      if (typeof u !== 'string' || u.charAt(0) !== '/' || u.charAt(1) === '/') return '/';
+      return u;
+    }
+
+    function goBack() {
+      var dest = safeReturn(ss(SS.r) || '/');
+      ssDel(SS.v); ssDel(SS.s); ssDel(SS.r);
+      try { location.replace(dest); } catch (e) { location.href = dest; }
+    }
+
+    var p, code, state, err, hasOpener = false;
+    try { p = new URLSearchParams(location.hash.slice(1)); } catch (e) { p = new URLSearchParams(''); }
+    code = p.get('code') || '';
+    state = p.get('state') || '';
+    err = p.get('error') || '';
+    try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) {}
+    // Strip the fragment immediately — a single-use code should not sit in the address bar or
+    // in history where a later reader could copy it.
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+
+    // ── Branch 1: popup. Unchanged behaviour, and it stays FIRST so the existing login flow
+    // is untouched by anything below.
+    if (hasOpener) {
+      var msg = { type: 'ekd_auth', code: code, state: state };
+      try { window.opener.postMessage(msg, location.origin); } catch (e) {}
       if ('BroadcastChannel' in window) {
-        try { var bc = new BroadcastChannel('ekd_auth'); bc.postMessage(msg); setTimeout(function(){ try{ bc.close(); }catch(e){} }, 400); } catch (e) {}
+        try {
+          var bc = new BroadcastChannel('ekd_auth');
+          bc.postMessage(msg);
+          setTimeout(function () { try { bc.close(); } catch (e) {} }, 400);
+        } catch (e) {}
       }
-    } catch (e) {}
-    // Diagnostic beacon → shows in the worker tail so we can confirm the callback
-    // actually ran on the returning-user flow (temporary; remove after debugging).
-    try { new Image().src = 'https://accounts.elkassabgidata.com/sdk/ekd-sso.js?cbdiag=1&code=' + (hasCode ? 1 : 0) + '&opener=' + (hasOpener ? 1 : 0) + '&t=' + Date.now(); } catch (e) {}
-    setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
+      setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
+      return;
+    }
+
+    // ── Branch 2: top-level silent return.
+    // Mark the attempt as spent BEFORE anything can fail. site.js only bounces when this flag
+    // is absent, so setting it here is what guarantees at most one bounce per browser session
+    // — including when the IdP says login_required, when the state does not match, and when
+    // the exchange errors. Any path that leaves the flag unset is a redirect loop.
+    ssSet(SS.done, '1');
+
+    // login_required is the normal, expected answer for a signed-out visitor. Not an error.
+    if (err || !code) { goBack(); return; }
+
+    var verifier = ss(SS.v), expectState = ss(SS.s);
+    // State must match the value this browser generated. A code arriving with a state we did
+    // not mint is someone else's flow (or a forgery) and must not be redeemed.
+    if (!verifier || !expectState || state !== expectState) { goBack(); return; }
+
+    fetch(ACCOUNTS + '/token/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code, code_verifier: verifier, client_origin: location.origin })
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.access_token) {
+          // Written in the SDK's own shape so EKD.getAccessToken() adopts them with no
+          // knowledge that this page exists: ekd_rt is the raw refresh token, ekd_at is
+          // {t: token, e: absolute-expiry-ms}. Diverging here would mean the tokens are
+          // stored and still invisible.
+          try {
+            if (d.refresh_token) localStorage.setItem('ekd_rt', d.refresh_token);
+            localStorage.setItem('ekd_at', JSON.stringify({
+              t: d.access_token,
+              e: Date.now() + (Number(d.expires_in || 900) * 1000)
+            }));
+          } catch (e) {}
+        }
+      })
+      .catch(function () {})
+      .then(function () { goBack(); });
   })();
   </script>
 </body>

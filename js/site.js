@@ -148,6 +148,71 @@
 
   var EKD_READY = false, sdkSettled = false, paintGen = 0, paintedSignedIn = false, loggingOut = false;
 
+  // ── §SILENT-RESUME — ask the IdP once whether this browser already has a family session ──
+  //
+  // Sign in on econdatalibrary, open hfdatalibrary, and you were told "Sign in". Not because
+  // the session had ended, but because nothing here could see it: ekd_session is host-only on
+  // accounts.elkassabgidata.com, and the SDK's tokens live in localStorage, which is
+  // per-origin. EKD.getAccessToken() returns null off an empty ekd_rt WITHOUT ever contacting
+  // the IdP, so hf concluded "signed out" from its own ignorance. The IdP knew; nobody asked.
+  //
+  // This asks, exactly once per browser session, by navigating to /authorize?prompt=none. A
+  // TOP-LEVEL navigation is the point: ekd_session is SameSite=Lax, which a top-level GET
+  // carries and a hidden iframe does not — and an iframe would additionally be third-party,
+  // so Safari, Firefox and Chrome-incognito would strip the cookie and report a signed-in
+  // user as signed out. The redirect costs a flash; an iframe costs correctness.
+  //
+  // The IdP answers immediately either way and comes straight back to /auth/callback, which
+  // redeems the code and returns the user to this exact URL.
+  //
+  // LOOP SAFETY, which is the thing that makes this dangerous if done casually: the callback
+  // sets ekd_silent_done BEFORE it can fail, on every path including login_required and a
+  // failed exchange. This function refuses to start when that flag is present. So a
+  // signed-out visitor pays one bounce per browser session and never a second, and a broken
+  // IdP degrades to "signed out" rather than to an infinite redirect.
+  (function silentResume() {
+    try {
+      // Only when this origin genuinely has nothing. A stored credential means the normal
+      // paths already work and must not be disturbed.
+      if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
+      if (sessionStorage.getItem('ekd_silent_done')) return;
+      // Never bounce from the callback itself — that is the flow returning, not starting.
+      if (location.pathname.indexOf('/auth/callback') === 0) return;
+      // PKCE needs SubtleCrypto, which needs a secure context. Without it, stay signed-out
+      // rather than start a flow that cannot be completed.
+      if (!(window.isSecureContext !== false && window.crypto && crypto.subtle && crypto.getRandomValues)) return;
+
+      var b64url = function (bytes) {
+        var s = '';
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      };
+      var rand = function () { return b64url(crypto.getRandomValues(new Uint8Array(32))); };
+
+      var verifier = rand(), state = rand();
+      crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (d) {
+        var challenge = b64url(new Uint8Array(d));
+        // Stored for the callback: the verifier it must present, the state it must match, and
+        // where to put the user back. sessionStorage (not localStorage) so a second tab cannot
+        // consume this tab's flow and the values die with the tab.
+        sessionStorage.setItem('ekd_silent_v', verifier);
+        sessionStorage.setItem('ekd_silent_s', state);
+        sessionStorage.setItem('ekd_silent_r', location.pathname + location.search + location.hash);
+
+        var redirectUri = location.origin + '/auth/callback';
+        var url = ACCOUNTS_BASE + '/authorize?response_type=code&prompt=none'
+          + '&client_id=' + encodeURIComponent(location.origin)
+          + '&redirect_uri=' + encodeURIComponent(redirectUri)
+          + '&state=' + encodeURIComponent(state)
+          + '&code_challenge=' + encodeURIComponent(challenge)
+          + '&code_challenge_method=S256';
+        // replace(), not assign(): the bounce must not become a history entry, or Back from
+        // the restored page would land the user right back in the redirect.
+        location.replace(url);
+      }).catch(function () {});
+    } catch (e) { /* storage blocked / crypto unavailable → stay signed-out, never throw */ }
+  })();
+
   // Load the SDK for site.js's OWN use; feature-detect everywhere. onerror / a 4 s timeout still
   // "settles" so the optimistic chip can never hang if accounts.* is blocked or slow.
   function settleSdk() { if (!sdkSettled) { sdkSettled = true; paintUserWidget(); } }
