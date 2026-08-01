@@ -4986,6 +4986,19 @@ async function handleAdmin(path, request, env, cors, ip) {
 // Re-wrapping the cached JSON with the CURRENT request's cors object makes that impossible.
 const PUBLIC_STATS_TTL = 300;
 
+// Title-case an institution ONLY when the user typed it entirely in lower case. Anything
+// containing an uppercase letter is left exactly as written, so acronyms and deliberate
+// capitalisation survive untouched.
+const INST_SMALL_WORDS = new Set(['of', 'the', 'and', 'at', 'for', 'in', 'de', 'la', 'du', 'von', 'van']);
+function titleCaseInstitution(name) {
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw || /[A-Z]/.test(raw)) return raw;          // has caps -> author's choice, leave it
+  return raw.split(/\s+/).map(function (w, i) {
+    if (i > 0 && INST_SMALL_WORDS.has(w)) return w;   // "of", "the" stay lowercase mid-name
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(' ');
+}
+
 async function handlePublicStats(env, cors) {
   let cache = null;
   const cacheKey = new Request('https://api.hfdatalibrary.com/__cache/public-stats', { method: 'GET' });
@@ -5059,6 +5072,15 @@ async function handlePublicStats(env, cors) {
     'privat', 'perso', 'persoonlijk', 'full-time employee', 'company', 'exploring',
     'university', 'labs', 'new in fin', 'test university', 'rebel', 'myass',
     '1qaz2wsx', 'gz', 'berln',
+    // added 2026-08-01, every one observed in the LIVE list: placeholders that read as
+    // institutions, and numeric/near-empty junk. 'academics', 'research' and
+    // 'personal research' describe what someone does, not where they are.
+    'personal research', 'academics', 'academic', 'research', 'researcher',
+    'finance', 'trading', 'quant', 'ah', 'aa', 'abc', 'qwerty', 'asd',
+    // Observed in the live list on 2026-08-01. 'university of example' is a placeholder that
+    // reads as a real school, which is worse than obvious junk; 'bank' and 'business' name a
+    // sector, not an employer.
+    'university of example', 'example university', 'bank', 'business', 'consumer/nerd',
   ];
   // Canonical names so the SAME school typed different ways (alias / typo /
   // locale / casing) merges into ONE row instead of splitting its count across
@@ -5076,6 +5098,21 @@ async function handlePublicStats(env, cors) {
     'oxford university': 'University of Oxford',
     'old dominion university': 'Old Dominion University',
     'fordham': 'Fordham University',
+    // added 2026-08-01. Each of these was splitting ONE school across several rows in the
+    // live list: uca / Uca / University of Central Arkansas were three entries totalling 8
+    // users while each looked like 2-4. Added only where the abbreviation is unambiguous,
+    // and for uca and nus the full name already appears in the data beside the acronym, so
+    // the merge is evidenced rather than assumed.
+    'uca': 'University of Central Arkansas',
+    'nus': 'National University of Singapore',
+    'uiuc': 'University of Illinois',
+    'ucla': 'University of California, Los Angeles',
+    'hkust': 'Hong Kong University of Science and Technology',
+    'cuhk': 'Chinese University of Hong Kong',
+    'nyu': 'New York University',
+    'mit': 'Massachusetts Institute of Technology',
+    'lse': 'London School of Economics',
+    'babson collage': 'Babson College',   // unambiguous misspelling of a real school
   };
   const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
   // Fetch ALL non-junk institutions (no LIMIT) so aliases can merge BEFORE the
@@ -5091,7 +5128,22 @@ async function handlePublicStats(env, cors) {
   for (const row of (instRaw.results || [])) {
     const name = (row.institution || '').trim();
     if (!name) continue;
-    const canon = INSTITUTION_ALIASES[name.toLowerCase()] || name;
+    // Case is canonicalised BEFORE merging, which is what surfaces schools typed in lowercase.
+    // "university of chicago" was sitting in the live list looking like junk and sorting among
+    // the placeholders; it is a real university that a real person typed in lower case.
+    //
+    // Only strings with NO uppercase at all are touched. That protects legitimate acronyms —
+    // CUIT, HKUST, EDHEC keep their shape — while fixing the free-text entries that browsers
+    // and phones lowercase. Small words stay lowercase except in first position, so it reads
+    // "University of Chicago", not "University Of Chicago".
+    //
+    // It also MERGES case variants for free: "cornell university" and "Cornell University" now
+    // produce the same key instead of two rows splitting one school's count.
+    // Drop values that cannot be an institution's name whatever the spelling: pure digits
+    // ('1', '123') and one-character entries. A literal blocklist cannot cover these — there
+    // are infinitely many — so they are filtered by SHAPE here instead.
+    if (/^[0-9\s.,\-]+$/.test(name) || name.trim().length < 2) continue;
+    const canon = INSTITUTION_ALIASES[name.toLowerCase()] || titleCaseInstitution(name);
     instMerged[canon] = (instMerged[canon] || 0) + row.users;
   }
   const institutions = {
