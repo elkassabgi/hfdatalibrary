@@ -3629,3 +3629,29 @@ observation from outside the check entirely.
 Related: R216 (tested the renderer, not the feature), R218 (one instance of this), R213. The
 common ancestor is reporting the result of a check that could not have failed for the reason the
 thing was broken.
+
+### R216 — every background job this session reported success, because my wrapper always did
+
+I ran long jobs as `python … > logs/x.log 2>&1; echo "exit=$?"`. The shell reports the exit
+status of the LAST command in that sequence, and `echo` always succeeds — so the completion
+notification said "exit code 0" no matter what happened. Every derive, every sync, every
+measurement I backgrounded today came back green by construction.
+
+It went unnoticed because I read the logs anyway. It nearly cost me on the usda D1 sync: the
+notification said exit 0, and the sync had actually died on its first chunk with Cloudflare
+"Authentication error [code: 10000]", executing 1 of 93 files. I only caught it because the log
+tail looked short for 93 chunks. Had I trusted the notification, D1 would have kept 25 stale
+usda rows advertising series whose R2 objects I had already deleted — the catalogue listing
+404s — and I would have reported the source as synced.
+
+The `echo` was there to surface the code in the terminal, which is precisely the thing the
+notification already does. I added a display convenience that destroyed the signal it displayed.
+
+**The rules.**
+1. Background a command as `cmd > log 2>&1` and nothing else. The task's exit code is then the
+   command's. Never append `; echo`, `; tail`, or any other command — each one overwrites the
+   status with its own.
+2. If a wrapper is unavoidable, use `cmd > log 2>&1; rc=$?; …; exit $rc` so the status survives.
+3. A green result from a harness I wrote is evidence about the harness first and the work
+   second. Check what the harness would report on FAILURE before trusting what it reports on
+   success.
