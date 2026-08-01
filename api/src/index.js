@@ -3243,7 +3243,8 @@ async function handleDeleteAccount(request, env, cors) {
   if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
 
   // Delete all user data (personal info removed; anonymized counts remain in aggregated queries)
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+  // Same as the accounts.* twin: everything, not just sessions.
+  await revokeAllUserCredentials(env, userId);
   await env.DB.prepare('DELETE FROM login_history WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(userId).run();
@@ -5120,10 +5121,29 @@ async function handleAccountLogout(request, env) {
   if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
   const user = await getIdpSessionUser(request, env);
   if (user) {
-    // Log out EVERYWHERE: drop the SSO session + every live family access token,
-    // and revoke every refresh chain for this account.
-    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND kind IN ('idp_master','family_access')").bind(user.id).run();
-    await env.DB.prepare("UPDATE sso_refresh_tokens SET revoked = 1 WHERE user_id = ?").bind(user.id).run();
+    // Log out EVERYWHERE means EVERY session, not an enumerated subset.
+    //
+    // This read `kind IN ('idp_master','family_access')`. Legacy web sessions carry
+    // kind = NULL — the column was added by 2026-07-17-m1-sso.sql with no default and
+    // createSession has never set it — and SQL `IN` cannot match NULL. So the control that
+    // exists to end every session silently skipped the largest group of them. Measured
+    // against production on 2026-08-01: 384 live NULL-kind sessions versus 164 idp_master
+    // and 3 family_access. Both the Google callback and the ORCID callback create them and
+    // set hfd_session on api.hfdatalibrary.com, so this is the ordinary state for most of
+    // the 364 Google and 16 ORCID users.
+    //
+    // What that cost: someone who loses a laptop clicks "log out everywhere", is told it
+    // worked, and their session lives its full 30 days. /v1/auth/sso authenticates from
+    // exactly that cookie, so the next person to use that browser gets their api_key and
+    // their name handed to econdatalibrary — and for an is_admin row, the admin console.
+    //
+    // Routed through the ONE helper rather than a hand-rolled pair of statements. Deleting
+    // sessions and revoking chains still leaves live download tokens, pending-2FA rows,
+    // unspent SSO codes and outstanding password-reset links — each of them a way back into
+    // the account this button promises to close. revokeAllUserCredentials is the only place
+    // that knows the full list, it deletes sessions by user_id with no kind predicate (so
+    // the NULL-blindness above cannot recur), and five other call sites already use it.
+    await revokeAllUserCredentials(env, user.id);
   } else {
     // No valid session — still clear whatever ekd_session cookie is present.
     const cookie = request.headers.get('cookie') || '';
@@ -5258,7 +5278,10 @@ async function handleAccountDelete(request, env) {
     return new Response(renderAccountPage(user, { notice: 'Incorrect password — your account was NOT deleted.' }), { status: 200, headers: accountPageHeaders });
   }
   // Remove every trace: family sessions/tokens + api.* rows + the user.
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+  // Deleting the account must revoke everything it could still be reached by, not just its
+  // sessions: a live download token or an unspent password-reset link outliving the account
+  // is the same defect as a session doing so.
+  await revokeAllUserCredentials(env, user.id);
   await env.DB.prepare('DELETE FROM sso_refresh_tokens WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM login_history WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(user.id).run();
