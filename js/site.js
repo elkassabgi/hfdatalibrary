@@ -175,6 +175,8 @@
       // Only when this origin genuinely has nothing. A stored credential means the normal
       // paths already work and must not be disturbed.
       if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
+      // An explicit logout this browser session means "stay out" — never auto-resume over it.
+      if (sessionStorage.getItem('ekd_signed_out')) return;
       // Never bounce from the callback itself — that is the flow returning, not starting.
       if (location.pathname.indexOf('/auth/callback') === 0) return;
 
@@ -261,7 +263,13 @@
             EKD_READY = true;
             window.EKD.init();                                          // clientId = this origin, callback /auth/callback
             // D42: SDK events NEVER paint directly — they re-run the single nav owner.
-            window.EKD.on('login',  function () { safeDel('ekd_notice_demoted'); paintUserWidget(); });
+            window.EKD.on('login',  function () {
+              // A deliberate sign-in retires the "stay signed out" flag, so silent resume works
+              // again on the next visit. Without this, one logout would disable cross-site
+              // recognition for the rest of the browser session even after signing back in.
+              try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
+              safeDel('ekd_notice_demoted'); paintUserWidget();
+            });
             window.EKD.on('logout', function () { paintUserWidget(); });
           }
         } catch (e) {}
@@ -375,6 +383,17 @@
     // logout: clears BOTH the legacy session and the EKD family session.
     window.__hfdLogout = async function () {
       loggingOut = true;                                               // suppress the demotion notice on INTENTIONAL logout
+      // Suppress the silent resume for the rest of this browser session.
+      //
+      // The resume fires exactly WHEN there is no local credential, and logout's whole job is
+      // to create that state — so without this, signing out bounced to the IdP on the very next
+      // page load and signed the user straight back in. The server now ends the IdP session too,
+      // but that is a network call that can be slow, fail, or be raced by the reload below, and
+      // "did my logout work" must not depend on winning a race. Belt and braces, deliberately.
+      //
+      // A deliberate sign-in clears this again (EKD's 'login' event below), so it suppresses
+      // only the AUTOMATIC path and never blocks someone choosing to sign in.
+      try { sessionStorage.setItem('ekd_signed_out', '1'); } catch (e) {}
       var t = safeGet('hfd_session');
       if (t) { try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {} }
       safeDel('hfd_session');

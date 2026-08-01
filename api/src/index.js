@@ -5474,8 +5474,31 @@ async function handleAccountsLogout(request, env, cors) {
   }
   if (body && body.refresh_token) {
     const rtHash = await sha256Hex(body.refresh_token);
-    const rt = await env.DB.prepare("SELECT chain_id FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
-    if (rt) await revokeChain(env, rt.chain_id);
+    const rt = await env.DB.prepare("SELECT chain_id, user_id FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
+    if (rt) {
+      await revokeChain(env, rt.chain_id);
+      // END THE IdP SESSION TOO, resolved from the refresh token rather than from the cookie.
+      //
+      // The cookie branch above is dead code from this caller and always has been: the SDK's
+      // logout() is a CROSS-ORIGIN fetch from the client site to accounts.elkassabgidata.com,
+      // and postJson sets no `credentials`, so the browser sends no cookies at all. rawEkd is
+      // therefore null on every real call, the idp_master DELETE never runs, and the Set-Cookie
+      // that clears ekd_session is equally inert cross-origin. Signing out revoked the refresh
+      // chain and left the 30-day family session untouched.
+      //
+      // That was a latent inconsistency until today. It is not latent now: the silent resume
+      // added this morning bounces to /authorize?prompt=none precisely WHEN there is no local
+      // credential — which is the state logout creates. A live ekd_session then mints a fresh
+      // code and signs the user straight back in, so "log out" undid itself on the next page
+      // load. The feature turned a dormant bug into a broken control.
+      //
+      // Resolving the user from the refresh token needs no cookie and no credentialed CORS
+      // (which the token endpoints deliberately do not allow — they are non-credentialed by
+      // design). Deleting by user_id also means this cannot miss a session whose kind or id we
+      // failed to guess, the same reasoning that put every other revocation path through
+      // revokeAllUserCredentials.
+      await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND kind = 'idp_master'").bind(rt.user_id).run();
+    }
   }
   const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
   return new Response(JSON.stringify({ ok: true }), {
