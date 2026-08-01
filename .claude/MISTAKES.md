@@ -2912,3 +2912,36 @@ carry results forward and deliver them with the next real milestone. Specificall
     turn to spend.
 The reserved list is short and specific: deleting data that is not re-crawlable, un-gating a
 DISPUTED licence, auth/billing, and sending email as Ahmed. Nothing else earns a stop.
+
+## R206 — my verification probe read a different repository than the one I had just edited
+
+**What happened.** Twice today a check I wrote to confirm my own edits reported them MISSING
+when they were present. The first time it said `resetTurnstile` was absent from
+`download.html`; a direct `Select-String` found it at line 778. The second time a six-line
+wiring check reported every piece missing and both counters zero, immediately after edits
+that had each returned success.
+
+**The cause.** `Set-Location` changes PowerShell's location. It does NOT change the .NET
+process working directory, and `[System.IO.File]::ReadAllText("api\src\index.js")` resolves
+against the process directory. So after `Set-Location D:\research\hf_wt_sso`, that call kept
+reading `D:\research\hfdatalibrary\api\src\index.js` — a different worktree, on a different
+branch, missing every change I had just made. The probe was working perfectly and answering
+about the wrong file.
+
+**Why it is dangerous rather than merely annoying.** It fails in the direction that invites
+damage. A false MISSING says "your edit did not land", and the natural response is to apply
+it again — into a file you have not read, in a repo you did not mean to touch. That is
+exactly the sequence that produced R200. And in one of the two cases the probe went further
+than reporting: it extracted the inline `<script>` blocks from the wrong `account.html`, ran
+`node --check` on them, and printed INLINE JS OK. A green syntax check on a file I was not
+editing, presented as evidence about a file I was.
+
+**Which is the real lesson.** `Select-String -Path`, `Get-Content`, and the Read tool all
+honour `Set-Location`; the .NET static methods do not. Mixing the two in one script gives
+two different answers about "the current directory" with nothing to indicate a disagreement.
+
+**The rule.** Pass ABSOLUTE paths to anything that reads or writes a file — always, not only
+when a script spans directories. And when a check contradicts an action that reported
+success, suspect the check first: an Edit that returned success has already proved the bytes
+changed, so a probe that disagrees is claiming something stronger than the tool that did the
+work. Confirm with a second method that resolves paths differently before believing it.
