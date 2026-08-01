@@ -3541,3 +3541,44 @@ CSV among its candidates. Both are LIVE and cited to their primary publisher.
    party, the grant may not cover it and the terms that apply may be someone else's.
 3. Odd values in a dry run are evidence, not noise. Fourteen unfamiliar country codes were the
    only visible symptom of a wrong provenance chain, and I nearly scrolled past them.
+
+## R219 — three defaults were all "correct" and all wrong; I only caught them by asking who PAYS
+
+**What happened.** In one day I shipped a cross-site sign-in resume, a nightly fair-use alert,
+and a fix that hid an interstitial page. Each was reviewed, tested, deployed, and verified
+working. Each then turned out to impose a real cost on a group I had never counted.
+
+    default I chose                what I verified            who actually paid
+    ---------------------------------------------------------------------------------------
+    re-arm the resume every 60s    the loop cannot run away   ~97% of visitors, 3 redirects
+                                   and re-arms correctly      per browsing session
+    alert on >50 GB in 30 days     the query returns the      Ahmed, with 13 identical names
+                                   right accounts             a night until he stops reading
+    hide the interstitial panel    the flash is gone on the   anyone with JS off: a blank
+                                   fast path                  dark page, no explanation
+
+None of these was a bug. Every one behaved exactly as designed, and a reviewer checking
+correctness would have passed all three. The defect was in the choice, not the implementation.
+
+**The measurements that exposed them.** 21,692 visitors against 603 accounts — so almost
+everyone who arrives can never resume a session, and every one of them was paying for the
+feature. Fourteen accounts over the fair-use threshold, of which exactly ONE had downloaded in
+the last 24 hours — so thirteen fourteenths of that email was noise on night one and would be
+noise every night for a month. In each case the number that mattered was a RATIO between the
+people served and the people billed, and I had only ever looked at the numerator.
+
+**The third one is the instructive one.** Visitors with JavaScript disabled do not appear in the
+visitor count, the download log, or any dashboard I have. There was no measurement that could
+have surfaced them; the only way to find them was to ask who is affected by "hidden by default,
+revealed by a timer" and notice that the answer includes people who never run the timer. A
+metric-driven review is structurally blind to anyone the metrics do not record.
+
+**The rule.** "Is it correct?" and "who pays for it?" are different questions, and shipping a
+default answers the second whether or not anybody asked it. For any default — a TTL, a
+threshold, a retry window, a hidden element — name the population it costs something and
+estimate its size before shipping. If that population is larger than the one being served, the
+default is wrong even when the code is right. And name at least one group that no dashboard
+counts, because that group cannot object.
+
+Related: R216 and R218 are about verifying the wrong thing. This is about verifying the right
+thing and still being wrong, because correctness was never the question in doubt.
