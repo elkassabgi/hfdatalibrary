@@ -2465,10 +2465,17 @@ async function sendDailyDigest(env) {
     // list nobody reads; 15 exceed 50 GB and 9 exceed 100 GB. Ten rows is a list that gets
     // looked at. is_active = 1 because an account already revoked is not news every night.
     env.DB.prepare(
-      "SELECT u.id, u.name, u.email, u.institution, COUNT(*) as c, COALESCE(SUM(dl.bytes_served), 0) as bytes " +
+      // STILL ACTIVE, not merely heavy. Measured on production 2026-08-01: 14 accounts sit over
+      // the threshold in the trailing 30 days and exactly ONE downloaded anything in the last 24
+      // hours. The other 13 did one large pull weeks ago and stopped. Mailing the same 13 names
+      // nightly for a month is how an alert becomes wallpaper, and the night the fourteenth
+      // appears is the night nobody reads it. Both figures are shown because "412 GB this month,
+      // 38 GB today" and "412 GB this month, nothing today" call for different responses.
+      "SELECT u.id, u.name, u.email, u.institution, COUNT(*) as c, COALESCE(SUM(dl.bytes_served), 0) as bytes, " +
+      "  COALESCE(SUM(CASE WHEN dl.timestamp > datetime('now','-1 day') THEN dl.bytes_served ELSE 0 END), 0) as bytes_24h " +
       "FROM download_log dl JOIN users u ON dl.user_id = u.id " +
       "WHERE dl.timestamp > datetime('now', '-30 days') AND u.is_active = 1 " +
-      "GROUP BY dl.user_id HAVING bytes >= ? ORDER BY bytes DESC LIMIT 10"
+      "GROUP BY dl.user_id HAVING bytes >= ? AND bytes_24h > 0 ORDER BY bytes_24h DESC LIMIT 10"
     ).bind(FAIRUSE_ALERT_GB * 1e9).all(),
   ]);
 
@@ -2557,12 +2564,12 @@ function dailyDigestEmail(s) {
   const fairUseSection = (!s.fair_use || s.fair_use.length === 0)
     ? ''
     : `<div style="border:2px solid #f59e0b; background:#fffbeb; border-radius:6px; padding:0.75rem 1rem; margin:1.25rem 0;">
-         <h3 style="margin:0 0 0.25rem; color:#b45309;">Fair use — ${s.fair_use.length} account${s.fair_use.length === 1 ? '' : 's'} over ${s.fair_use_gb} GB in 30 days</h3>
-         <p style="margin:0 0 0.5rem; font-size:0.82rem; color:#78716c;">Trailing 30 days, ranked by volume — the same window and unit as the admin console.</p>
+         <h3 style="margin:0 0 0.25rem; color:#b45309;">Fair use — ${s.fair_use.length} active account${s.fair_use.length === 1 ? '' : 's'} over ${s.fair_use_gb} GB in 30 days</h3>
+         <p style="margin:0 0 0.5rem; font-size:0.82rem; color:#78716c;">Over the fair-use window AND still downloading in the last 24 hours, ranked by recent volume. Dormant accounts are omitted; the admin console lists every heavy account — the same window and unit as the admin console.</p>
          <table style="width:100%; border-collapse:collapse; margin:0.25rem 0 0;">
-          <tr><th style="${cellHead}">User</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Downloads</th><th style="${cellHead}">30-day volume</th></tr>
+          <tr><th style="${cellHead}">User</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Downloads</th><th style="${cellHead}">30-day volume</th><th style="${cellHead}">Last 24h</th></tr>
           ${s.fair_use.map(u => `
-            <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')} &middot; id ${u.id}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}"><strong>${fmtBytes(u.bytes)}</strong></td></tr>`).join('')}
+            <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')} &middot; id ${u.id}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}"><strong>${fmtBytes(u.bytes)}</strong></td><td style="${cell}"><strong>${fmtBytes(u.bytes_24h || 0)}</strong></td></tr>`).join('')}
          </table>
        </div>`;
 
