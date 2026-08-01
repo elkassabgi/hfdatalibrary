@@ -3083,8 +3083,8 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString(); // 24 hours
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-      .bind(user.id, verifyToken, verifyExpires).run();
+    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+      .bind(user.id, verifyToken, verifyExpires, 'verify').run();
     await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
   }
 
@@ -3703,7 +3703,14 @@ async function handleVerifyEmail(request, env, cors) {
   // §EXPIRY-COMPARE: datetime() on both sides. Written with toISOString(), so a
   // verification link stamped 24 hours was honoured for up to 48.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
+    // purpose is checked, and NULL is still accepted HERE only.
+    // Confirming an email address is the harmless half of this pair: the worst a wrong-purpose
+    // token can do at this endpoint is mark an address verified that its owner was going to
+    // verify anyway. NULL means "minted before the purpose column existed" (2026-08-01), and at
+    // migration time exactly one unused, unexpired row existed — refusing it would strand that
+    // person for no security gain. Those NULLs cannot be created any more: all five writers now
+    // set a value, so this clause drains itself within 24 hours and can then be tightened.
+    "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND (purpose = 'verify' OR purpose IS NULL)"
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired verification link' }, 400, cors);
@@ -3734,8 +3741,8 @@ async function handleResendVerification(request, env, cors) {
   }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-    .bind(userId, verifyToken, verifyExpires).run();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+    .bind(userId, verifyToken, verifyExpires, 'verify').run();
   await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
 
   return jsonRes({ message: 'Verification email sent. Check your inbox.' }, 200, cors);
@@ -3776,8 +3783,8 @@ async function handleResetRequest(request, env, cors) {
       await checkRateLimit(env, rlIpKey(ip), 'api:reset');
       const token = generateId();
       const expires = new Date(Date.now() + 3600000).toISOString(); // 1 hour
-      await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-        .bind(user.id, token, expires).run();
+      await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+        .bind(user.id, token, expires, 'reset').run();
       const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
       await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
     }
@@ -3802,7 +3809,18 @@ async function handleReset(request, env, cors) {
   // but bare, the link stayed redeemable until midnight UTC, up to a 24× widening of
   // the window an intercepted reset mail can be used to take the account over.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
+    // purpose = 'reset' EXACTLY. No NULL grace, unlike handleVerifyEmail.
+    // This endpoint replaces a password, and until now it accepted any row in this table —
+    // including the 24-hour EMAIL-VERIFICATION tokens that four other writers mint. A
+    // verification link is the least-guarded URL the service sends (it goes out on every sign-up
+    // and every resend, and lives 24x longer than a reset token), so a forwarded welcome email
+    // or a mailbox someone else can read was a full account takeover. A token that proves "you
+    // can read this mailbox" must not also mean "replace this account's password".
+    //
+    // Refusing NULL costs at most one person clicking "forgot password" a second time — one
+    // unused row existed at migration time. Granting a grace period would keep the takeover open
+    // for another 24 hours, which is the wrong trade on the dangerous side of the pair.
+    "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND purpose = 'reset'"
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired reset token' }, 400, cors);
@@ -5801,7 +5819,7 @@ async function handleAccountResendVerification(request, env) {
   }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)').bind(user.id, verifyToken, verifyExpires, 'verify').run();
   try { await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) {}
   return new Response(renderAccountPage(user, { notice: 'Verification email sent — check your inbox (and spam).' }), { status: 200, headers: accountPageHeaders });
 }
@@ -6853,7 +6871,7 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
     // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)').bind(user.id, verifyToken, verifyExpires, 'verify').run();
     try { await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) { /* non-blocking */ }
   }
   try { await sendEmail(env, ADMIN_NOTIFY, `New registration: ${name} (${institution})`, adminNotificationEmail({ name, email: email.toLowerCase(), institution, country: userCountry, role }, ip, ua, country)); } catch (e) { /* non-blocking */ }
