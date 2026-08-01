@@ -3089,3 +3089,32 @@ status" — and only the second is worth reporting.
 whole surface, prove it with a zero-result check. That guidance was already in memory before
 this session started. Having the rule written down did not make me apply it; what made me
 apply it was three rejections in a row.
+
+### R208 — I stamped a cadence "success" on a run that crashed and lost its state
+
+`tools/run_local_heavy.ps1` writes a `last_success` stamp so the 5-minute reboot guard knows
+not to relaunch a pass that already ran. I placed that write after `push-state`, unconditional,
+with the comment *"Stamp the cadence clock only now — after a pass that genuinely ran."*
+
+On 2026-08-01 the pass crashed inside `ons_uk` with exit -1073741819 (0xC0000005) after 8h56m,
+and its `push-state` then lost the compare-and-swap. Nothing durable came of nine hours of
+work: six sources had merged (oecd 6.5 h, eia 317M rows, faostat 170.6M) but the record of it
+never reached R2, so the health gate reported them RED-UNRUN. And the stamp still said success,
+so the guard stood down for 20 hours over a run whose entire record had been lost.
+
+**"Genuinely ran" was the wrong bar.** The whole updater enforces a status contract — `partial`
+never sets `last_success`, a vintage never advances on a failed pull — and I wrote the one
+component that had no contract, then gave it the weakest possible test. The right bar is
+"genuinely committed":
+
+    rc=0,  push ok    -> stamp        clean pass
+    rc!=0, push ok    -> stamp        by design one source may fail while others refresh
+    crash, push ok    -> NO stamp     nothing is trustworthy about a process that vanished
+    rc=0,  push fails -> NO stamp     the work happened; no record of it survived
+
+**The rule.** A cadence marker is a claim that work was DONE, so it must be gated on the
+durable artefact, not on reaching the end of the script. Ask what a reader of the marker will
+believe, and make the write conditional on exactly that being true. Two smells that should
+have caught it while writing: the stamp was unconditional in a function whose own exit code
+was right there in scope, and the word "ran" in my comment was doing work that "succeeded"
+should have been doing.
