@@ -17,7 +17,16 @@
 </style>
 </head>
 <body>
-  <div class="m"><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in…</p><p class="ret"><a href="/">Return to the site</a></p></div>
+  <!-- Hidden until the flow is demonstrably SLOW.
+       This page exists only to hand a code over and leave; on a healthy round trip it is on
+       screen for a few hundred milliseconds, and painting a full-viewport dark panel for that
+       long is the "page that shows up for a brief second" Ahmed reported between sites. It is
+       not a page anyone is meant to read — it is a waypoint.
+       So it renders nothing by default and reveals itself after 600 ms, which only happens when
+       the exchange is genuinely slow or has failed. Then it is doing real work: telling the user
+       something is happening and offering a way out. Fast path: invisible. Slow path: unchanged. -->
+  <div class="m" id="m" hidden><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in&hellip;</p><p class="ret"><a href="/">Return to the site</a></p></div>
+  <script>setTimeout(function(){var m=document.getElementById('m');if(m)m.hidden=false;},600);</script>
   <script>
   (function () {
     'use strict';
