@@ -2850,3 +2850,38 @@ yale_epi at 578 when the EPI is biennial).
 4. Fixing a signal can expose a threshold that was only ever masked by it. Measure the
    before/after distribution, not just the target: RED-DATA 0 -> 6 -> 2 across the two fixes,
    and stopping after the first would have shipped four false alarms.
+
+## R205 — I shipped a fix, wrote in the commit message that it closed the hole, and it did not
+
+**What I did.** Registration granted `is_admin = 1` to anyone who registered one of the two
+published owner addresses. I fixed it by setting `email_verified = 0` for admin
+registrations, and wrote in the commit message that this closed the console takeover.
+
+**Why it did not.** Nothing on the admin path ever read `email_verified` — `handleAdmin`
+checked `is_admin` alone — and `handleLogin` does not read it either. So the attacker's row
+was still created with `is_admin = 1`, could still log in with the password they chose, and
+still reached the console. I had changed a flag that no code on the attack path consulted.
+
+**How it was caught.** Not by me. An adversarial review with a lens dedicated to attacking
+that day's own fixes found it, and I then verified it directly: `handleAdmin` reads
+`user.is_admin` and stops. Two of my other three fixes from the same batch were also
+incomplete — the Google handover left four further ways back in, and making login charge
+only on wrong passwords removed the only real cap on 2FA guessing.
+
+**The actual error.** I reasoned about the fix instead of tracing the attack. Setting the
+flag was *necessary*; I never checked it was *sufficient* by walking the attacker's path
+again with the new code in place. A fix is a claim about behaviour, and the only evidence
+for it is following the exploit through the patched code and finding it blocked.
+
+**The compounding part, which is worse than the bug.** I wrote the claim into a commit
+message. That is R190 and R191 for the third time — text asserting behaviour the code does
+not have — except here it was a security claim, in a public repo, on a live system. If the
+review had not run, that message would be the record: a takeover documented as closed while
+it stayed open, and nobody would look again because the log says it was handled.
+
+**The rule.** Before writing that a fix closes something, re-run the attack against the
+patched code, in your head or for real, and name the specific line that now stops it. If you
+cannot point at the line that blocks step 3, you have not fixed step 3. And when the fix is
+security-related, assume the first version is incomplete: three of my four were, and the
+pattern across all three was the same — I fixed the thing I had been looking at and did not
+re-ask what else still reached the goal.
