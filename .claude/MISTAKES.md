@@ -3198,3 +3198,36 @@ of noting that duplicates dedup away. Then I printed one affected series and loo
 This one cost nothing because nothing was catalogued yet — the fix was one line in the ingest.
 Had it been found after publication it would have been 2,089,582 live ids, against comtrade's
 713. The difference was checking the key BEFORE cataloguing rather than after serving.
+
+## R210 — I re-did 23,814 uploads of work another live session had already committed, and only noticed because a line number moved
+
+**What happened.** With the user's explicit requests delivered, I returned to the standing econ
+queue, measured coverage (101 of 203 sources / 1,911,248 series), and picked the concrete next
+item: two IMF GFS `_direct` sources that were catalogued but not resolvable. I confirmed the
+defect against the live API with a control — legacy `imf_gfsssuc` returned 200, `_direct`
+returned 404 — checked R2, derived and uploaded per-series CSVs (23,814 new objects), and went
+to add the sources to `util.ts`.
+
+They were already there. With a comment dated that same day, four lines that had not existed
+when I grepped the same file twenty minutes earlier — I noticed only because the legacy list
+had shifted from line 60 to line 64. `git log` then showed commit 4deb9de, "Catalogue and serve
+the GFS direct sources — 47,633 series that were hosted and invisible," plus a cepii_gravity
+promotion, and `util.ts` with an mtime four minutes old. Another session was executing the same
+queue item in the same working tree, in real time, and was ahead of me.
+
+**Why nothing broke, and why that is luck.** The derive tool takes `--skip-existing` and I used
+it, so the run was idempotent: 21,205 skipped, 23,814 written, 0 errors. Had I instead done what
+I was one step away from doing — editing `util.ts` and committing — I would have been writing to
+a file another process was writing to, on a shared branch, with no lock.
+
+**The tell I walked past.** A PostToolUse hook had already told me, in this session: "Another
+chat's dev server is running in this folder." I read that as a note about the browser pane and
+moved on. It was the answer to a question I had not yet thought to ask.
+
+**The rule.** Before starting work in a repo this session has not been continuously editing,
+establish ownership first, not after: `git log --oneline -5` and the mtime of the file you are
+about to change. A commit from today that you did not write, or an mtime newer than your own
+last read, means another worker is live in that tree — stand down or coordinate; do not race.
+This is cheap (two commands), and it is the same discipline as reading before overwriting.
+The standing order's queue is not a claim of exclusivity, and "the queue says do this" is not
+evidence that nobody else is already doing it.
