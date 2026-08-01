@@ -3166,3 +3166,35 @@ being wrong costs the accused, and here it costs someone their account and their
 with Ahmed. Related: [[feedback_example_means_class]] — but inverted. There the sin was fixing
 one instance of a real defect; here it was generalising from one metric to a defect that did
 not exist.
+
+### R209 — a store that passes every structural test can still be wrong for the reader
+
+Preparing to catalogue noaa's 2,089,582 series I checked the key for ambiguity, expecting the
+comtrade pattern: one id standing for several distinct measurements. The structural tests all
+came back clean. `series_key` is `<station>:<element>`; the store holds BOTH gsom (monthly) and
+gsoy (yearly); and across all 417 shards there are **zero** colliding `(series_key, obs_date)`
+pairs. By every check the library uses — dedup counts, never-shrink, conflicting-pair scans —
+the store is perfect.
+
+It is still wrong. 1,046,291 of the 2,089,582 keys appear in BOTH datasets, so one published
+id would serve a monthly series with its own annual aggregates mixed into it.
+`ACW00011647:DP1X` returns 122 monthly points and 6 annual ones — a monthly line with six
+spikes in it. The reason no collision check can see it is that gsom stamps month-start and
+gsoy year-END, so the two never occupy the same date. The very thing that makes it structurally
+clean is what makes it misleading.
+
+**What caught it** was not a test but a question: the metadata sidecars held 3,135,873 rows
+that collapsed to 2,089,582 distinct keys, and I asked what the other 1,046,291 were instead
+of noting that duplicates dedup away. Then I printed one affected series and looked at it.
+
+**The rules.**
+1. "No duplicate (key, date) pairs" proves the store is internally consistent, NOT that each id
+   means one thing. Two datasets at different frequencies can share an id and never collide.
+2. When a key omits a dimension the source varies over, the question is whether that dimension
+   changes the MEANING, not whether it changes the row count. Read one affected series and ask
+   what a user would think it is.
+3. A gap between "rows" and "distinct keys" is a question, not an artefact to divide away.
+
+This one cost nothing because nothing was catalogued yet — the fix was one line in the ingest.
+Had it been found after publication it would have been 2,089,582 live ids, against comtrade's
+713. The difference was checking the key BEFORE cataloguing rather than after serving.
