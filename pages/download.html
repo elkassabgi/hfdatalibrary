@@ -1346,11 +1346,21 @@ async function submitTotp() {
 async function requestReset() {
   const email = document.getElementById('login-email').value.trim();
   if (!email) { alert('Enter your email first, then click "Forgot password?"'); return; }
-  await fetch(API + '/v1/auth/reset-request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email })
-  });
+  // The neutral message is right for "does this address exist" and WRONG for 429. A 429 is a
+  // fact about the caller's own network, not about any account, so surfacing it leaks nothing —
+  // while hiding it tells someone to wait for an email that is never going to arrive.
+  let rr = null;
+  try {
+    rr = await fetch(API + '/v1/auth/reset-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+  } catch (e) { /* network failure → fall through to the neutral message */ }
+  if (rr && rr.status === 429) {
+    alert('Too many password-reset requests from your network in the last hour. Please wait and try again — if you share an internet connection (a university or office), someone else may have used the allowance.');
+    return;
+  }
   alert('If that email is registered, a reset link has been sent.');
 }
 

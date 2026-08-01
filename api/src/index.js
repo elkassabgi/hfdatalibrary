@@ -384,7 +384,16 @@ const RATE_LIMITS = {
   // and raising this rule past 30 would just make it dead code.
   'api:register:burst': { max: 30, window: 3600 },
   'api:register': { max: 25, window: 3600 },    // 25 CREATED accounts per hour per IP (per /64 on IPv6)
-  'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
+  // Raised from 3 and now charged only when a mail actually goes out (handleResetRequest peeks
+  // first, exactly as handleLogin does). At 3-charged-on-arrival, three colleagues behind one
+  // university egress exhausted the hour and the fourth was refused — the same lockout that had
+  // 'api:register' raised from 3 to 25 on 2026-07-31, which this rule was left behind by. A
+  // mistyped address or a double-click also each spent one.
+  'api:reset': { max: 10, window: 3600 },       // 10 password-reset EMAILS per hour per IP
+  // The per-IP budget bounds what one network can do and does nothing to stop one mailbox being
+  // flooded from many addresses, which is the abuse that reaches a person. Keyed on user id, the
+  // same unit 'api:resend' and 'api:2fa' use and for the same reason.
+  'api:reset_acct': { max: 3, window: 3600 },   // 3 password-reset emails per hour per ACCOUNT
   // Resend-verification, keyed per ACCOUNT (the request is authenticated, so the IP is the
   // wrong unit — a shared campus address would otherwise exhaust everyone's allowance).
   'api:resend': { max: 3, window: 3600 },       // 3 verification emails per hour per account
@@ -3734,8 +3743,16 @@ async function handleResendVerification(request, env, cors) {
 
 async function handleResetRequest(request, env, cors) {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:reset');
-  if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
+  // PEEK, do not charge yet — the same shape handleLogin uses so that only a real event costs.
+  //
+  // This charged an attempt at the top, BEFORE the body was parsed and before anyone knew
+  // whether the address even exists. On a shared egress — a university, a department, a
+  // conference wifi — three colleagues resetting in an hour exhausted the budget and the fourth
+  // was refused, which is an availability bug wearing a security badge. It is the identical
+  // lockout that had `api:register` raised from 3 to 25 on 2026-07-31; this rule was left
+  // behind at 3, and a typo'd address or a double-click spent one of them.
+  const peek = await checkRateLimit(env, rlIpKey(ip), 'api:reset', { charge: false });
+  if (!peek.ok) return rateLimitResponse(peek.retryAfter, cors);
 
   let body;
   try { body = await request.json(); } catch { return jsonRes({ error: 'Invalid JSON' }, 400, cors); }
@@ -3747,12 +3764,25 @@ async function handleResetRequest(request, env, cors) {
 
   // Always return success to avoid email enumeration
   if (user) {
-    const token = generateId();
-    const expires = new Date(Date.now() + 3600000).toISOString(); // 1 hour
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-      .bind(user.id, token, expires).run();
-    const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
-    await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+    // A PER-ACCOUNT cap as well as the per-IP one. The IP budget bounds how much one network can
+    // do; it does nothing to stop a mailbox being flooded from many addresses, which is the
+    // abuse that actually reaches a person. Keyed on user id, mirroring 'api:2fa' — and checked
+    // only inside the `user` branch, so an unknown address can never spend a real account's
+    // budget, and the response stays identical either way so nothing is enumerable.
+    const perAcct = await checkRateLimit(env, 'rst:u' + user.id, 'api:reset_acct');
+    if (perAcct.ok) {
+      // Charge the IP only now, when a mail is actually going out. A request that produced no
+      // email cost nothing, which is what makes the raised cap safe.
+      await checkRateLimit(env, rlIpKey(ip), 'api:reset');
+      const token = generateId();
+      const expires = new Date(Date.now() + 3600000).toISOString(); // 1 hour
+      await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
+        .bind(user.id, token, expires).run();
+      const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
+      await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+    }
+    // Over the per-account cap: silently skip the send. Saying so would confirm the address is
+    // registered, which is exactly what the constant-response above exists to hide.
   }
 
   return jsonRes({ message: 'If that email is registered, a reset link has been sent.' }, 200, cors);

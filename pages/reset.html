@@ -76,13 +76,27 @@ async function requestReset() {
   // The backend returns a neutral 200 whether or not the address exists (no
   // account enumeration), so the page shows the SAME success either way — and
   // even on a network error, to never leak existence. [§9 D83]
+  // Neutral on existence, NOT on 429. A 429 describes the caller's own network rather than any
+  // account, so showing it leaks nothing that the constant-response rule exists to protect —
+  // and staying neutral there tells someone to watch an inbox that will stay empty.
+  let rr = null;
   try {
-    await fetch('https://api.hfdatalibrary.com/v1/auth/reset-request', {
+    rr = await fetch('https://api.hfdatalibrary.com/v1/auth/reset-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     });
   } catch (e) { /* fall through to the same neutral message */ }
+  if (rr && rr.status === 429) {
+    document.getElementById('request-form').innerHTML =
+      '<div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:1.5rem;">' +
+        '<strong style="color:#b45309;">Too many requests</strong>' +
+        '<p style="color:#92400e; margin-top:0.5rem;">Your network has requested several password resets in the last hour. ' +
+        'Please wait a little and try again. If you share an internet connection &mdash; a university or an office &mdash; ' +
+        'someone else may have used the allowance.</p>' +
+      '</div>';
+    return;
+  }
   document.getElementById('request-form').innerHTML =
     '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.5rem;">' +
       '<strong style="color:#065f46;">Check your email</strong>' +
