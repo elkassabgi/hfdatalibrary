@@ -2051,6 +2051,59 @@ async function verifyTotp(secret, userCode, env, userId) {
   return false;
 }
 
+// ── 2FA recovery codes ──
+//
+// Issued once when 2FA is enabled and shown once. Without these, the 2FA hardening shipped on
+// 2026-08-01 (enrolment gated on a verified email, the factor enforced on the OAuth doors, codes
+// consumed so they cannot be replayed) turned a lost phone into a permanent lockout of the
+// account and of every family site that authenticates through it. Hardening a factor without a
+// recovery path does not make people safer, it makes them locked out.
+const BACKUP_CODE_COUNT = 10;
+
+// Formatted in two dash-separated halves because these get written down and read back by a human
+// under stress. Lowercase hex only: no case to get wrong, and no characters that look alike.
+function generateBackupCodes(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const b = crypto.getRandomValues(new Uint8Array(4));
+    const hex = Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
+    out.push(hex.slice(0, 4) + '-' + hex.slice(4));
+  }
+  return out;
+}
+
+// Replaces any existing set: enabling 2FA again must not leave codes from a previous enrolment
+// alive, or disabling and re-enabling would silently keep old credentials valid.
+async function issueBackupCodes(env, userId) {
+  const codes = generateBackupCodes(BACKUP_CODE_COUNT);
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
+  for (const c of codes) {
+    await env.DB.prepare('INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (?, ?)')
+      .bind(userId, await sha256Hex(c)).run();
+  }
+  return codes;                      // plaintext returned ONCE, never stored
+}
+
+// Spend a recovery code. Returns true only if this exact code was unused for this user.
+//
+// The consume is a CONDITIONAL UPDATE for the same reason verifyTotp's is: `used = 0` inside the
+// statement means the database settles a race, so two simultaneous presentations of one code
+// cannot both succeed. Normalised on the way in because someone typing a written-down code will
+// add spaces, capitals, or a unicode dash their phone substituted for the hyphen.
+async function consumeBackupCode(env, userId, raw) {
+  if (!raw) return false;
+  const norm = String(raw).trim().toLowerCase().replace(/[\s‐-―]/g, '-');
+  if (!/^[0-9a-f]{4}-[0-9a-f]{4}$/.test(norm)) return false;
+  try {
+    const r = await env.DB.prepare(
+      "UPDATE totp_backup_codes SET used = 1, used_at = datetime('now') WHERE user_id = ? AND code_hash = ? AND used = 0"
+    ).bind(userId, await sha256Hex(norm)).run();
+    return !!(r && r.meta && r.meta.changes === 1);
+  } catch (e) {
+    return false;                    // fail closed, exactly as verifyTotp does
+  }
+}
+
 // ══════════════════════════════════════
 // ── Turnstile CAPTCHA Verification ──
 // ══════════════════════════════════════
@@ -3427,10 +3480,20 @@ async function handle2faEnable(request, env, cors) {
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').bind(userId).run();
 
+  // Issued at the moment the factor becomes real, and returned exactly once. Everything that
+  // hardened 2FA today also made a lost authenticator terminal: /2fa/disable requires a working
+  // code, there is no admin reset, and the factor is now enforced on the OAuth doors too. These
+  // are the only way back in.
+  const backupCodes = await issueBackupCodes(env, userId);
+
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   await auditLog(env, user, 'enable_2fa', userId, user.email, 'TOTP enabled', ip);
 
-  return jsonRes({ message: '2FA enabled successfully' }, 200, cors);
+  return jsonRes({
+    message: '2FA enabled successfully',
+    backup_codes: backupCodes,
+    backup_codes_notice: 'Save these now — each works once, and this is the only time they are shown. Without them a lost authenticator locks you out permanently.',
+  }, 200, cors);
 }
 
 async function handle2faDisable(request, env, cors) {
@@ -3449,10 +3512,18 @@ async function handle2faDisable(request, env, cors) {
   const passwordOk = await verifyPassword(password, dbUser.password_hash);
   if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
 
-  const codeOk = await verifyTotp(dbUser.totp_secret, code, env, userId);
+  // A recovery code is accepted here too. Someone who has LOST their authenticator is exactly
+  // the person who needs to turn 2FA off, and requiring the device they no longer have was the
+  // circular lock that made this a permanent lockout.
+  const codeOk = (await verifyTotp(dbUser.totp_secret, code, env, userId))
+    || (await consumeBackupCode(env, userId, code));
   if (!codeOk) return jsonRes({ error: 'Invalid 2FA code' }, 401, cors);
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').bind(userId).run();
+  // The recovery codes belong to THIS enrolment and must not outlive it. Leaving them would mean
+  // a set printed months ago still opens the account after 2FA was deliberately turned off, and
+  // would silently carry over into a later re-enrolment.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
 
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   await auditLog(env, user, 'disable_2fa', userId, user.email, 'TOTP disabled', ip);
@@ -3495,7 +3566,10 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
   if (!user || !user.totp_secret) return jsonRes({ error: 'Invalid state' }, 400, cors);
 
-  const valid = await verifyTotp(user.totp_secret, code, env, user.id);
+  // A recovery code stands in for the authenticator here. This is the path a locked-out person
+  // actually reaches: they have their password, the pending token, and a code on paper.
+  const valid = (await verifyTotp(user.totp_secret, code, env, user.id))
+    || (await consumeBackupCode(env, user.id, code));
   if (!valid) {
     await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)')
       .bind(user.id, ip, ua, country).run();
@@ -3583,6 +3657,12 @@ async function handleDeleteAccount(request, env, cors) {
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(userId).run();
+  // Recovery codes are login credentials in their own right; a deleted account must not
+  // leave a usable set behind. Added ONLY here and in the other delete handler - not
+  // beside every totp_pending clear, because three of those five sites run on SUCCESSFUL
+  // login or on a revocation that deliberately preserves the user's authenticator, and
+  // wiping their codes there would destroy the recovery path this work exists to create.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
   // sso_refresh_tokens, sso_codes and newsletter_prefs also FK->users; without clearing them the
   // users DELETE fails with a FOREIGN KEY constraint for any user who has logged in via the popup
   // (sso_codes/sso_refresh_tokens) or set newsletter prefs at registration. Surfaced live
@@ -4020,6 +4100,11 @@ async function revokeAllUserCredentials(env, userId, opts) {
   if (o.clearTotp) {
     await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?')
       .bind(userId).run();
+    // The recovery codes go with the secret. This branch runs on the hostile-handover path,
+    // where the point is that NOTHING the previous holder kept still works — and a set of
+    // backup codes they wrote down is a login credential exactly like the secret being cleared.
+    // Leaving them would hand back the account this branch exists to take away.
+    await db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
   }
 }
 
@@ -5924,6 +6009,12 @@ async function handleAccountDelete(request, env) {
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(user.id).run();
+  // Recovery codes are login credentials in their own right; a deleted account must not
+  // leave a usable set behind. Added ONLY here and in the other delete handler - not
+  // beside every totp_pending clear, because three of those five sites run on SUCCESSFUL
+  // login or on a revocation that deliberately preserves the user's authenticator, and
+  // wiping their codes there would destroy the recovery path this work exists to create.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(user.id).run();
   // sso_codes (one per popup login) + newsletter_prefs (one per registration) also FK->users;
   // without clearing them the final users DELETE hits a FOREIGN KEY constraint and fails for any
   // real user (surfaced live 2026-07-20 during the throwaway delete test). The api.* handler
@@ -6843,7 +6934,12 @@ async function handleAccounts2faVerify(request, env, ip, ua, country) {
     return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Too many attempts — please sign in again.' }), { status: 200, headers: authPageHeaders });
   }
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
-  if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code, env, user.id))) {
+  // Same recovery path as the api.* twin — a locked-out person must not depend on which host
+  // they happened to start from.
+  const accountsCodeOk = user && user.totp_secret
+    && ((await verifyTotp(user.totp_secret, code, env, user.id))
+        || (await consumeBackupCode(env, user.id, code)));
+  if (!accountsCodeOk) {
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
     return new Response(renderTwoFactorPage(pendingToken, p, 'Invalid 2FA code'), { status: 200, headers: authPageHeaders });
   }

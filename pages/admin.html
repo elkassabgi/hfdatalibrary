@@ -848,9 +848,41 @@ async function confirm2fa() {
   try {
     const r = await fetch(API + '/v1/auth/2fa/enable', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ code }) });
     const data = await r.json();
-    if (r.ok) load2faStatus();
+    if (r.ok) {
+      // Show the recovery codes, ONCE. The server returns them only on this response and stores
+      // nothing but their hashes, so if this panel does not render them they are gone — and 2FA
+      // here is now genuinely enforced on every door, with /2fa/disable itself demanding a
+      // working code. Without these a lost authenticator is a permanent lockout of this account
+      // and of every family site that authenticates through it.
+      //
+      // Rendered BEFORE load2faStatus() so that repaint cannot wipe them off the screen.
+      if (Array.isArray(data.backup_codes) && data.backup_codes.length) {
+        result.innerHTML =
+          '<div style="background:#fffbeb; border:2px solid #f59e0b; border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
+            '<p style="margin:0 0 0.5rem; color:#b45309; font-weight:700;">Save these recovery codes now</p>' +
+            '<p style="margin:0 0 0.75rem; font-size:0.85rem; color:#92400e;">' + esc(data.backup_codes_notice || '') + '</p>' +
+            '<div style="font-family:var(--font-mono); font-size:1rem; letter-spacing:0.05em; background:#fff; border:1px solid #fcd34d; border-radius:6px; padding:0.75rem; column-count:2;">' +
+              data.backup_codes.map(function (c) { return esc(c); }).join('<br>') +
+            '</div>' +
+            '<button class="btn btn-sm" style="margin-top:0.75rem;" onclick="copyBackupCodes(this)" data-codes="' + esc(data.backup_codes.join(String.fromCharCode(10))) + '">Copy to clipboard</button>' +
+          '</div>';
+      } else {
+        result.innerHTML = '';
+      }
+      load2faStatus();
+    }
     else result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
   } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
+}
+
+// Reads the codes off the button rather than closing over them, so nothing keeps a copy alive
+// in a variable after the panel is dismissed.
+function copyBackupCodes(btn) {
+  try {
+    navigator.clipboard.writeText(btn.getAttribute('data-codes') || '');
+    btn.textContent = 'Copied';
+    setTimeout(function () { btn.textContent = 'Copy to clipboard'; }, 2000);
+  } catch (e) { btn.textContent = 'Copy failed — select and copy manually'; }
 }
 
 async function disable2fa() {
