@@ -3396,6 +3396,16 @@ async function handleMe(request, env, cors) {
       profile_complete: !!user.profile_complete,
       orcid_id: user.orcid_id || null,
       created_at: user.created_at,
+      // is_admin was returned on the legacy branch and omitted here, so the nav's
+      // `user.is_admin ? <Admin Panel link> : ''` was always false for a family session and the
+      // link simply vanished. Ahmed hit this the moment cross-site resume made family sessions
+      // the common way to arrive: the legacy branch had been carrying him before.
+      //
+      // Safe to expose. It is the user's own attribute returned to their own authenticated
+      // session, and it grants nothing: handleAdmin authenticates with getSessionUser (a web
+      // session), not with a family token, and independently requires is_admin AND
+      // email_verified. This restores a LINK, not access — the console has its own sign-in.
+      is_admin: !!user.is_admin,
       isFamilyToken: true,
     }, 200, cors);
   }
