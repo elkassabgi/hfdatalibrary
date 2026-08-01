@@ -296,3 +296,38 @@ npx wrangler pages deploy catalog/site --project-name=econdatalibrary
 ```
 Both Pages projects are **manual** (Git integration off) — a `git push` publishes nothing.
 Always check the live URL after deploying.
+
+---
+
+## 11. Locked out of 2FA — the owner's recovery path
+
+**You cannot be permanently locked out of your own account.** Recovery codes exist for ordinary
+users, who have nothing else. You own the database, which outranks every credential in this
+document.
+
+If you lose your authenticator *and* your recovery codes, run this and 2FA is off:
+
+```bash
+npx wrangler d1 execute hfdatalibrary-db --remote --command "UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE email = 'YOUR@EMAIL'"
+```
+
+Then sign in with your password as normal, and re-enrol if you want to. Verified 2026-08-01: the
+statement is valid and is a no-op when 2FA is already off, so running it when you don't need it
+costs nothing.
+
+Clear the recovery codes too, so a set you no longer trust cannot be used later:
+
+```bash
+npx wrangler d1 execute hfdatalibrary-db --remote --command "DELETE FROM totp_backup_codes WHERE user_id = (SELECT id FROM users WHERE email = 'YOUR@EMAIL')"
+```
+
+**Why this is not a back door.** It needs Cloudflare account access — the same access that could
+read the whole users table, rotate any API key, or delete the worker. Anyone holding it does not
+need to bypass your second factor. The factor protects the account from people on the internet,
+not from the person who owns the infrastructure, and pretending otherwise would only mean the
+owner is the one person the system can permanently lock out.
+
+**For everyone else**, the recovery codes are the only path: no admin reset exists, and
+`/2fa/disable` requires either a working authenticator code or one of those codes. That is
+deliberate — an admin-reset button is a social-engineering target, and this service has one
+admin and no support desk to verify anybody's identity.
