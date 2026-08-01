@@ -1369,6 +1369,40 @@ async function handleOrcidLinkInit(request, env, cors) {
   return res;
 }
 
+// A second factor has to guard EVERY door, not just the password one.
+//
+// handleLogin refuses to issue a session to a totp_enabled account until a code is verified.
+// Both OAuth callbacks did not consult totp_enabled at all — they went straight from resolving
+// the user to createSession — so an account whose owner had deliberately turned on 2FA was
+// enterable through "Sign in with Google" or "Sign in with ORCID" with no code. The factor was
+// enforced on the one door that already asks for a password, and skipped on the two that do not.
+//
+// Latent today (0 of 599 accounts have 2FA enabled, measured 2026-08-01) and it stops being
+// latent the moment anyone turns it on — which became possible for any verified user earlier
+// today. An unenforced second factor is worse than none: it is a promise of protection the
+// system does not keep, and the person most likely to enable it here is the owner of the admin
+// account.
+//
+// Mirrors handleLogin exactly: mint a 10-minute totp_pending row and hand the browser the
+// pending token. The user finishes at /v1/auth/2fa/verify-login — the same endpoint the password
+// flow uses, and the thing that actually mints the session. Nothing here writes last_login_at or
+// a success row in login_history, because a challenge is not a completed login and handleLogin
+// does not record one either.
+//
+// The pending token rides in the FRAGMENT, like every other credential-shaped value in this
+// file, so it stays out of the Pages access log, browser history and Referer.
+async function oauthTotpChallenge(env, user, ip, ua, provider, stateParam) {
+  const pendingToken = generateId();
+  const pendingExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare('INSERT INTO totp_pending (token, user_id, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
+    .bind(pendingToken, user.id, pendingExpires, ip, ua).run();
+  // §NONCE-CLEANUP: state consumed, cookie spent — as in every other terminal branch here.
+  return redirectExpiringOauthState(
+    `${SITE_URL}/pages/download#totp_required=1&pending_token=${pendingToken}`,
+    provider, stateParam
+  );
+}
+
 async function handleOrcidCallback(request, env, ip, ua, country) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
@@ -1542,6 +1576,11 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
     // the flow that cannot replace this cookie for itself.
     return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'orcid', stateParam);
   }
+
+  // A totp_enabled account must clear its second factor here too, not only on the
+  // password path. Placed BEFORE the last_login/login_history writes on purpose: a
+  // challenge is not a completed sign-in, and handleLogin does not record one either.
+  if (user.totp_enabled) return await oauthTotpChallenge(env, user, ip, ua, 'orcid', stateParam);
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
     .bind(ip, ua, user.id).run();
@@ -1856,6 +1895,11 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     // §NONCE-CLEANUP: state consumed, cookie spent.
     return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'google', stateParam);
   }
+
+  // A totp_enabled account must clear its second factor here too, not only on the
+  // password path. Placed BEFORE the last_login/login_history writes on purpose: a
+  // challenge is not a completed sign-in, and handleLogin does not record one either.
+  if (user.totp_enabled) return await oauthTotpChallenge(env, user, ip, ua, 'google', stateParam);
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
     .bind(ip, ua, user.id).run();
@@ -5765,6 +5809,33 @@ async function brokerLoginRedirect(env, userId, st, ip, ua) {
   const reg = await getRegistry(env);
   const client = reg.get(st.client_origin);
   if (!client || client.status !== 'active' || !client.redirect_exact) return oauthErrorPage('client_unavailable');
+
+  // THIRD instance of the same defect, found by enumerating rather than stopping at the two the
+  // finding named. handleAccountsLogin (password) already refuses to mint an IdP session for a
+  // totp_enabled account until a code is verified; this broker — the Google/ORCID path on the
+  // accounts host — did not consult totp_enabled at all. So the second factor was enforced on
+  // the password door and skipped on both provider doors, exactly as it was on api.*.
+  //
+  // No new UI is required: renderTwoFactorPage and POST /login/2fa already exist for the
+  // password flow, and handleAccounts2faVerify reads the authorize params back out of the form
+  // that page embeds and then performs the very redirect this function would have done.
+  // Rebuilding `p` from the stashed OAuth state is the whole join — clientId, redirectUri,
+  // state and codeChallenge are the same four values either flow carries.
+  const brokerUser = await env.DB.prepare('SELECT totp_enabled FROM users WHERE id = ?').bind(userId).first();
+  if (brokerUser && brokerUser.totp_enabled) {
+    const pendingToken = generateId();
+    const pendingExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await env.DB.prepare('INSERT INTO totp_pending (token, user_id, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
+      .bind(pendingToken, userId, pendingExpires, ip, ua).run();
+    return new Response(renderTwoFactorPage(pendingToken, {
+      clientId: st.client_origin,
+      redirectUri: client.redirect_exact,
+      state: st.family_state,
+      codeChallenge: st.family_code_challenge,
+      method: 'S256',
+    }, ''), { status: 200, headers: authPageHeaders });
+  }
+
   const idp = await createIdpSession(env, userId, ip, ua);
   const resp = await mintCodeAndRedirect(env, userId, st.client_origin, client.redirect_exact, st.family_state, st.family_code_challenge, 303);
   resp.headers.append('Set-Cookie', idp.cookie);

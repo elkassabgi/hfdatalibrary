@@ -942,6 +942,40 @@ function resetTurnstile() {
       }, 3000);
     }, 100);
   }
+  // Google/ORCID sign-in on a 2FA-protected account. The worker no longer issues a session on
+  // those paths — it used to, skipping the second factor entirely — and instead mints a pending
+  // token and sends the browser back here to finish, exactly as the password flow does.
+  //
+  // Deferred with setTimeout, and that is load-bearing rather than style. This block is an IIFE
+  // that runs where it sits in the file, while `pendingTotpToken` is `let`-declared ~290 lines
+  // BELOW it: assigning to it from here directly is a temporal-dead-zone ReferenceError that
+  // would kill the whole handler, including the ordinary sign-in paths above it. A macrotask
+  // runs after the script body finishes, by which point the binding exists.
+  const totpRequired = pick('totp_required');
+  const totpPending = pick('pending_token');
+  if (totpRequired && totpPending) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setTimeout(function () {
+      try {
+        pendingTotpToken = totpPending;
+        const box = document.getElementById('login-result');
+        if (!box) return;
+        box.style.display = 'block';
+        box.innerHTML =
+          '<div style="background:var(--blue-pale); border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
+            '<p style="margin:0 0 0.75rem; color:var(--navy); font-weight:500;">Two-factor authentication is on for this account. Enter your 6-digit code:</p>' +
+            '<div style="display:flex; gap:0.5rem;">' +
+              '<input type="text" id="totp-code" placeholder="123456" maxlength="6" style="flex:1; padding:0.5rem; border:2px solid var(--gray-200); border-radius:6px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em; text-align:center;">' +
+              '<button class="btn btn-primary" style="padding:0.5rem 1rem;" onclick="submitTotp()">Verify</button>' +
+            '</div>' +
+            '<p id="totp-error" style="color:var(--red); margin:0.5rem 0 0; display:none;"></p>' +
+          '</div>';
+        const inp = document.getElementById('totp-code');
+        if (inp) inp.focus();
+      } catch (e) { /* never let this prompt break the rest of the page */ }
+    }, 0);
+  }
+
   if (oauthError) {
     // "Please try again" is right only for a TRANSIENT failure. Several of these are terminal
     // by design — retrying reproduces them exactly — and telling someone to repeat an action
