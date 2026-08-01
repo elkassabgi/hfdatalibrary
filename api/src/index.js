@@ -4122,9 +4122,28 @@ async function handleAdmin(path, request, env, cors, ip) {
     const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
     const q = (url.searchParams.get('q') || '').trim();
     const filter = url.searchParams.get('filter') || '';   // vip|admin|revoked|active|flagged
-    // Fair-use threshold in GB over the trailing 30 days. Parsed as a float so 0.5 works,
-    // clamped at 0 so a negative can never widen the result set into "every user".
-    const minGb30 = Math.max(0, parseFloat(url.searchParams.get('min_gb30') || '0') || 0);
+    // Fair-use threshold in GB over the trailing 30 days. Parsed as a float so 0.5 works.
+    //
+    // The clamp is finite on BOTH ends, not just at zero. `Math.max(0, parseFloat(x) || 0)`
+    // handles the obvious junk — "abc", "", "-10" and "NaN" all collapse to 0, i.e. no filter —
+    // but it happily passes Infinity through: parseFloat('1e400') is Infinity, Infinity || 0 is
+    // Infinity, and Math.max(0, Infinity) is Infinity. That then reaches D1 as a bound
+    // parameter of Infinity, which is not a value SQLite has. `?min_gb30=1e400` is a one-word
+    // query string, so the ceiling is not optional.
+    //
+    // MAX_GB30 is 9e6 GB (9 PB in a 30-day window — absurd by four orders of magnitude against
+    // the real maximum of 1.1 TB, so it can never clip a genuine query). It is chosen so
+    // MAX_GB30 * 1e9 = 9e15 stays under Number.MAX_SAFE_INTEGER (~9.007e15) and the bound value
+    // is always an exact integer: without it, "9007199254740993" binds 9.007e24 as a float.
+    // Unparseable input and a huge number are NOT the same request and must not get the same
+    // answer. "abc" expresses no threshold, so it means no filter. "1e400" expresses a
+    // threshold that simply nobody meets, so it must filter to NOTHING — rejecting it into
+    // "no filter" would answer "who is over 10^400 GB?" with the entire user list, which is
+    // the exact inversion of what was asked. Math.min clamps Infinity to the ceiling for free,
+    // and `NaN > 0` is already false, so no isFinite test is needed to separate them.
+    const MAX_GB30 = 9e6;
+    const rawGb30 = parseFloat(url.searchParams.get('min_gb30') || '0');
+    const minGb30 = rawGb30 > 0 ? Math.min(rawGb30, MAX_GB30) : 0;
     // Sort whitelist — never interpolate raw input into SQL.
     const SORT_COLS = {
       created_at: 'created_at', name: 'name COLLATE NOCASE', email: 'email COLLATE NOCASE',
