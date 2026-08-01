@@ -4211,8 +4211,36 @@ async function handleDownload(ticker, request, env, cors, ip) {
   } else {
     version = url.searchParams.get('version') || 'clean';
     timeframe = url.searchParams.get('timeframe') || '1min';
+    // Validate the DIRECT branch with the same whitelists the token branch was validated by.
+    //
+    // handleDownloadToken checks all three inputs before it will mint a link — version against
+    // ['raw','clean'], format against ['parquet','csv'], timeframe against VALID_TIMEFRAMES —
+    // so anything arriving via a token is already known-good. This branch took the same three
+    // values straight from the query string and interpolated two of them into the R2 key
+    // (`${version}/${ticker}.parquet`, `${version}/${timeframe}/${ticker}.parquet`, and the csv/
+    // equivalents). Same bucket, same key template, one path checked and the other not.
+    //
+    // The consequence is not path traversal — R2 keys are opaque strings and `ticker` is already
+    // constrained to [A-Z0-9.-] by the route regex, so no `/` can be injected through it — it is
+    // that an authenticated caller chose an arbitrary key PREFIX and could address objects the
+    // catalogue never offers, by asking for a version or timeframe that is not a real one.
+    //
+    // Rejecting rather than silently coercing: a caller who asks for something that does not
+    // exist should be told, not quietly handed a different file than the one requested.
+    if (!['raw', 'clean'].includes(version)) {
+      return jsonRes({ error: "Invalid version. Use: raw, clean" }, 400, cors);
+    }
+    if (!VALID_TIMEFRAMES.includes(timeframe)) {
+      return jsonRes({ error: 'Invalid timeframe. Use: ' + VALID_TIMEFRAMES.join(', ') }, 400, cors);
+    }
   }
   const format = tokenRecord ? tokenRecord.format : ((url.searchParams.get('format') || 'parquet').toLowerCase());
+  // format selects between two fixed key templates rather than being interpolated, so it cannot
+  // shape a key — but an unknown value silently fell into the parquet branch and returned a
+  // parquet file to someone who asked for something else. Same whitelist as the mint path.
+  if (!tokenRecord && !['parquet', 'csv'].includes(format)) {
+    return jsonRes({ error: "Invalid format. Use: parquet, csv" }, 400, cors);
+  }
 
   // Mark token as used
   if (tokenRecord) {
