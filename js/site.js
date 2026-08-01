@@ -192,7 +192,16 @@
       // address or an already-open tab carries no referrer). Bounded by a try counter so it can
       // never run away — the clock decides responsiveness, the counter decides whether a loop is
       // possible. Same division econ's older check settled on after the same bug.
-      var RESUME_RECHECK_MS = 60 * 1000, RESUME_MAX_TRIES = 3, TRIES_K = 'ekd_silent_tries';
+      // TEN minutes, not one. The time-based re-arm exists only for the case with NO referrer —
+      // a bookmark or typed address after signing in on another family site. The referrer check
+      // above handles the common case instantly and is unaffected by this number.
+      //
+      // At 60s it cost the majority of traffic real redirects: measured 2026-08-01, this library
+      // has 21,692 visitors against 603 accounts, so ~97% of arrivals are signed out and can
+      // never resume. Simulated over a 12-page, 10-minute visit, a 60s window produced THREE
+      // redirects; 10 minutes produces ONE — the unavoidable first ask. Making 97% of visitors
+      // pay three bounces to shorten a rare no-referrer case is the wrong trade.
+      var RESUME_RECHECK_MS = 10 * 60 * 1000, RESUME_MAX_TRIES = 3, TRIES_K = 'ekd_silent_tries';
       var famRef = /^https:\/\/(www\.)?(econdatalibrary|elkassabgidata|ipdatalibrary)\.com(\/|$)/;
       var doneAt = parseInt(sessionStorage.getItem('ekd_silent_done') || '0', 10) || 0;
       var tries = parseInt(sessionStorage.getItem(TRIES_K) || '0', 10) || 0;
