@@ -2976,3 +2976,40 @@ store's real columns showed bls was the only mismatch.
 3. When several sources share a helper, the shared assumption (here: the key column) is the
    thing to sweep. One mismatch out of seven is exactly the hit rate that makes spot-checking
    useless and sweeping necessary.
+
+## R207 — I verified a fix was PRESENT on the page and never that it could RUN
+
+**What I did.** econdatalibrary.com's download page refused a signed-in visitor because it
+knew only one credential, a pasted api_key. I taught it to fall back to the family access
+token via `window.EKD.getAccessToken()`, deployed, and confirmed against the live site that
+`authHeaders()` and `canDownload()` were being served. I told the owner to try it.
+
+**What happened.** "I just opened a new incognito window and tried to do the same thing and
+nothing changed at all." Correct: `download.html` never loads the SSO SDK. account.html
+injects `accounts.elkassabgidata.com/sdk/ekd-sso.js` at runtime; the download page never did,
+because until then it had never needed it. So `window.EKD` was undefined, my own guard
+`if (window.EKD && window.EKD.getAccessToken)` fell straight through, the request went out
+with no credential, and the page behaved exactly as before. The fix shipped, was served, and
+was dead on arrival.
+
+**The flaw in the check, precisely.** I grepped the deployed HTML for the function names and
+saw them. That proves the bytes arrived. It says nothing about whether the code can execute:
+the dependency it needs was never on that page. Presence and executability are different
+claims, and I verified the weaker one while reporting the stronger.
+
+**Why the guard made it worse rather than safer.** `if (window.EKD && …)` was written to
+fail gracefully, and it did — silently, into precisely the old broken behaviour. A defensive
+guard around a dependency that is ALWAYS absent converts "crash loudly on line 1" into "ship
+something inert and tell the owner it is fixed". The guard is still right; what was missing
+was ever checking that the condition can be true.
+
+**How it was actually caught.** The owner tried it. Not a review, not a probe of mine — a
+person hitting the same wall twice. That is the most expensive possible detector and the one
+I left in place by not asking the obvious question: does this page have the thing I am calling?
+
+**The rule.** For any change that calls into a dependency, verify the dependency RESOLVES in
+the place the code runs, not merely that the code was deployed. On a web page that means
+executing it: load the real URL and evaluate the call. `typeof window.X` in the live page is
+a two-second check and it is the difference between "served" and "works". More generally: when
+a fix reaches for something it did not previously use, the first question is not "is my code
+right" but "is the thing I am reaching for actually there".
