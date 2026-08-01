@@ -3283,3 +3283,30 @@ where the reader is actually looking; this one only claimed to.
    it inline as well; the summary restates, it does not substitute.
 3. When a caller names an explicit work list, reconcile it. `--source` now fails fast on any
    name that matches no unit, so a typo or a renamed source cannot quietly shrink the run.
+
+### R212 — my own audit was the defect it was written to find
+
+I wrote a sweep to find every source hosted in R2 but missing from the catalogue, because I had
+found two of them (noaa, census) by accident and a reported example is one instance of a class.
+The sweep ran `count(distinct series_key)` over ~140 stores in ONE DuckDB connection with no
+memory limit, and collected every result before sorting and printing.
+
+Two hours later it had produced not one line of output and was holding 128 GB of RAM, starving
+the three jobs that actually mattered. I had spent that morning fixing an orchestrator branch
+that skipped a source without printing anything, and then shipped a tool with the same two
+faults: unbounded resource use, and no output until the end.
+
+What made it worse is that the cheap version of the same audit answers most of the question in
+seconds. Reconciling the CATALOGUE against `SUPPORTED_SOURCES` and the registry needs no store
+scan at all, and it found 11 sources hosted with zero catalogue rows plus 8 entries promising
+downloads for data that does not exist — the same class, from three files instead of a terabyte.
+
+**The rules.**
+1. A long-running job prints per item, flushed. "No output yet" and "hung" must not look alike.
+   This applies to my own diagnostics, not only to production code.
+2. Bound the resources of an aggregate over an unknown corpus — `memory_limit`, a temp directory
+   to spill into, one connection per unit, closed. An exact distinct-count builds a hash table
+   of every distinct value; across a whole store that is the machine.
+3. Ask what the CHEAPEST evidence for the question is before scanning data. Metadata-vs-metadata
+   reconciliation is nearly free and catches most of what a full scan would.
+4. A bounded pass must NAME what it skipped. Silence about the unscanned reads as coverage.
