@@ -3208,9 +3208,32 @@ async function handleMe(request, env, cors) {
 
 // ── 2FA handlers ──
 
+// Enrolling a second factor requires a VERIFIED mailbox.
+//
+// handleLogin does not check email_verified, so registering with an address you do not own
+// still yields a working session. From there, enrolling TOTP set totp_enabled = 1, and
+// handleLogin's `if (user.totp_enabled)` then demands a code from EVERY subsequent login —
+// including the real owner's, once they verify or reset their password. There is no backup
+// code, no admin reset, and disable itself requires a working code, so the mailbox owner was
+// permanently locked out of their own address by someone who never proved they could read it.
+//
+// Requiring verification to enrol closes it at the only point where the squatter has to
+// demonstrate something they cannot fake. It costs a legitimate user nothing: they verify by
+// email anyway, and 2FA is opt-in and set up later.
+function require2faEnrolmentEligible(user, cors) {
+  if (!user.email_verified) {
+    return jsonRes({
+      error: 'Verify your email address before enabling two-factor authentication.',
+    }, 403, cors);
+  }
+  return null;
+}
+
 async function handle2faSetup(request, env, cors) {
   const user = await getSessionUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
+  const ineligible = require2faEnrolmentEligible(user, cors);
+  if (ineligible) return ineligible;
 
   const userId = user.user_id || user.id;
 
@@ -3251,6 +3274,12 @@ async function handle2faSetup(request, env, cors) {
 async function handle2faEnable(request, env, cors) {
   const user = await getSessionUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
+  // Checked here as well as in setup, not only there. These are two independently routed
+  // endpoints and enable is the one that actually writes totp_enabled = 1 — a guard that
+  // lives only on the step before it is a guard on the wrong statement, and would be bypassed
+  // by anyone posting straight to /2fa/enable with a secret from an earlier eligible moment.
+  const ineligible = require2faEnrolmentEligible(user, cors);
+  if (ineligible) return ineligible;
 
   let body;
   try { body = await request.json(); } catch { return jsonRes({ error: 'Invalid JSON' }, 400, cors); }
