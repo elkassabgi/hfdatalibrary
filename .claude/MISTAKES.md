@@ -3310,3 +3310,34 @@ downloads for data that does not exist — the same class, from three files inst
 3. Ask what the CHEAPEST evidence for the question is before scanning data. Metadata-vs-metadata
    reconciliation is nearly free and catches most of what a full scan would.
 4. A bounded pass must NAME what it skipped. Silence about the unscanned reads as coverage.
+
+### R213 — I tested for zero, and zero is not the same as complete
+
+Having found two sources hosted with NO catalogue rows, I wrote a reconcile that asks "which
+supported sources have zero catalogue rows?". It found two more and I was satisfied.
+
+The question was wrong. A source with 21 catalogue rows over a 52,519-series store is the same
+defect as one with none — the store is hosted and all but a handful of it is invisible — and it
+sails past a zero-test. Adding one line, comparing the catalogue against the series count in the
+store's own parquet footers, turned two findings into five:
+
+    fed_board  store  52,519   catalogue 21    CLEARED
+    fhfa       store  89,706   catalogue 61    CLEARED
+    zillow     store 543,001   catalogue 52    RESTRICTED (keep gated)
+
+zillow is why this matters beyond tidiness. Its 52 rows had derived CSVs in R2 and a place in
+SUPPORTED_SOURCES, so 52 series were being served against terms that are CONFIRMED
+permission_required — the only live licence breach in the library, and my zero-test could never
+have found it, because 52 is not 0.
+
+The whole check is a parquet FOOTER read. No column is decoded, no row is scanned. It cost
+nothing and I simply had not asked for it.
+
+**The rules.**
+1. "Is it absent?" and "is it complete?" are different questions. Ask the second; the first is a
+   special case of it and the interesting failures are in the gap between them.
+2. A handful of hand-curated demo rows is the signature of this defect — 10 for noaa, 21 for
+   fed_board, 22 for census, 25 for usda, 52 for zillow, 61 for fhfa. A round, tiny count against
+   a large store is not a small source, it is an unfinished one.
+3. Check what the ARTEFACT costs before assuming an audit is expensive. Series counts sit in
+   parquet footers; I reached for a distinct-count over a terabyte instead (R212).
