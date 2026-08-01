@@ -3341,3 +3341,34 @@ nothing and I simply had not asked for it.
    a large store is not a small source, it is an unfinished one.
 3. Check what the ARTEFACT costs before assuming an audit is expensive. Series counts sit in
    parquet footers; I reached for a distinct-count over a terabyte instead (R212).
+
+### R214 — I measured a proxy for the thing the code actually reads, and wrote the number into it
+
+Checking whether fed_board's catalogue ids need a dataset qualifier, I grouped the store's
+`__series.parquet` sidecars by their `dataset` column and got 219 ambiguous keys. I wrote "219"
+into the resolver's comment as a measured fact and built a test around it.
+
+The test failed, which is the only reason I looked again. For fed_board that column is a
+PRESENTATION GROUPING: `IP.B50001.A` is listed under IP_MAJOR_INDUSTRY_GROUPS, IP_MARKET_GROUPS
+and IP_SPECIAL_AGGREGATES while its observations live in exactly one file, G17.parquet. Same
+series, cross-listed three times. The resolver does not scan sidecars — it scans the OBSERVATION
+files — and measured there the answer is 29, a completely different set of keys, all of them the
+CP/H15 commercial-paper overlap.
+
+The direction of the error is what makes it dangerous. 219 is bigger than 29, so it looked
+conservative, and a conservative-looking wrong number invites no scrutiny. It also implied a
+defect class that did not exist while hiding the one that did.
+
+The same mistake was in my reconcile tool at the same moment: it summed sidecar ROWS and
+reported 52,519 series for fed_board and 89,706 for fhfa, where the distinct counts are 52,293
+and 87,685. A complete catalogue would have shown a permanent phantom gap of 226 and 2,021.
+
+**The rules.**
+1. Measure the artefact the CODE reads. A sidecar, an index, a manifest, a catalogue: each is a
+   claim about the data, not the data. When they disagree, the one the code opens wins.
+2. A column named `dataset` does not mean the same thing in every source. Check what it
+   partitions before grouping by it — here it partitioned presentations, not files.
+3. Rows are not entities. Count distinct keys unless you have checked that a source never lists
+   one twice.
+4. A number that is about to be written into code as justification gets verified against a
+   second, independent path first. I only caught this because the test disagreed.
