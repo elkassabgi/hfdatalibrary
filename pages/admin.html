@@ -172,6 +172,16 @@
           <span class="chip" data-filter="admin" onclick="setUserFilter('admin')">Admin</span>
           <span class="chip danger" data-filter="flagged" onclick="setUserFilter('flagged')">&#9888; Flagged</span>
         </div>
+        <!-- Fair use: filter to accounts above a 30-day volume, sorted heaviest first, so a
+             breach can be investigated and the account revoked from the row it appears in. -->
+        <div class="chips" style="margin-bottom:1rem; align-items:center;">
+          <span class="muted" style="font-size:0.78rem; margin-right:0.35rem;">Fair use &mdash; 30d volume:</span>
+          <span class="chip active" data-fairuse="0"   onclick="setFairUse(0)">Any</span>
+          <span class="chip" data-fairuse="1"   onclick="setFairUse(1)">&#8805; 1 GB</span>
+          <span class="chip" data-fairuse="10"  onclick="setFairUse(10)">&#8805; 10 GB</span>
+          <span class="chip" data-fairuse="50"  onclick="setFairUse(50)">&#8805; 50 GB</span>
+          <span class="chip danger" data-fairuse="100" onclick="setFairUse(100)">&#8805; 100 GB</span>
+        </div>
         <div id="users-flag-bar"></div>
         <div class="section-card" style="overflow-x:auto;">
           <table class="admin-table" id="users-table">
@@ -182,6 +192,7 @@
               <th class="sortable" data-sort="country" onclick="setUserSort('country')">Country</th>
               <th>Role</th>
               <th class="sortable" data-sort="downloads" onclick="setUserSort('downloads')">DL</th>
+              <th class="sortable" data-sort="bytes_30d" onclick="setUserSort('bytes_30d')" title="Data downloaded in the trailing 30 days — the fair-use window">30d vol.</th>
               <th class="sortable" data-sort="last_login" onclick="setUserSort('last_login')">Last login</th>
               <th>IP / Loc.</th>
               <th>Status</th>
@@ -456,7 +467,18 @@ function renderChannels(channels, channels7d, trackedSince) {
 }
 
 // ── Users (server-side search / sort / filter / paginate) ──
-let usersState = { q: '', sort: 'created_at', dir: 'desc', filter: '', offset: 0, limit: 50, totalMatching: 0 };
+let usersState = { q: '', sort: 'created_at', dir: 'desc', filter: '', offset: 0, limit: 50, totalMatching: 0, minGb30: 0 };
+
+// Fair use: show only accounts that pulled at least N GB in the trailing 30 days, and sort by
+// that column so the heaviest sit at the top. Picking a threshold re-sorts by volume — landing
+// on a filtered list still ordered by signup date would bury the account worth investigating.
+function setFairUse(gb) {
+  usersState.minGb30 = gb;
+  if (gb > 0 && usersState.sort !== 'bytes_30d') { usersState.sort = 'bytes_30d'; usersState.dir = 'desc'; }
+  usersState.offset = 0;
+  document.querySelectorAll('[data-fairuse]').forEach(c => c.classList.toggle('active', Number(c.dataset.fairuse) === gb));
+  loadUsers();
+}
 let searchTimer = null;
 
 function usersReset() { usersState.offset = 0; loadUsers(); }
@@ -476,12 +498,30 @@ function setUserSort(col) {
   usersState.offset = 0; loadUsers();
 }
 
+// Trailing-30-day volume for the users table. Decimal GB (1e9), matching the unit the user
+// detail panel already prints and the unit the fair-use box takes. The bands are deliberately
+// generous: at the 2026-08-01 distribution 129 accounts exceed 1 GB and 64 exceed 10 GB, so
+// colouring at those levels would paint most of an ordinary page red and train the eye to
+// ignore it. Amber starts at 50 GB (15 accounts) and red at 100 GB (9) — small enough sets to
+// actually look at. A zero renders as a dash, not "0.00 GB", so an idle account stays quiet.
+function fmtVol30(bytes, count) {
+  const b = Number(bytes || 0);
+  if (!b) return '<span class="muted">-</span>';
+  const gb = b / 1e9;
+  const txt = gb >= 1 ? gb.toFixed(1) + ' GB' : Math.round(b / 1e6) + ' MB';
+  const style = gb >= 100 ? 'color:#b91c1c; font-weight:700;'
+              : gb >= 50  ? 'color:#b45309; font-weight:600;' : '';
+  const title = (count || 0) + ' download' + (count === 1 ? '' : 's') + ' in the last 30 days';
+  return '<span style="' + style + '" title="' + title + '">' + txt + '</span>';
+}
+
 async function loadUsers() {
   try {
     const p = new URLSearchParams({
       q: usersState.q, sort: usersState.sort, dir: usersState.dir,
       filter: usersState.filter, limit: usersState.limit, offset: usersState.offset,
     });
+    if (usersState.minGb30 > 0) p.set('min_gb30', usersState.minGb30);
     const r = await fetch(API + '/v1/admin/users?' + p.toString(), { headers: authHeaders() });
     if (r.status === 403) { adminLogout(); return; }
     const d = await r.json();
@@ -511,13 +551,14 @@ async function loadUsers() {
         '<td>' + (u.country ? (isLatinish(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
         '<td>' + dirtyMark(u.role) + '</td>' +
         '<td class="mono">' + u.download_count + '</td>' +
+        '<td class="mono">' + fmtVol30(u.bytes_30d, u.downloads_30d) + '</td>' +
         '<td class="muted" style="font-size:0.78rem; white-space:nowrap;">' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</td>' +
         '<td>' + ipCell + (ipLoc ? '<br>' + ipLoc : '') + '</td>' +
         '<td>' + (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
           (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') + '</td>' +
       '</tr>';
     }).join('');
-    document.getElementById('users-list').innerHTML = html || '<tr><td colspan="9" class="muted" style="padding:1rem;">No users match.</td></tr>';
+    document.getElementById('users-list').innerHTML = html || '<tr><td colspan="10" class="muted" style="padding:1rem;">No users match.</td></tr>';
 
     // Flag bar — headline uses the same union the Flagged chip filters on.
     const fb = document.getElementById('users-flag-bar');
@@ -579,6 +620,8 @@ async function showUser(id) {
         '<div><strong>Last IP:</strong><br><code>' + esc(u.last_login_ip || '-') + '</code></div>' +
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
+        '<div><strong>Last 30 days:</strong><br>' + fmtVol30(u.bytes_30d, u.downloads_30d) +
+          ' <span class="muted">in ' + (u.downloads_30d || 0) + ' dl</span></div>' +
       '</div>' +
       '<div style="margin-bottom:1rem;">' +
         '<button class="btn btn-sm btn-primary" onclick="saveUserProfile(' + u.id + ')">Save profile changes</button>' +

@@ -4047,11 +4047,16 @@ async function handleAdmin(path, request, env, cors, ip) {
     const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
     const q = (url.searchParams.get('q') || '').trim();
     const filter = url.searchParams.get('filter') || '';   // vip|admin|revoked|active|flagged
+    // Fair-use threshold in GB over the trailing 30 days. Parsed as a float so 0.5 works,
+    // clamped at 0 so a negative can never widen the result set into "every user".
+    const minGb30 = Math.max(0, parseFloat(url.searchParams.get('min_gb30') || '0') || 0);
     // Sort whitelist — never interpolate raw input into SQL.
     const SORT_COLS = {
       created_at: 'created_at', name: 'name COLLATE NOCASE', email: 'email COLLATE NOCASE',
       institution: 'institution COLLATE NOCASE', country: 'country COLLATE NOCASE',
       downloads: 'download_count', logins: 'login_count', last_login: 'last_login_at',
+      // Fair use: trailing-30-day volume, the two columns this console is judged on.
+      bytes_30d: 'bytes_30d', downloads_30d: 'downloads_30d',
     };
     const sortCol = SORT_COLS[url.searchParams.get('sort')] || SORT_COLS.created_at;
     const dir = (url.searchParams.get('dir') || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
@@ -4089,21 +4094,54 @@ async function handleAdmin(path, request, env, cors, ip) {
         .map(Number).filter(Number.isInteger);
       where.push('id IN (' + (ids.length ? ids.join(',') : '-1') + ')');
     }
+    // Fair-use filter. Pushed LAST so its bound parameter lands after the ones `q` pushed —
+    // D1 binds positionally, and an arg appended out of order silently filters on the wrong
+    // column rather than erroring. GB here is decimal (1e9), the convention for transfer
+    // volume and the same base the console formats with, so the number typed into the box is
+    // the number rendered in the column.
+    if (minGb30 > 0) {
+      where.push('COALESCE(d30.b, 0) >= ?');
+      args.push(Math.round(minGb30 * 1e9));
+    }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    // Trailing-30-day download volume per user, as a CTE rather than a correlated subquery.
+    // A correlated subquery would re-walk every row of the heaviest account (45,204 of them)
+    // once per rendered row — up to 500 rows a page. This aggregates the window ONCE.
+    //
+    // Cost is measured, not assumed: ~368k rows read, ~82 ms, via a full scan on the existing
+    // idx_download_log_user, which SQLite prefers because it returns rows already grouped by
+    // user_id and so makes GROUP BY free. A purpose-built (timestamp, user_id, bytes_served)
+    // index was built, forced with INDEXED BY, and measured SLOWER in rows read (381,577);
+    // it was dropped by the 2026-08-01 migration, which records the numbers. The scan is
+    // inherent to aggregating a window across every user — if this needs to get cheaper the
+    // answer is a summary table on the existing 02:00 cron, not another index.
+    //
+    // LEFT JOIN because a user with no downloads in the window must still appear — at 0,
+    // not missing.
+    const D30_CTE =
+      "WITH d30 AS (SELECT user_id, SUM(bytes_served) AS b, COUNT(*) AS c FROM download_log " +
+      "WHERE timestamp > datetime('now','-30 days') GROUP BY user_id) ";
+    const D30_JOIN = ' FROM users LEFT JOIN d30 ON d30.user_id = users.id ';
 
     // ip_country: geolocation (Cloudflare cf-ipcountry) of the user's last-login
     // IP, resolved from login_history — distinct from self-declared users.country.
     const users = await env.DB.prepare(
+      D30_CTE +
       'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes, ' +
       '(SELECT lh.country FROM login_history lh WHERE lh.ip_address = users.last_login_ip ' +
       'AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
-      'ORDER BY lh.id DESC LIMIT 1) AS ip_country ' +
-      'FROM users ' + whereSql + ` ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`
+      'ORDER BY lh.id DESC LIMIT 1) AS ip_country, ' +
+      'COALESCE(d30.b, 0) AS bytes_30d, COALESCE(d30.c, 0) AS downloads_30d' +
+      D30_JOIN + whereSql + ` ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`
     ).bind(...args, limit, offset).all();
 
     const totalAll = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
+    // The count carries the SAME cte + join as the page query. It has to: whereSql can now
+    // contain a d30 predicate, and a count that quietly dropped the fair-use filter would
+    // report "1 of 442 shown" while the pager believed there were 442 pages to walk.
     const totalMatch = whereSql
-      ? await env.DB.prepare('SELECT COUNT(*) as count FROM users ' + whereSql).bind(...args).first()
+      ? await env.DB.prepare(D30_CTE + 'SELECT COUNT(*) as count' + D30_JOIN + whereSql).bind(...args).first()
       : totalAll;
 
     const usersOut = users.results.map(u => ({
@@ -4132,6 +4170,18 @@ async function handleAdmin(path, request, env, cors, ip) {
     const uid = parseInt(userDetailMatch[1]);
     const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first();
     if (!u) return jsonRes({ error: 'User not found' }, 404, cors);
+
+    // Same trailing-30-day window the list column ranks on. The detail panel is where a
+    // fair-use case is actually decided, so it must show the figure that put the account on
+    // the list — a panel showing only the all-time total would make a month-old 1 TB burst
+    // and a steady 1 TB over two years look identical. Single user, so a direct aggregate is
+    // correct here; the CTE above exists only because the list needs all of them at once.
+    const vol30 = await env.DB.prepare(
+      "SELECT COALESCE(SUM(bytes_served), 0) AS b, COUNT(*) AS c FROM download_log " +
+      "WHERE user_id = ? AND timestamp > datetime('now','-30 days')"
+    ).bind(uid).first();
+    u.bytes_30d = vol30 ? vol30.b : 0;
+    u.downloads_30d = vol30 ? vol30.c : 0;
 
     const logins = await env.DB.prepare(
       'SELECT * FROM login_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 20'
