@@ -3655,3 +3655,46 @@ notification already does. I added a display convenience that destroyed the sign
 3. A green result from a harness I wrote is evidence about the harness first and the work
    second. Check what the harness would report on FAILURE before trusting what it reports on
    success.
+
+### R219 — "errors 0, skipped 0" and a REFUSED list three lines below it
+
+The istat flow derive finished and printed:
+
+    units: 9,400   put 9,400   skipped 0   errors 0   3,156s
+    duplicate (series_key, obs_date) rows collapsed: 20,161
+    REFUSED (too large, no usable splitter) — 3:
+       183_207      1,718,051 rows
+       183_277     52,957,388 rows
+       183_285     42,049,968 rows
+
+I read the tally line, read `logs/istat_flows_summary.json` — `{"units":9400,"put":9400,
+"skipped":0,"errors":0,…}` — and reported the derive complete. Three flows holding **96,725,407
+rows**, 1.9% of the whole library, had been dropped on the floor. The refusal is not an error and
+not a skip, so both of my completeness checks were true and both were irrelevant.
+
+Two separate failures stacked:
+
+1. **The summary JSON has no `refused` key.** The derive computed the list, printed it, and then
+   serialised a dict that does not mention it. A machine-readable summary that omits the one
+   category meaning "data not emitted" is worse than no summary — it invites exactly the
+   conclusion I drew.
+2. **I read `tail -6`.** The refused block is 5 lines and the header was line 6 from the end. I
+   saw three flow names and row counts with no header and read them as informational. A number
+   with no label is not information; I supplied the label myself, and supplied a reassuring one.
+
+What actually caught it was the catalogue's own guard — 123 flows exceed 500,000 rows but the
+split map has 119 — which refused to write. But its message blamed the wrong cause ("written by
+a partial derive run"), so I spent the next four steps hunting a truncated run and a moving
+store. A guard that detects a discrepancy correctly and then names one possible cause as if it
+were the diagnosis sends the reader past the real one.
+
+**The rules.**
+1. A completeness summary must enumerate every terminal disposition, including the ones that are
+   neither success nor error. If the code has a bucket, the summary has a key.
+2. Never conclude completeness from a tally that reports only the categories I thought to ask
+   about. Ask the inverse question: emitted + refused + skipped + errored == considered?
+3. `tail -N` on a job log is a sample, not a reading. Grep for the failure vocabulary
+   (REFUSED/FAILED/SKIP/WARN) across the whole file before calling a run clean.
+4. A guard's message states the DISCREPANCY as fact and its causes as a list. "119 of 123 —
+   these 4 are missing: … (3 were REFUSED by the derive, 1 changed after the run)" beats one
+   confident wrong cause.
