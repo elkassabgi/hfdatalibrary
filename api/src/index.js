@@ -3114,6 +3114,11 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)')
     .bind(user.id, ip, ua, userCountry).run();
 
+  // Declared in the FUNCTION scope, not inside the block below, because the response object is
+  // built after that block closes. Assigning an undeclared name would be a ReferenceError under
+  // module strict mode — a runtime failure that no syntax check or esbuild build would catch.
+  let verifyMailSent = true;
+
   // Send verification email (skip for admins — auto-verified)
   {
     // Sent to EVERYONE now, admins included. Admin rows are no longer born verified, so an
@@ -3122,7 +3127,18 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     const verifyExpires = new Date(Date.now() + 86400000).toISOString(); // 24 hours
     await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
       .bind(user.id, verifyToken, verifyExpires, 'verify').run();
-    await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+    // NON-FATAL. The users row was inserted well above this line, so a throw here returned 500
+    // for a registration that had ALREADY SUCCEEDED: the address was permanently taken, the
+    // person saw an error, retried, and got "Email already registered. Please log in." with no
+    // verification mail ever sent. A transient Resend outage or rate limit was enough. The two
+    // accounts.* twins already wrapped this; only the api.* one did not.
+    //
+    // The response now reports it, so the UI can point at "resend verification" instead of
+    // leaving someone to guess why nothing arrived.
+    try {
+      await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+    } catch (e) { verifyMailSent = false; }
+
   }
 
   // Send admin notification for every new registration
@@ -3146,7 +3162,11 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     message: isAdmin ? 'Registration successful' : 'Registration successful. Please check your email to verify your account.',
     api_key: apiKey,
     session: sessionId,
-    email_verified: isAdmin ? true : false
+    email_verified: isAdmin ? true : false,
+    // False only when Resend actually refused. The account exists and is usable either way, so
+    // this is informational, not an error — it lets the page point at "resend verification"
+    // rather than leaving someone to wonder why no mail arrived.
+    verification_email_sent: verifyMailSent
   };
   // Additive, and only when the caller actually tried to bring an ORCID iD. An older page
   // ignores unknown keys, so this can never break one; a page that knows them renders the
@@ -3780,9 +3800,20 @@ async function handleResendVerification(request, env, cors) {
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
   await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
     .bind(userId, verifyToken, verifyExpires, 'verify').run();
-  await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+  // NON-FATAL, matching the accounts.* twin. The token row is already written by the time this
+  // runs, so a throw turned a successful mint into a 500 and invited a retry that just burns
+  // another one. Reported in the response instead.
+  let resendMailSent = true;
+  try {
+    await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+  } catch (e) { resendMailSent = false; }
 
-  return jsonRes({ message: 'Verification email sent. Check your inbox.' }, 200, cors);
+  return jsonRes({
+    message: resendMailSent
+      ? 'Verification email sent. Check your inbox.'
+      : 'We could not send the email just now. Please try again in a few minutes.',
+    sent: resendMailSent,
+  }, resendMailSent ? 200 : 502, cors);
 }
 
 async function handleResetRequest(request, env, cors) {
@@ -3823,7 +3854,15 @@ async function handleResetRequest(request, env, cors) {
       await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
         .bind(user.id, token, expires, 'reset').run();
       const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
-      await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+      // NON-FATAL, and this one is a SECURITY fix rather than a robustness one. sendEmail is
+      // reached ONLY inside `if (user)` — a non-existent address never gets here. So an
+      // exception produced a 500 exclusively for addresses that DO exist, while unknown ones
+      // returned the neutral 200. That difference is an account-enumeration oracle, and it
+      // defeats the entire point of the constant response this function is built around.
+      // Swallowing it keeps both cases identical.
+      try {
+        await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+      } catch (e) { /* stay indistinguishable from the unknown-address path */ }
     }
     // Over the per-account cap: silently skip the send. Saying so would confirm the address is
     // registered, which is exactly what the constant-response above exists to hide.
