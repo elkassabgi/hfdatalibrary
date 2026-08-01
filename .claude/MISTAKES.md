@@ -3013,3 +3013,37 @@ executing it: load the real URL and evaluate the call. `typeof window.X` in the 
 a two-second check and it is the difference between "served" and "works". More generally: when
 a fix reaches for something it did not previously use, the first question is not "is my code
 right" but "is the thing I am reaching for actually there".
+
+### R207 — I fixed the Arrow group_by crash in one file and left it in seven others
+
+`updater/merge.py` has carried this comment since its `_dedup` rewrite: *"group_by DOES NOT
+RAISE — it dereferences past the overflowed offsets"*. Arrow indexes string data with int32
+offsets; past 2 GiB in one column `group_by` kills the PROCESS (0xC0000005 / SIGABRT) rather
+than raising, so no `try/except` catches it and no honest-status path runs. I diagnosed that,
+rewrote `_dedup` around it, and wrote the explanation down.
+
+Then I stopped. Seven fetchers call `group_by` directly — bcrp, bls, boc, ons_uk, riksbank,
+scb, tcmb — and all seven kept the defect.
+
+It came due on 2026-08-01. The workstation pass ran 8h56m, merged six sources including
+`oecd` (23,438 s) and `faostat` (170.6M observations), reached `ons_uk`, and died at wave 3 of
+12 with exit -1073741819. Because the process vanished rather than failing, `push-state` then
+lost its compare-and-swap and nine hours of bookkeeping went with it. The data survived only
+because each source publishes atomically as it merges.
+
+**Why the sweep did not happen the first time.** I was chasing a specific outage — bis
+aborting at ~15.7 GB — and `merge._dedup` was where that particular crash occurred. Fixing the
+instance ended the incident, so the work felt finished. Nothing prompted me to ask the next
+question: *who else calls this?* One `grep group_by updater/` would have listed all seven in
+under a second, and I ran it only after the second crash.
+
+**The rule.** When a fix is for a defect in a LIBRARY CALL rather than in my own logic, the
+unit of repair is every call site, not the one that broke. Before closing such a fix, grep the
+package for the call and either convert or annotate each hit. The corollary matters too: I had
+already written the explanation into a comment, which made the knowledge feel deployed when it
+was merely recorded — the same shape as R202. A comment in one file protects one file.
+
+**Proven, not merely swapped.** The six converted sites were checked against the old aggregate
+on real stores (boc 2,741,005 rows / 12,862 keys; tcmb 511,229; riksbank 864,822; plus three
+smaller) and produce IDENTICAL cursor maps. A replacement that only stops crashing is worthless
+if it changes which series are reported fresh.
