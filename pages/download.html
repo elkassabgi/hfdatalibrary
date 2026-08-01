@@ -631,15 +631,129 @@ async function getDownloadAuth() {
 
 // D38: a download 401. family → the session is dead — do NOT loop getAccessToken; clear state + offer Sign
 // in (EKD.login mints fresh tokens with no reload — that IS recovery). legacy → purge per G-13.
-function handleDownloadAuthDead(kind) {
+// The optional `reason` is the server's 401 body. The worker's explainAuthFailure() only inspects
+// X-API-Key / ?api_key=, and this page authenticates with `Authorization: Bearer`, so today a browser
+// 401 ALWAYS comes back as the generic "Provide your API key in the X-API-Key header" boilerplate —
+// wrong-shaped advice for someone signed in on the website, so it is suppressed. If the worker ever
+// starts explaining Bearer failures too (expired key, inactive account), that text shows up here with
+// no page change; we detect the useless generic by its X-API-Key mention rather than by status alone.
+function handleDownloadAuthDead(kind, reason) {
   currentUser = null;
+  var specific = (reason && String(reason).indexOf('X-API-Key') === -1) ? String(reason) : '';
   if (kind === 'family') {
-    alert('Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
+    alert((specific ? specific + '\n\n' : '') +
+      'Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
   } else {
     safeDel('hfd_session'); sessionToken = null;
-    alert('Your session expired. Please sign in again to download.');
+    alert((specific ? specific + '\n\n' : '') +
+      'Your session expired. Please sign in again to download.');
   }
   var el = document.getElementById('ekd-signin-card'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ── Why a download was refused ──────────────────────────────────────────────────────────────
+// The bundle loop used to throw the server's explanation away and print only a count, so a user
+// whose email was unverified saw "Done! 0 files downloaded. 1 failed." and had no way to learn
+// that verifying their email would fix it. These three helpers turn a refusal into (a) the reason
+// and (b) the next step, and are shared by the bundle loop and the single-file path so both say
+// the same thing.
+
+// The REASON is whatever the server actually said (the `error` field of the JSON body) — it is
+// never guessed here, so a refusal the worker adds later ("account suspended", anything) surfaces
+// correctly with no page change and no lockstep deploy. Only when the body is missing or unusable
+// (a Cloudflare edge error page, a dropped connection) do we fall back to wording keyed off the
+// HTTP status, which is always available.
+function downloadFailureText(status, reason) {
+  if (reason) return String(reason);
+  if (status === 0)   return 'Could not reach the server — network error, or the request was blocked.';
+  if (status === 401) return 'Your sign-in was not accepted.';
+  if (status === 403) return 'The server refused this download for your account.';
+  if (status === 404) return 'The server did not recognise that request.';
+  if (status === 429) return 'Too many downloads in a short time.';
+  if (status >= 500)  return 'The server hit an error (HTTP ' + status + ').';
+  return 'The download was refused (HTTP ' + status + ').';
+}
+
+// What to DO about it. Matched against the server's own wording first — that is the only signal
+// precise enough to distinguish "verify your email" from "complete your profile", both of which
+// arrive as a 403 — and falls through to a status-keyed pointer so an unfamiliar reason still ends
+// with a next step instead of a dead end. The match only picks the ADVICE; the reason shown to the
+// user is always the server's text, so nothing here has to predict which cause occurred.
+function downloadFailureAdvice(status, reason) {
+  var t = String(reason || '').toLowerCase();
+  if (t.indexOf('verif') !== -1)
+    return 'Open the verification email we sent and click the link — check your spam or junk folder if it is not in your inbox — then start the download again.';
+  if (t.indexOf('profile') !== -1 || t.indexOf('institution') !== -1)
+    return 'Add your institution, country and role at accounts.elkassabgidata.com/account, then start the download again.';
+  if (t.indexOf('expired') !== -1 && t.indexOf('key') !== -1)
+    return 'Generate a new key at hfdatalibrary.com/pages/account, then update anything that still uses the old one.';
+  if (t.indexOf('inactive') !== -1 || t.indexOf('deactivat') !== -1 || t.indexOf('suspend') !== -1)
+    return 'Email admin@hfdatalibrary.com to have the account reactivated.';
+  if (status === 401 || status === 403)
+    return 'Check your account at accounts.elkassabgidata.com/account, then try again.';
+  if (status === 400)
+    return 'Change the version, timeframe or format selected above and try again.';
+  if (status === 404)
+    return 'That symbol may not exist in the version, timeframe or format you picked — try Parquet at 1min, or choose a different timeframe.';
+  if (status === 429)
+    return 'Wait a minute, then download the remaining files.';
+  if (status === 0 || status >= 500)
+    return 'Try again in a few minutes; if it keeps failing, email admin@hfdatalibrary.com.';
+  return 'Try again, and email admin@hfdatalibrary.com if it keeps happening.';
+}
+
+// One line per DISTINCT reason, never one per file. A 400-ticker bundle that hits a single
+// account-level refusal must say it ONCE; when reasons genuinely differ we show the three biggest
+// with a couple of example tickers and roll the rest into a tail, so the summary stays readable
+// instead of becoming a wall of 400 identical sentences.
+// Returns an array of plain strings — the caller joins them into textContent (never innerHTML:
+// both the reason and the ticker are attacker-influenceable, see the escaping rule).
+// `decisive` (optional) is the ONE failure that ended the run. It exists because the on-page
+// "What to do" and the pop-up alert used to be chosen by two different rules — this function took
+// the LARGEST group, the caller's alert took the LAST failure — so two 404s followed by a stopping
+// 403 printed the 404 remedy on the page and the 403 remedy in the alert: two different next steps
+// for one click, with the page advising the problem that did NOT stop the run. The caller now
+// passes the stopping failure here and uses the same one for the alert, so they cannot disagree.
+function summariseDownloadFailures(failures, decisive) {
+  var groups = [], index = {};
+  for (var i = 0; i < failures.length; i++) {
+    var f = failures[i];
+    var text = downloadFailureText(f.status, f.reason);
+    var key = f.status + '|' + text;
+    if (!index[key]) {
+      index[key] = { text: text, status: f.status, reason: f.reason, count: 0, tickers: [] };
+      groups.push(index[key]);
+    }
+    index[key].count++;
+    if (index[key].tickers.length < 3) index[key].tickers.push(f.ticker);
+  }
+  groups.sort(function (a, b) { return b.count - a.count; });
+  var lines = [];
+  if (groups.length === 1) {
+    lines.push('Reason: ' + groups[0].text);
+  } else {
+    // Roll up only when rolling up actually saves space: "+ 1 more for 1 other reason" is the same
+    // length as the reason it hides, so four distinct reasons are all shown and five-plus are cut to
+    // the three largest.
+    var shown = groups.slice(0, groups.length <= 4 ? 4 : 3);
+    for (var j = 0; j < shown.length; j++) {
+      lines.push(shown[j].count + ' failed: ' + shown[j].text +
+        ' (e.g. ' + shown[j].tickers.join(', ') + ')');
+    }
+    var restGroups = groups.length - shown.length;
+    if (restGroups > 0) {
+      var restFiles = 0;
+      for (var k = shown.length; k < groups.length; k++) restFiles += groups[k].count;
+      lines.push('+ ' + restFiles + ' more for ' + restGroups + ' other reason' + (restGroups === 1 ? '' : 's') + '.');
+    }
+  }
+  // The advice comes from the failure that actually STOPPED the run when there was one, and from
+  // the biggest group otherwise. A stopping refusal is account- or request-level: it is the thing
+  // standing between the user and every remaining ticker, so it is the only useful next step even
+  // when a larger group of per-ticker 404s came first.
+  var advise = decisive || groups[0];
+  lines.push('What to do: ' + downloadFailureAdvice(advise.status, advise.reason));
+  return lines;
 }
 
 // §9 popup-rejection copy (D40): specific for blocked/closed, generic for everything else.
@@ -652,11 +766,14 @@ function showSigninError(err) {
       : 'Sign-in didn’t complete. Click Sign in to try again — if you just registered, one click is all it takes.');
 }
 
-// Surface a download 403 (email-unverified / profile-incomplete) VERBATIM + the §9 tail.
+// Surface a download 403 (email-unverified / profile-incomplete) VERBATIM + a next step.
+// The tail used to be fixed, so a user told "complete your profile" was also told to check their
+// spam folder — advice for a different problem, which reads as noise and hides the real fix. The
+// next step is now derived from what the server actually said, via the shared advice helper.
 function downloadForbidden(msg) {
-  alert((msg || 'Access denied.') +
-    '\n\nDon’t see it? Check your spam or junk folder.' +
-    '\nManage your account at accounts.elkassabgidata.com/account — or sign in below with the same email and password.');
+  alert(downloadFailureText(403, msg) +
+    '\n\n' + downloadFailureAdvice(403, msg) +
+    '\nOr sign in below with the same email and password.');
 }
 
 // Wire the sign-in card buttons — synchronous EKD.login (G-12a); the #register href is the no-JS fallback.
@@ -985,7 +1102,16 @@ async function downloadBundle(format) {
   const bar = document.getElementById('bundle-bar');
   const status = document.getElementById('bundle-status');
   progress.style.display = 'block';
-  let completed = 0, failed = 0, authDead = null;
+  status.style.whiteSpace = 'pre-line';   // the summary below is multi-line and set via textContent
+  let completed = 0, failed = 0, authDead = null, authDeadReason = '';
+  // The loop used to keep a bare `failed` count and discard the JSON body it had already parsed,
+  // so every refusal — unverified email, incomplete profile, bad timeframe — collapsed into an
+  // unexplained number. Each failure now records the server's own words alongside its status.
+  const failures = [];
+  // Set when the refusal is account- or request-level rather than ticker-level: the same request
+  // for the next ticker would be refused identically, so firing 1,390 more doomed calls only wastes
+  // the user's time and our rate budget. We stop and explain instead.
+  let stopEarly = false;
   for (const ticker of tickers) {
     const a2 = await getDownloadAuth();                        // fresh per ticker (D38: 15-min edl_at)
     if (!a2) { authDead = auth.kind; break; }
@@ -993,8 +1119,13 @@ async function downloadBundle(format) {
       const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
         headers: { 'Authorization': 'Bearer ' + a2.token }
       });
-      const data = await r.json();
-      if (r.ok && data.url) {
+      // Parsed in its own try: a Cloudflare edge error page or a bot challenge is HTML, and the old
+      // `await r.json()` threw straight past the status check into the outer catch — turning every
+      // such failure into an anonymous one with no status to report. Now the status always survives.
+      let data = null;
+      try { data = await r.json(); } catch (e) { data = null; }
+      const serverMsg = (data && typeof data.error === 'string') ? data.error : '';
+      if (r.ok && data && data.url) {
         const a = document.createElement('a');
         a.href = data.url;
         a.download = ticker + '_' + version + '_' + timeframe + '.' + format;
@@ -1002,19 +1133,66 @@ async function downloadBundle(format) {
         a.click();
         a.remove();
         await new Promise(resolve => setTimeout(resolve, 300));
-      } else if (r.status === 401) { authDead = a2.kind; break; }   // D38: session died mid-bundle → stop + recover
-      else { failed++; }
-    } catch (e) { failed++; }
+      } else if (r.status === 401) {                                // D38: session died mid-bundle → stop + recover
+        authDead = a2.kind; authDeadReason = serverMsg; break;
+      } else {
+        failed++;
+        failures.push({ ticker: ticker, status: r.status, reason: serverMsg });
+        // 403 depends on the ACCOUNT (email unverified, profile incomplete) and 400 on the version /
+        // format / timeframe dropdowns, which are fixed for the whole run — both are identical for
+        // every remaining ticker. 404 and 5xx are per-ticker and must not stop the bundle.
+        // The `serverMsg &&` guard is what makes this an APPLICATION-level test rather than a bare
+        // HTTP-status one. Every refusal the worker itself issues is jsonRes({ error: ... }), so it
+        // always arrives with a reason; a Cloudflare edge 403 — a WAF block or a managed challenge —
+        // is an HTML page, which is exactly why `data` is parsed defensively above and left null.
+        // Keyed off the status alone, one such network event aborted a 400-ticker bundle after the
+        // first file and told the user to go check their ACCOUNT: an account remedy for a network
+        // event, 399 tickers abandoned. With no parsed reason we do what the loop did before this
+        // feature existed — count the failure and carry on to the next ticker.
+        if (serverMsg && (r.status === 403 || r.status === 400)) stopEarly = true;
+      }
+    } catch (e) {
+      failed++;
+      failures.push({ ticker: ticker, status: 0, reason: '' });     // network error / aborted fetch
+    }
     completed++;
     bar.style.width = ((completed / tickers.length) * 100) + '%';
     status.textContent = completed + ' / ' + tickers.length + ' downloaded' + (failed > 0 ? ' (' + failed + ' failed)' : '');
+    if (stopEarly) break;                                          // after the progress update, so the bar reflects the attempt
   }
   if (authDead) {
     status.textContent = 'Sign-in ended — ' + (completed - failed) + ' downloaded before it stopped.';
-    handleDownloadAuthDead(authDead);
+    handleDownloadAuthDead(authDead, authDeadReason);
     return;
   }
-  status.textContent = 'Done! ' + (completed - failed) + ' files downloaded.' + (failed > 0 ? ' ' + failed + ' failed.' : '');
+  const ok = completed - failed;
+  if (failures.length === 0) {
+    status.textContent = 'Done! ' + ok + ' files downloaded.';
+    return;
+  }
+  // Note: only the token request (hop 1) is observable from here. The file itself is fetched by a
+  // browser navigation to data.url, whose status JS cannot see, so a refusal at that second hop
+  // (missing file for that timeframe, or the 100/min rate limit) still counts as a success above.
+  const head = (ok === 0)
+    ? 'No files downloaded — ' + failed + ' failed.'
+    : 'Done! ' + ok + ' files downloaded, ' + failed + ' failed.';
+  const stoppedNote = (completed < tickers.length)
+    ? ' Stopped after ' + completed + ' of ' + tickers.length + ' — the rest would be refused the same way.'
+    : '';
+  // The ONE failure that ended the run, or null if the loop went the whole way. The page and the
+  // alert both take their "what to do" from it, so a single click can no longer produce two
+  // different next steps (previously the page advised the largest failure group and the alert the
+  // last failure — with two 404s and a stopping 403 those are different remedies).
+  const stopper = stopEarly ? failures[failures.length - 1] : null;
+  const lines = summariseDownloadFailures(failures, stopper);
+  // textContent, never innerHTML: `reason` is a server-supplied string and the ticker names come
+  // from user input, so neither may ever be parsed as markup.
+  status.textContent = [head + stoppedNote].concat(lines).join('\n');
+  // A bundle that produced nothing and stopped on a fixable account/request problem needs to be
+  // impossible to miss — the inline line alone reads as if the click did nothing.
+  if (stopper && ok === 0) {
+    alert(downloadFailureText(stopper.status, stopper.reason) + '\n\n' + downloadFailureAdvice(stopper.status, stopper.reason));
+  }
 }
 
 document.getElementById('bundle-input').addEventListener('keyup', function(e) {
@@ -1137,11 +1315,13 @@ async function downloadViaToken(ticker, format) {
     if (r.ok && data.url) {
       window.location.href = data.url;
     } else if (r.status === 401) {
-      handleDownloadAuthDead(auth.kind);                     // D38: dead session → recover, no retry loop
+      handleDownloadAuthDead(auth.kind, data.error);          // D38: dead session → recover, no retry loop
     } else if (r.status === 403) {
-      downloadForbidden(data.error);                          // verify-email / complete-profile, verbatim + §9 tail
+      downloadForbidden(data.error);                          // verify-email / complete-profile, verbatim + next step
     } else {
-      alert(data.error || 'Failed to get download link');
+      // Was a bare `data.error` with no guidance, and nothing at all when the body had no `error`
+      // field. Same reason-plus-next-step treatment the bundle summary now gives.
+      alert(downloadFailureText(r.status, data.error) + '\n\n' + downloadFailureAdvice(r.status, data.error));
     }
   } catch (e) { alert('Connection error'); }
 }
