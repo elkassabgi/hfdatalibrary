@@ -27,6 +27,17 @@
        something is happening and offering a way out. Fast path: invisible. Slow path: unchanged. -->
   <div class="m" id="m" hidden><p id="msg"><strong>ElkassabgiData</strong><br>Completing sign-in&hellip;</p><p class="ret"><a href="/">Return to the site</a></p></div>
   <script>setTimeout(function(){var m=document.getElementById('m');if(m)m.hidden=false;},600);</script>
+  <noscript>
+    <!-- Without this a JS-disabled visitor gets an EMPTY dark page. The panel above is hidden by
+         default and only revealed by a timer, so with scripting off nothing ever reveals it.
+         Sign-in genuinely cannot complete without JavaScript here — the code is redeemed by
+         fetch — so the honest thing is to say so and offer a way back, not to show a blank
+         screen that looks like the site is broken. Costs nothing to anyone who has JS. -->
+    <div class="m">
+      <p><strong>ElkassabgiData</strong><br>Signing in needs JavaScript, which appears to be turned off.</p>
+      <p class="ret"><a href="/">Return to the site</a></p>
+    </div>
+  </noscript>
   <script>
   (function () {
     'use strict';
