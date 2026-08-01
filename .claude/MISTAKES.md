@@ -2810,3 +2810,43 @@ when a check for `*RELAUNCH_GUARD_LOOP*` reported two guard loops — one of whi
 command doing the asking. Excluding `$PID` is not enough: the launcher, the parent, and the
 query itself all carry the pattern. Identify a process by something you *wrote* (a lockfile
 holding PID plus start time), not by text that any observer of it also contains.
+
+### R204 — I called correct data a bug, having recognised the shape and not checked it
+
+Reviewing the new Status board I saw `abs` advertising "data through 2046-12-31", and told
+Ahmed: *"a far-future date... something in the ABS ingest is mis-parsing periods."* I had run
+no query against abs at that point. The shape was familiar, so I named a cause.
+
+The data is correct. All 15 abs dataflows holding future periods are legitimately
+forward-looking, and the evidence took one script: every one is a dense annual run with zero
+year gaps, zero nulls and plausible values. Thirteen are ABS population, family and household
+PROJECTIONS — `POP_PROJ_REGION_2012_2061` states its own horizon in its name — `CAPEX_EST` is
+the capital-expenditure *expectations* survey, and `BOP_FACTOR` carries forward factors to
+2027-Q1. Had I "fixed" what I diagnosed, I would have deleted 44,339,979 rows of real data.
+
+**This is the second time.** The ledger already records hagstofa, where 81,535 rows I first
+read as a far-future defect were legitimate forecasts and only 1,120 beyond 2100 were actually
+corrupt. Recognising a pattern is not evidence that the pattern applies.
+
+**There WAS a real defect, and it was one layer up.** `last_obs_date` is the furthest period in
+the store; `health.py` took `max()` over it to judge RECENCY. So abs's obs_age was NEGATIVE —
+7,458 days "ahead" — and the staleness gate could never fire on it, while 805 of its 1,222
+sub-units were transient-failing. 28 of 93 units were structurally immune. Fixing that exposed
+a second one beneath it: `irregular` is absent from `CADENCE_DAYS`, so it fell to the 7-day
+default and called data late after 21 days — correct as a polling interval, wrong as a lateness
+clock, and it would have turned four correct sources red (un_wpp 31 days after a release,
+yale_epi at 578 when the EPI is biennial).
+
+**The rules.**
+1. A date far in the future is a QUESTION, not a finding. Publishers ship projections,
+   forecasts, expectations surveys and forward factors. Ask what the dataset IS — the filename
+   often answers it — before calling the data wrong.
+2. Do not name a cause in a report before running the query. "That looks off, I'll check" costs
+   nothing; "the ingest is mis-parsing periods" is a claim, and it was false.
+3. When a wrong value is real data, the bug is in what CONSUMES it. Here the same number was
+   right for "how far does this reach" and wrong for "how current is this" — one field serving
+   two questions. Splitting them (`newest_obs` vs `frontier_obs`) fixed it without touching a
+   single row.
+4. Fixing a signal can expose a threshold that was only ever masked by it. Measure the
+   before/after distribution, not just the target: RED-DATA 0 -> 6 -> 2 across the two fixes,
+   and stopping after the first would have shipped four false alarms.
