@@ -3231,3 +3231,30 @@ last read, means another worker is live in that tree — stand down or coordinat
 This is cheap (two commands), and it is the same discipline as reading before overwriting.
 The standing order's queue is not a claim of exclusivity, and "the queue says do this" is not
 evidence that nobody else is already doing it.
+
+### R210 — my batch loop grepped for success, so four failures rendered as silence
+
+Rewriting catalogue titles for the seven `imf_*_direct` sources, I ran them in a shell loop
+that piped each run through `grep -E "^written"`. Three printed a written line. Four printed
+nothing.
+
+Nothing is not a failure message. It is the absence of a success message, and those are only
+the same thing if you assume the command could not have died some other way. It had:
+`sqlite3.OperationalError: database is locked` — `catalog.db` has other writers (the running
+updater's CSV derive and its catalogue sync), and without a `busy_timeout` sqlite raises the
+instant it collides. The traceback went to stderr, which my pipeline never looked at, so four
+sources silently kept their raw-key titles while the run looked like it had worked.
+
+What caught it was checking the ARTEFACT rather than the log: counting rows whose `title` still
+equalled the key. That query said 4,120 series across four sources were untouched, which no
+amount of re-reading my own output would have revealed.
+
+**The rules.**
+1. In a loop over many items, test the EXIT CODE and print stderr on failure. Grepping stdout
+   for a success string converts every unexpected failure into silence, and silence in a long
+   loop is invisible.
+2. Verify the artefact, not the transcript. "Did the rows change?" is answerable; "did it print
+   the thing I expected?" only tests my expectations.
+3. `catalog.db` is a shared writer. Anything writing it while the updater runs needs a
+   busy_timeout, or it will lose work at random depending on lock timing — which is worse than
+   failing consistently, because it fails on some items and not others.
