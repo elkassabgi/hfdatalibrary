@@ -768,6 +768,16 @@ let oauthPendingId = null;
 // Signed proof that this browser really completed ORCID's OAuth. oauthPendingId is only
 // ever used to fill the form in; the server ignores it and trusts this token instead.
 let oauthPendingProof = null;
+
+// Hand the user a FRESH Turnstile token after any failed submit. Called from every failure
+// path in the register handler; without it a retry re-sends the spent token and fails on the
+// CAPTCHA regardless of what was actually wrong. Guarded because the widget script is
+// third-party: if it failed to load, registration must still work (the worker treats a
+// missing token as a failure only when TURNSTILE_SECRET is configured), and a reset that
+// throws must never take the error message down with it.
+function resetTurnstile() {
+  try { if (typeof turnstile !== 'undefined' && turnstile.reset) turnstile.reset(); } catch (e) {}
+}
 (function handleOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
   // The session id arrives in the QUERY STRING, matching what the worker sends
@@ -1195,6 +1205,17 @@ async function registerUser() {
     if (!role) { document.getElementById('reg-result').style.display = 'block'; document.getElementById('reg-result').innerHTML = '<p style="color:var(--red); margin:0;">Please specify your role.</p>'; return; }
   }
   const newsletter = document.getElementById('reg-newsletter').checked;
+  // A Turnstile token is SINGLE-USE and expires about five minutes after it is solved, but
+  // getResponse() keeps handing back the same one. Nothing on this page ever reset the
+  // widget, so the first failed submit — a taken email, a weak password, or simply taking
+  // longer than five minutes over the form — spent the token, and every retry after that
+  // came back "CAPTCHA verification failed. Please try again." no matter what the user
+  // corrected. The green tick stayed on screen the whole time, so the message looked like a
+  // lie. The only escape was a full page reload, which throws away everything typed.
+  //
+  // This is very likely the "some error happened, then it told him he cannot retry" that
+  // started this whole review: the CAPTCHA message masked the real error, and the hourly
+  // registration cap (fixed separately) then locked the address out entirely.
   const turnstileToken = (typeof turnstile !== 'undefined') ? turnstile.getResponse() : '';
   if (!turnstileToken) {
     document.getElementById('reg-result').style.display = 'block';
@@ -1275,10 +1296,16 @@ async function registerUser() {
       }
       checkAuth();
     } else {
-      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Registration failed.') + '</p>';
+      result.textContent = '';
+      const errP = document.createElement('p');
+      errP.style.cssText = 'color:var(--red); margin:0;';
+      errP.textContent = data.error || 'Registration failed.';
+      result.appendChild(errP);
+      resetTurnstile();
     }
   } catch (e) {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Error connecting to API. Please try again.</p>';
+    resetTurnstile();
   }
 
   btn.disabled = false;
