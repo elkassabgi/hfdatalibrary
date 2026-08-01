@@ -331,3 +331,33 @@ owner is the one person the system can permanently lock out.
 `/2fa/disable` requires either a working authenticator code or one of those codes. That is
 deliberate — an admin-reset button is a social-engineering target, and this service has one
 admin and no support desk to verify anybody's identity.
+
+---
+
+## 12. The rate limiter is still in shadow mode — how to turn it on
+
+`rateLimit()` on `/authorize` and `/token/*` logs a would-be denial and **never blocks**. Five of
+its six call sites pass `enforce = false`; only `oauth_start_ip` enforces, because that path
+writes state before authentication. The soak it was waiting on concluded PASS on 2026-07-29.
+
+**To enforce**, change the last argument from `false` to `true` at those five call sites
+(`grep -n "await rateLimit(env," api/src/index.js`), deploy, and watch for `evt:"rate_limit"` in
+`wrangler tail`. To roll back, flip them and deploy again — one command each way.
+
+**The evidence that it is safe**, measured 2026-08-01 against production:
+
+| bucket | cap (per 60s) | peak observed | headroom |
+|---|---|---|---|
+| `authz_ip`, `exch_ip` | 120 | 5 logins/IP/min | 24× |
+| `rt_ip` | 240 | refreshes are ~4/hour/tab (15-min access-token TTL) | very large |
+| `exch_acct` / `rt_acct` | 30 / 60 per ACCOUNT | one person cannot approach this | very large |
+
+The 124 downloads/IP/min seen in the logs is **not** relevant here: downloads use
+`checkRateLimit` with `api:download` (100/min per user), a different mechanism that never touches
+these buckets.
+
+**Why it was not flipped automatically.** Enforcement can only ever DENY traffic. It was left in
+shadow while Ahmed was actively testing sign-in, because a stray 429 would be indistinguishable
+from a real fault — and the security benefit is small (the caps are far above any human, so this
+guards against automation, which is also bounded by the other limiter). It is a deliberate
+change for a quiet moment, not something to slip in.
