@@ -2231,6 +2231,10 @@ function adminNotificationEmail(user, ip, ua, country) {
 // ── Daily Activity Digest (cron) ──
 // ══════════════════════════════════════
 
+// Fair-use alert threshold, GB of downloads in a trailing 30 days, decimal (1e9) to match the
+// admin console's column and threshold chips. See the query below for why 50 and not 1 or 10.
+const FAIRUSE_ALERT_GB = 50;
+
 async function sendDailyDigest(env) {
   // Gather everything in a single Promise.all for speed.
   const [
@@ -2243,6 +2247,7 @@ async function sendDailyDigest(env) {
     topTickers,
     topUsers,
     topInstitutions,
+    fairUse,
   ] = await Promise.all([
     env.DB.prepare(
       "SELECT name, email, institution, country, role, created_at FROM users WHERE created_at > datetime('now', '-1 day') ORDER BY created_at DESC"
@@ -2271,6 +2276,22 @@ async function sendDailyDigest(env) {
     env.DB.prepare(
       "SELECT u.institution, COUNT(*) as c FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id WHERE dl.timestamp > datetime('now', '-1 day') AND u.institution IS NOT NULL AND u.institution != '' GROUP BY u.institution ORDER BY c DESC LIMIT 5"
     ).all(),
+    // Fair use. The digest's existing "top users" block is 24 hours ranked by COUNT, which is
+    // the wrong shape for a fair-use breach twice over: a breach is about VOLUME, and it builds
+    // over weeks, so a steady 40 GB/day never stands out on any single day. This is the same
+    // trailing-30-day window and the same decimal-GB unit the admin console ranks on, so the
+    // email and the console cannot disagree about who the heavy accounts are.
+    //
+    // FAIRUSE_ALERT_GB = 50 GB / 30 days. Chosen from the measured distribution on 2026-08-01:
+    // 129 accounts exceed 1 GB and 64 exceed 10 GB, so alerting at those levels would mail a
+    // list nobody reads; 15 exceed 50 GB and 9 exceed 100 GB. Ten rows is a list that gets
+    // looked at. is_active = 1 because an account already revoked is not news every night.
+    env.DB.prepare(
+      "SELECT u.id, u.name, u.email, u.institution, COUNT(*) as c, COALESCE(SUM(dl.bytes_served), 0) as bytes " +
+      "FROM download_log dl JOIN users u ON dl.user_id = u.id " +
+      "WHERE dl.timestamp > datetime('now', '-30 days') AND u.is_active = 1 " +
+      "GROUP BY dl.user_id HAVING bytes >= ? ORDER BY bytes DESC LIMIT 10"
+    ).bind(FAIRUSE_ALERT_GB * 1e9).all(),
   ]);
 
   const stats = {
@@ -2286,6 +2307,8 @@ async function sendDailyDigest(env) {
     top_tickers: topTickers.results || [],
     top_users: topUsers.results || [],
     top_institutions: topInstitutions.results || [],
+    fair_use: fairUse.results || [],
+    fair_use_gb: FAIRUSE_ALERT_GB,
   };
 
   const subject = `HF Data Library — daily digest (${stats.date_ct})`;
@@ -2349,6 +2372,22 @@ function dailyDigestEmail(s) {
           <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}">${fmtBytes(u.bytes)}</td></tr>`).join('')}
       </table>`;
 
+  // Fair use. Rendered ONLY when an active account is over the threshold, and omitted entirely
+  // otherwise — a section that appears every night saying "nobody" is a section that stops being
+  // read, and this one exists to be noticed on the night it is not empty. The row carries the
+  // account id because the next action is opening that user in the console.
+  const fairUseSection = (!s.fair_use || s.fair_use.length === 0)
+    ? ''
+    : `<div style="border:2px solid #f59e0b; background:#fffbeb; border-radius:6px; padding:0.75rem 1rem; margin:1.25rem 0;">
+         <h3 style="margin:0 0 0.25rem; color:#b45309;">Fair use — ${s.fair_use.length} account${s.fair_use.length === 1 ? '' : 's'} over ${s.fair_use_gb} GB in 30 days</h3>
+         <p style="margin:0 0 0.5rem; font-size:0.82rem; color:#78716c;">Trailing 30 days, ranked by volume — the same window and unit as the admin console.</p>
+         <table style="width:100%; border-collapse:collapse; margin:0.25rem 0 0;">
+          <tr><th style="${cellHead}">User</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Downloads</th><th style="${cellHead}">30-day volume</th></tr>
+          ${s.fair_use.map(u => `
+            <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')} &middot; id ${u.id}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}"><strong>${fmtBytes(u.bytes)}</strong></td></tr>`).join('')}
+         </table>
+       </div>`;
+
   const institutionsLine = s.top_institutions.length === 0
     ? ''
     : `<p><strong>Active institutions:</strong> ${s.top_institutions.map(i => `${escapeHtml(i.institution)} (${i.c})`).join(', ')}</p>`;
@@ -2366,6 +2405,7 @@ function dailyDigestEmail(s) {
       <h2 style="color:#1a2332; margin-bottom:0.25rem;">Daily activity — ${s.date_ct}</h2>
       <p style="color:#6b7280; margin-top:0;">24-hour summary for HF Data Library.</p>
       ${statsCards}
+      ${fairUseSection}
       <h3 style="margin-top:1.5rem;">New registrations (${s.new_users.length})</h3>
       ${newUsersSection}
       <h3 style="margin-top:1.5rem;">Top tickers downloaded</h3>
