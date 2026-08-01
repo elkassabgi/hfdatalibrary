@@ -3474,3 +3474,42 @@ neighbour paid for those in production. Concretely: `grep` the file for `session
 Related: [[feedback_example_means_class]] and R208 — but inverted again. Those are about failing
 to generalise a fix ACROSS instances. This is failing to carry a fix FORWARD in time: the
 codebase had the answer, in the same file, and I wrote the pre-fix version anyway.
+
+## R218 — `node --check` passed a file the deploy toolchain rejected, and I had used it as my syntax gate ~15 times that day
+
+**What happened.** A script-driven edit wrote a JS string as
+`'SELECT ... purpose = 'reset''` — the intended `\'` escaping never landed, so the string
+terminated early. I ran `node --check api/src/index.js`, got exit 0, printed "syntax OK", and
+moved to deploy. `wrangler deploy` then failed with `Expected ")" but found "reset"`.
+
+Worse, the failure was nearly invisible: wrangler's esbuild error was followed by a libuv
+assertion crash on Windows, so the terminal ended with `Assertion failed: !(handle->flags &
+UV_HANDLE_CLOSING)` and no build error visible at all. Reading that as "flaky tooling" and
+re-running would have looked identical. The only reason I caught it is that I checked
+`wrangler deployments list` and saw the live version was still the PREVIOUS one.
+
+**The verification error.** I proved the discrepancy properly rather than assuming it, and the
+first attempt at that proof was itself wrong: I reconstructed the broken file, ran `node --check`,
+got exit 0, and almost concluded node is unreliable — without checking that my reconstruction had
+actually applied. It had not. Re-run with an asserted precondition (`assert s.count(good) == 1`),
+the result held: **exit 0 from `node --check`, syntax error from esbuild, on byte-identical
+input.** A conclusion drawn from a test whose precondition was never checked is not a conclusion.
+
+**Why it matters beyond one typo.** `node --check` was my gate on roughly fifteen edits to this
+worker that day. It never let a broken file ship — but only because `wrangler deploy` is a second,
+stricter gate that runs esbuild. The check I was *reporting* on was not the check that was
+protecting me. Had I been editing something without a build step, "syntax OK" would have been the
+last word before a live break.
+
+**The rules.**
+1. Verify with the tool that will actually process the artefact. For this worker that is
+   `wrangler deploy --dry-run`, which runs the real esbuild parse; `node --check` is a weaker
+   proxy and must not be reported as if it were the gate.
+2. A deploy is not done because a command returned. Read back what is LIVE —
+   `wrangler deployments list` — especially when the tool crashed, because a crash can follow a
+   real error and bury it.
+3. When a verification tool disagrees with another, prove the disagreement on input you have
+   asserted is what you think it is. My first proof was of nothing at all.
+
+Related: R216 (tested the renderer, not the feature) and R207 (present is not runnable). Same
+family — the check I ran was real, and it was not a check of the thing I claimed.
