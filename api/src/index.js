@@ -2757,9 +2757,11 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // Turnstile solve. Anyone slower than ten minutes lost the account, and could not even
   // retry: download.html captures the token once at load and re-posts the same dead string,
   // so "Create Account" failed identically until they restarted the ORCID flow, discarding
-  // everything they had typed. (2) The deploy window, §PF-LEGACY — pages and worker ship as
-  // separate jobs, so a token minted by the old worker was arriving in the new format check.
-  // Neither is a reason to refuse somebody an account.
+  // everything they had typed. (2) The 2026-07-31 deploy window — pages and worker ship as
+  // separate jobs, so tokens minted by the previous worker were briefly arriving in the new
+  // format check. That second case is over (see §PF-LEGACY in verifyOrcidPrefill, removed
+  // once the last old token expired); the first is permanent, and neither was ever a reason
+  // to refuse somebody an account.
   //
   // So: create it, leave orcid_id NULL, and SAY SO in the 201. Staying silent is not the
   // alternative — the banner above the form has already promised "Your ORCID iD will be
@@ -2845,9 +2847,10 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // honest mistake (typo, weak password, CAPTCHA hiccup) and the retry must still
   // carry a live token. From this line on the token is spent, so a replay — the same
   // string posted twice — cannot mint a second account wearing the same ORCID iD.
-  // burnOrcidPrefill, not consumeOrcidPrefill: a §PF-LEGACY token never had a ledger row,
-  // and the raw burn answering "false" for a missing row would 409 the very first submit
-  // of an in-flight ORCID sign-up — the deploy-window failure again, one statement later.
+  // burnOrcidPrefill rather than consumeOrcidPrefill directly: it treats "no prefill was
+  // sent at all" as success, so this reads the same as the older
+  // `pre && !(await consumeOrcidPrefill(...))`. It no longer excuses anything else — the
+  // legacy-token exemption it used to carry went with §PF-LEGACY on 2026-07-31.
   if (!(await burnOrcidPrefill(env, orcidPrefill))) {
     return jsonRes({ error: 'That ORCID confirmation has already been used. Please sign in with ORCID again.' }, 409, cors);
   }
@@ -5616,17 +5619,20 @@ async function verifyOrcidPrefill(env, request, token, aud) {
   if (!env.CONSENT_HMAC_SECRET || !token) return null;
   if (!ORCID_PREFILL_COOKIE[aud]) return null;
   const parts = String(token).split('.');
-  // §PF-LEGACY — the deploy window. deploy.yml ships the Pages site and the Worker as two
-  // PARALLEL jobs, so for the first ten minutes after this worker goes live there are
-  // browsers holding a token the PREVIOUS worker minted. That token has FOUR parts
-  // (orcidId.nameB64.expMs.sig): no audience, no nonce hash, and no oauth_state ledger
-  // row, because none of those existed when it was issued. Demanding six parts rejects it
-  // outright, and the person holding it has already completed ORCID's OAuth — all they get
-  // is "your ORCID confirmation could not be verified" for as long as any of these are
-  // alive. Accept it on its signature alone, which is exactly what the worker that issued
-  // it did. Self-limiting: nothing mints the old format any more and each one carries its
-  // own 10-minute expMs, so the last one dies ten minutes after the deploy.
-  if (parts.length === 4) return await verifyLegacyOrcidPrefill(env, token, parts);
+  // §PF-LEGACY IS GONE, and this note records why it existed and why it had to be removed
+  // on the same day. deploy.yml ships the Pages site and the Worker as two PARALLEL jobs,
+  // so for the first ten minutes after a deploy some browsers still hold a token the
+  // PREVIOUS worker minted. Those had FOUR parts (orcidId.nameB64.expMs.sig): no audience,
+  // no nonce hash, no ledger row, because none of that existed when they were issued. For
+  // that window they were accepted on their signature alone.
+  //
+  // Accepting them meant a token that skipped the audience check, the browser binding AND
+  // the single-use ledger all at once — every protection this function exists to apply. A
+  // compatibility shim is a hole with a good excuse, and the excuse expires: nothing has
+  // minted the old format since the 2026-07-31 deploy and each one carried its own
+  // 10-minute expMs, so the last possible legacy token died ten minutes after that deploy.
+  // Keeping it any longer would have been keeping the weakest path in the whole auth
+  // surface alive for no living user. Removed once the window provably closed.
   if (parts.length !== 6) return null;
   const tokAud = parts[0], orcidId = parts[1], nameB64 = parts[2],
         nonceHash = parts[3], expMsStr = parts[4], sig = parts[5];
@@ -5656,30 +5662,7 @@ async function verifyOrcidPrefill(env, request, token, aud) {
   try { name = new TextDecoder().decode(b64urlToBytes(nameB64)); } catch (e) {}
   return { orcidId, name, bound: !!nonce, tokenHash: await sha256Hex(String(token)) };
 }
-// §PF-LEGACY reader. Runs the checks the previous worker ran and no more: shape, TTL,
-// HMAC over orcidId.nameB64.expMs. bound is false because there is no nonce to check,
-// and legacy is true because there is no ledger row to burn — burnOrcidPrefill reads
-// that flag, since asking consumeOrcidPrefill to delete a row that was never written
-// answers false and would turn "ORCID verified" into "that ORCID confirmation has
-// already been used" on the user's FIRST submit, which is the same regression by a
-// different door. The old format carries no audience, so it verifies on api.* and on
-// accounts.* alike; that is what it already did, and it stops mattering the moment the
-// last one expires.
-async function verifyLegacyOrcidPrefill(env, token, parts) {
-  const orcidId = parts[0], nameB64 = parts[1], expMsStr = parts[2], sig = parts[3];
-  if (!ORCID_ID_RE.test(orcidId)) return null;
-  const expMs = parseInt(expMsStr, 10);
-  if (!expMs || Date.now() > expMs) return null;
-  const expected = await hmacSign(env.CONSENT_HMAC_SECRET, orcidId + '.' + nameB64 + '.' + expMsStr);
-  if (!constantTimeEqual(sig, expected)) return null;
-  let name = '';
-  try { name = new TextDecoder().decode(b64urlToBytes(nameB64)); } catch (e) {}
-  // Logged on purpose: this line must stop appearing about ten minutes after a deploy.
-  // If it is still logging an hour later, something is still minting the old format and
-  // this branch is no longer a deploy-window concession but a live acceptance path.
-  console.log(JSON.stringify({ evt: 'orcid_prefill_legacy_accepted' }));
-  return { orcidId, name, bound: false, legacy: true, tokenHash: await sha256Hex(String(token)) };
-}
+// (verifyLegacyOrcidPrefill removed with §PF-LEGACY — see verifyOrcidPrefill.)
 // Burn the single-use row. Called ONLY by the code path that is about to write
 // orcid_id. false means the token was already spent (or expired between the verify
 // and here) — the caller must abandon the link rather than write anyway.
@@ -5689,18 +5672,17 @@ async function consumeOrcidPrefill(env, tokenHash) {
   ).bind(tokenHash).run();
   return !!(burn.meta && burn.meta.changes === 1);
 }
-// The burn every caller should go through. A §PF-LEGACY token has no ledger row, so
-// consumeOrcidPrefill answers false for it and the caller abandons the link — or, on the
-// register paths, refuses the account outright — over a row that was never written. That
-// is precisely the deploy-window failure this compatibility branch exists to prevent, so
-// treat legacy as already burned. A replayed legacy token still cannot mint a second
-// account wearing the same iD: the "already linked to an account" SELECT and the partial
-// UNIQUE index on users.orcid_id both sit in front of the INSERT. Passing null (no prefill
-// was sent at all) returns true, so `!(await burnOrcidPrefill(...))` reads the same as the
-// old `pre && !(await consumeOrcidPrefill(...))`.
+// The burn every caller should go through. Passing null (no prefill was sent at all)
+// returns true, so `!(await burnOrcidPrefill(...))` reads the same as the older
+// `pre && !(await consumeOrcidPrefill(...))`.
+//
+// The `if (pre.legacy) return true` line that used to sit here went with §PF-LEGACY. It
+// existed because a legacy token had no ledger row, so consuming it answered false and the
+// caller abandoned a link over a row that was never written. Every token now has a row, so
+// there is nothing to except — and an unconditional consume is the point: a single-use
+// token that some branch can skip burning is not single-use.
 async function burnOrcidPrefill(env, pre) {
   if (!pre) return true;
-  if (pre.legacy) return true;
   return await consumeOrcidPrefill(env, pre.tokenHash);
 }
 // Link a verified orcid_id to an account ONLY if that account has none AND no other
@@ -5710,8 +5692,8 @@ async function burnOrcidPrefill(env, pre) {
 async function maybeLinkOrcid(env, request, userId, token, aud) {
   const pre = await verifyOrcidPrefill(env, request, token, aud);
   if (!pre) return;
-  // burnOrcidPrefill: legacy tokens (§PF-LEGACY) carry no ledger row, and the raw burn
-  // would read that as "already spent" and silently drop a link the user did ask for.
+  // Every prefill now has a ledger row, so this burn is unconditional: a token that some
+  // branch could skip burning would not be single-use.
   if (!(await burnOrcidPrefill(env, pre))) return;                // replay / already spent
   await env.DB.prepare(
     "UPDATE users SET orcid_id = ? WHERE id = ? AND (orcid_id IS NULL OR orcid_id = '') " +
@@ -6218,8 +6200,9 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   // Burn the prefill now, after every rejection that a retry could fix, and before the
   // one statement that writes orcid_id. Past this line the token is spent: posting the
   // same string a second time creates no second account carrying that ORCID iD.
-  // burnOrcidPrefill: a §PF-LEGACY token has no ledger row, and the raw burn's "false" for
-  // a row that was never written would refuse an in-flight ORCID sign-up on its first try.
+  // burnOrcidPrefill rather than consumeOrcidPrefill directly: it reads "no prefill sent"
+  // as success. Its legacy-token exemption went with §PF-LEGACY, so the burn is now
+  // unconditional for every token that exists.
   if (!(await burnOrcidPrefill(env, orcidPre))) {
     return rerr('That ORCID confirmation has already been used. Please sign in with ORCID again.', 'login');
   }
