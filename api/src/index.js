@@ -5081,6 +5081,17 @@ async function handlePublicStats(env, cors) {
     // reads as a real school, which is worse than obvious junk; 'bank' and 'business' name a
     // sector, not an employer.
     'university of example', 'example university', 'bank', 'business', 'consumer/nerd',
+    'his', 'own', 'ddd', 'top 5 stocks', 'isv3c99vet7dbng',
+    // THE BLOCKLIST WAS MONOLINGUAL. Every placeholder above is English, so the same word in
+    // another language sailed through: 个人 is Chinese for 'personal/individual',
+    // sitting in the live list exactly as 'Personal' would have. Users write this field in
+    // their own language and the filter only spoke one.
+    //
+    // Non-ASCII is NOT a signal of junk and must never be treated as one - the same list
+    // contains Universidad de Jaén, University of Wrocław, École de
+    // Technologie Supérieure, Università Degli Studi and Dr. Franjo Tuđman,
+    // all real. Only the specific placeholder word is blocked, never the script.
+    '个人',
   ];
   // Canonical names so the SAME school typed different ways (alias / typo /
   // locale / casing) merges into ONE row instead of splitting its count across
@@ -5150,7 +5161,12 @@ async function handlePublicStats(env, cors) {
     results: Object.keys(instMerged)
       .map((institution) => ({ institution, users: instMerged[institution] }))
       .sort((a, b) => b.users - a.users)
-      .slice(0, 50),
+      // No longer truncated at 50. Ahmed asked to see newly-registered schools and one of them
+      // (University of Chicago, 1 user) was simply below the cut - the data was fine, the list
+      // was short. The stats page already renders long lists well: 20 shown, the remainder behind
+      // an "Other schools" toggle, so more entries do not make the page heavier to read. ~280
+      // rows is a few KB on an endpoint that has been edge-cached for 5 minutes since today.
+      .slice(0, 500),
   };
 
   // Top downloaded tickers
