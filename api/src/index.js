@@ -3406,6 +3406,15 @@ async function handleMe(request, env, cors) {
       // session), not with a family token, and independently requires is_admin AND
       // email_verified. This restores a LINK, not access — the console has its own sign-in.
       is_admin: !!user.is_admin,
+      // is_vip for the same reason as is_admin: js/site.js renders the VIP badge on it, and
+      // site.js is the ONE consumer that runs on a family session. Enumerated the other seven
+      // fields this branch omits (download_count, total_bytes_downloaded, newsletter_subscribed,
+      // totp_enabled, google_id, orcid_profile, api_key*) and deliberately left them out —
+      // they are read only by pages/account.html and pages/admin.html, both of which
+      // authenticate with a legacy web session and therefore always get the branch below.
+      // api_key stays null on purpose: validateFamilyToken nulls it, and a family token must
+      // not hand out the long-lived key.
+      is_vip: !!user.is_vip,
       isFamilyToken: true,
     }, 200, cors);
   }
