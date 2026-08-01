@@ -1557,30 +1557,27 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   // registration branch above orders its pair that way: if anything ever folds them
   // together, the one that must survive is the one that keeps the user signed in.
   const headers = new Headers({
-    // §SESSION-IN-QUERY — a known weakness, deliberately left in place for now.
+    // §SESSION-IN-FRAGMENT — the session id rides in the fragment. Fixed 2026-08-01.
     //
     // hfdatalibrary.com genuinely needs this value: the hfd_session cookie below is
     // host-only to api.hfdatalibrary.com, and download.html authenticates purely from
     // localStorage, so the redirect is the only channel that gets the id to the page.
-    // Carrying it as `?session=` writes a 30-day, full-scope bearer credential verbatim
-    // into the Cloudflare Pages access log and into browser history before the page can
-    // scrub the address bar, and it rides out in the Referer of anything that page loads.
-    // The fix is understood and is not in doubt: move it to the fragment
-    // (`#oauth_success=1&session=…`), which is never sent to any server, exactly as
-    // mintSsoCode already does for the family SSO code.
+    // It used to travel as `?session=`, which wrote a 30-day, full-scope bearer credential
+    // verbatim into the Cloudflare Pages access log and into browser history before the
+    // page could scrub the address bar, and sent it out in the Referer of anything that
+    // page loaded. A fragment is never transmitted to any server, so none of that happens
+    // — the same reason mintSsoCode has always used one for the family SSO code.
     //
-    // It is NOT applied here because it cannot be applied here alone. The Worker and the
-    // Pages site are two parallel jobs in .github/workflows/deploy.yml; they are not
-    // atomic and Pages propagation lags. A worker that redirects to a fragment while the
-    // live download.html still reads params.get('session') sends every Google (364 of 572
-    // users) and ORCID sign-in to the download page silently signed OUT, with no error
-    // shown — the cookie cannot rescue it because /v1/auth/me is fetched without
-    // credentials. Deploy order decides whether sign-in works, and we do not control it.
+    // This could not be flipped alone, and was not. The Worker and the Pages site deploy as
+    // two parallel jobs; a worker sending a fragment to a page that reads only the query
+    // string signs every Google and ORCID user OUT silently, and the reverse is equally
+    // dark. So it shipped in the documented order: download.html first, taught to read the
+    // fragment AND fall back to the query string (a no-op while the worker still sent a
+    // query string), confirmed live on hfdatalibrary.com, and only then this line.
     //
-    // Revisit as ONE coordinated change: ship a download.html that reads the fragment and
-    // falls back to the query string, wait for Pages to propagate and verify it live, and
-    // only then flip this line. Do not flip it in the same push.
-    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    // The page keeps its query-string fallback deliberately. It costs nothing, and it is
+    // what makes a rollback of this worker safe.
+    'Location': `${SITE_URL}/pages/download#oauth_success=1&session=${sessionId}`,
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store'
   });
@@ -1871,12 +1868,12 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   // holds only one per name; session first, spent nonce second, so the cookie that keeps
   // the user signed in is the one that survives if they are ever folded together.
   const headers = new Headers({
-    // §SESSION-IN-QUERY — see handleOrcidCallback for the full reasoning. Short form:
-    // `?session=` leaks a 30-day full-scope credential into the Pages access log, browser
-    // history and any outgoing Referer, and the fragment is the right place for it — but
-    // the Worker and Pages deploy in parallel, so moving it before the live download.html
-    // can read a fragment signs 364 Google users out with no error. Move both together.
-    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    // §SESSION-IN-FRAGMENT — see handleOrcidCallback for the full reasoning. Short form:
+    // `?session=` leaked a 30-day full-scope credential into the Pages access log, browser
+    // history and any outgoing Referer; a fragment is never sent to a server. Moved
+    // 2026-08-01, after download.html had shipped a fragment reader with a query-string
+    // fallback and that page was confirmed live — not in the same push.
+    'Location': `${SITE_URL}/pages/download#oauth_success=1&session=${sessionId}`,
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store'
   });

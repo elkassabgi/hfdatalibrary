@@ -908,12 +908,21 @@ function resetTurnstile() {
   // still being served the old page. Whichever half lands first, sign-in fails
   // silently. Fix it as one coordinated change: land the fragment reader HERE with
   // the query fallback kept, confirm it is live, then move the worker in a later push.
-  const session = params.get('session');
-  const oauthSuccess = params.get('oauth_success');
-  const oauthError = params.get('oauth_error');
-  const oauthProvider = params.get('oauth_provider');
-  const oauthId = params.get('oauth_id');
-  const oauthName = params.get('oauth_name');
+  // STEP 1 of that coordinated change. This reader now accepts the callback values from the
+  // FRAGMENT as well as the query string, preferring the fragment. On its own it changes
+  // nothing observable — the worker still sends a query string, so `pick` falls through to the
+  // old source on every real sign-in today. That is exactly the point: it makes the page
+  // tolerant of BOTH shapes, so the worker can be switched afterwards without a window in
+  // which one half is dark. Step 2 is the worker change; this must be confirmed live first.
+  const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+  const pick = (k) => hashParams.get(k) || params.get(k);
+
+  const session = pick('session');
+  const oauthSuccess = pick('oauth_success');
+  const oauthError = pick('oauth_error');
+  const oauthProvider = pick('oauth_provider');
+  const oauthId = pick('oauth_id');
+  const oauthName = pick('oauth_name');
 
   if (oauthSuccess && session) {
     localStorage.setItem('hfd_session', session);
@@ -963,7 +972,7 @@ function resetTurnstile() {
     // User authorized via ORCID but has no account yet — pre-fill registration
     oauthPendingProvider = 'orcid';
     oauthPendingId = oauthId;
-    oauthPendingProof = params.get('orcid_prefill');
+    oauthPendingProof = pick('orcid_prefill');
     // Wait for DOM to be ready, then show banner and pre-fill
     setTimeout(() => {
       const nameField = document.getElementById('reg-name');
