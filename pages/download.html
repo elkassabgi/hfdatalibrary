@@ -934,7 +934,29 @@ function resetTurnstile() {
     }, 100);
   }
   if (oauthError) {
-    alert('Sign-in failed: ' + oauthError + '. Please try again or use email/password.');
+    // "Please try again" is right only for a TRANSIENT failure. Several of these are terminal
+    // by design — retrying reproduces them exactly — and telling someone to repeat an action
+    // that cannot succeed is worse than saying nothing, because it hides the real next step.
+    // Codes needing a different action get their own sentence; anything unrecognised keeps the
+    // generic retry text.
+    const OAUTH_ERRORS = {
+      account_link_conflict:
+        'This email address is already registered to a different Google account. That happens ' +
+        'when an address has been reassigned to a new owner. For your security we will not ' +
+        'transfer the existing account automatically — please sign in with the original Google ' +
+        'account, or contact us and we will sort it out.',
+      email_unverified:
+        'We could not confirm that you own this email address: Google reports it as unverified, ' +
+        'and the account already here has never been confirmed either. Verify the address with ' +
+        'Google, or register with a password and click the confirmation link we email you.',
+      account_deactivated:
+        'This account has been deactivated. If you think that is a mistake, reply to any email ' +
+        'from us and we will take a look.',
+      no_email:
+        'Your provider did not share an email address, and we need one to create an account. ' +
+        'Check the permissions you granted, or register with a password instead.',
+    };
+    alert(OAUTH_ERRORS[oauthError] || ('Sign-in failed: ' + oauthError + '. Please try again or use email/password.'));
     window.history.replaceState({}, document.title, window.location.pathname);
   }
   if (oauthProvider === 'orcid' && oauthId) {

@@ -1828,6 +1828,30 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
       // pairing is visible, but change nothing else.
       await env.DB.prepare('UPDATE users SET google_id = ? WHERE id = ?')
         .bind(profile.id, user.id).run();
+    } else if (String(user.google_id) !== String(profile.id)) {
+      // A DIFFERENT Google identity presenting a matching address. Refuse.
+      //
+      // This chain had no terminal else, so the case fell through to createSession below and
+      // was handed a full 30-day session on an account bound to somebody else's Google `sub`.
+      // Matching on the email address alone is matching on the one field Google does not
+      // promise is stable: an address is reassignable, a `sub` is not. It happens without any
+      // attacker at all — a Workspace domain lapses and is re-registered, or a deleted account
+      // is recreated — and the new owner of the address then inherits the previous owner's
+      // library account, its API key and its download history.
+      //
+      // The accounts.elkassabgidata.com twin already fails closed on precisely this, returning
+      // account_link_conflict rather than auto-merging (see the "Unverified same-email row ...
+      // OR one bound to a DIFFERENT google_id" branch). Two handlers, same question, opposite
+      // answers — and the weaker one was reachable from the public download page. This makes
+      // them agree.
+      //
+      // Deliberately NOT auto-relinking: overwriting google_id here would let anyone who can
+      // obtain a Google account at a matching address silently take over a verified row, which
+      // is the takeover this is meant to stop. The legitimate cases — a genuinely new owner of
+      // a reassigned address — need a human decision, so they get a clear error and can
+      // register or contact us.
+      // §NONCE-CLEANUP: state consumed, cookie spent.
+      return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_link_conflict`, 'google', stateParam);
     }
   }
 
