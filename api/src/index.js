@@ -611,6 +611,10 @@ export default {
     // callers supply part of those keys. A full D1 refuses writes, which is a site outage
     // reached without a single exploit.
     ctx.waitUntil(pruneRateLimits(env));
+    // Same reasoning as pruneRateLimits, applied to the seven credential tables that have the
+    // identical unbounded-growth defect. See PRUNE_SWEEPS for why sso_refresh_tokens is swept
+    // on absolute_expires_at and why login_history / admin_audit_log are left alone.
+    ctx.waitUntil(pruneExpiredCredentials(env));
   }
 };
 
@@ -671,6 +675,77 @@ async function pruneRateLimits(env) {
   } catch {
     return null;   // housekeeping — the daily digest must still go out if this sweep fails
   }
+}
+
+// rate_limits was never the only unbounded table — it was just the one that got noticed.
+// EVERY short-lived credential table here has an expires_at and NONE of them were ever swept,
+// so each one grew for the life of the service. Measured before this sweep existed
+// (2026-08-01), expired rows as a share of each table:
+//
+//   download_tokens     149,203 rows   148,870 expired   99.8%   <- 10-minute tokens, ~15k/day
+//   sessions              1,702          1,148           67%
+//   password_resets         242            228           94%
+//   sso_codes               331            331          100%
+//   sso_oauth_state         164            162           99%
+//   totp_pending              7              7          100%
+//
+// D1 refuses WRITES when full, so this ends as an outage — logins, registrations and download
+// logging all stop — reached with no exploit at all, just time. The backlog above was cleared
+// by hand; this keeps it cleared.
+//
+// TWO THINGS THIS DELIBERATELY DOES NOT DO.
+//
+// 1. sso_refresh_tokens is pruned on absolute_expires_at, NEVER on expires_at. expires_at is
+//    the short access window; the row must outlive it. handleTokenRefresh looks the row up by
+//    token_hash and treats a PRESENT row with used=1 as token REUSE — the signal that a
+//    refresh token was stolen — and revokes the whole chain. Delete that row early and a
+//    replayed stolen token stops being detected theft and becomes an ordinary unknown-token
+//    rejection, silently disabling the defence. 1,001 of 1,016 rows are inside their absolute
+//    window, so pruning on the wrong column would have destroyed almost all of it.
+//
+// 2. login_history and admin_audit_log are not touched. They have no expires_at because they
+//    are the record of what happened, not credentials — they are what an investigation reads
+//    after an account is compromised, and a retention policy for them is Ahmed's call, not a
+//    side effect of a cleanup patch.
+//
+// The 24-hour grace exists so a row is never deleted out from under an in-flight request and
+// so a just-expired credential is still visible while debugging a login someone is reporting
+// right now. LIMIT-bounded because download_tokens turns over ~15k/day and an unbounded DELETE
+// on a table that once held 149k rows is a statement that can time out; 50k per run is over
+// three days of turnover, so it keeps up while staying bounded.
+const PRUNE_BATCH = 50000;
+const PRUNE_SWEEPS = [
+  // [table, primary key, expiry column]
+  ['download_tokens',    'token',      'expires_at'],
+  ['sessions',           'id',         'expires_at'],
+  // password_resets keys on id, not token — token is a UNIQUE column but the PK is id, and
+  // the batching subquery should select the actual key. Verified against pragma_table_info
+  // for all eight tables rather than inferred from column order.
+  ['password_resets',    'id',         'expires_at'],
+  ['sso_codes',          'code_hash',  'expires_at'],
+  ['sso_oauth_state',    'state',      'expires_at'],
+  ['oauth_state',        'state',      'expires_at'],
+  ['totp_pending',       'token',      'expires_at'],
+  ['sso_refresh_tokens', 'token_hash', 'absolute_expires_at'],   // see note 1 above
+];
+
+async function pruneExpiredCredentials(env) {
+  const out = {};
+  for (const [table, pk, col] of PRUNE_SWEEPS) {
+    // Per-table try/catch: one bad table must not abort the sweep of the other seven, for the
+    // same reason pruneRateLimits swallows its own error — housekeeping never takes the cron
+    // down with it.
+    try {
+      const r = await env.DB.prepare(
+        `DELETE FROM ${table} WHERE ${pk} IN (SELECT ${pk} FROM ${table} ` +
+        `WHERE datetime(${col}) < datetime('now','-1 day') LIMIT ${PRUNE_BATCH})`
+      ).run();
+      out[table] = (r && r.meta && r.meta.changes) || 0;
+    } catch (e) {
+      out[table] = 'error: ' + (e && e.message ? e.message : 'unknown');
+    }
+  }
+  return out;
 }
 
 // opts.charge === false asks "is this key already over the limit?" WITHOUT spending an
