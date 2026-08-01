@@ -51,6 +51,19 @@
     </div>
 
     <div id="account-content" style="display:none;">
+      <!-- Unverified email. Until now hfdatalibrary.com had NO way to request a fresh
+           verification link: the endpoint existed but nothing on the site called it, and
+           the only button lived on accounts.elkassabgidata.com, which a user has no reason
+           to visit or even know about. So anyone whose link expired, or whose email went to
+           spam, was simply stuck — downloads refused, no route back. 35 accounts are in
+           that state today. -->
+      <div id="verify-warning" style="display:none; background:#fef2f2; border:1px solid #fecaca; border-radius:12px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h3 style="color:#991b1b; margin-bottom:0.5rem;">Verify your email to download</h3>
+        <p style="color:#7f1d1d; margin:0 0 1rem;">We sent a verification link to <strong id="verify-email"></strong>. Downloads stay locked until you click it. Check your spam folder &mdash; it often lands there.</p>
+        <button class="btn btn-primary" id="verify-resend-btn" onclick="resendVerification()">Send it again</button>
+        <div id="verify-result" style="margin-top:0.75rem; display:none;"></div>
+      </div>
+
       <!-- Profile completion warning -->
       <div id="profile-warning" style="display:none; background:#fef9ee; border:1px solid #fde68a; border-radius:12px; padding:1.5rem; margin-bottom:1.5rem;">
         <h3 style="color:#92600a; margin-bottom:0.5rem;">Complete your profile</h3>
@@ -214,6 +227,13 @@ async function loadAccount() {
     document.getElementById('stat-data').textContent = (currentUser.total_bytes_downloaded / 1e9).toFixed(2) + ' GB';
     document.getElementById('stat-member-since').textContent = currentUser.created_at.split(' ')[0];
 
+    // Unverified email — show the banner and the resend button. textContent, never
+    // innerHTML: the address is user-supplied and this page is authenticated.
+    if (!currentUser.email_verified) {
+      document.getElementById('verify-email').textContent = currentUser.email || 'your email address';
+      document.getElementById('verify-warning').style.display = 'block';
+    }
+
     // Profile completion warning
     if (!currentUser.profile_complete) {
       document.getElementById('profile-warning').style.display = 'block';
@@ -280,6 +300,43 @@ async function saveProfile() {
     result.style.display = 'block';
     result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>';
   }
+}
+
+// Request a fresh verification link. The endpoint has existed all along; nothing on this
+// site ever called it, so a user whose link expired or went to spam had no route back and
+// downloads stayed refused indefinitely. Throttled server-side to 3 per hour per account.
+async function resendVerification() {
+  const btn = document.getElementById('verify-resend-btn');
+  const out = document.getElementById('verify-result');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  out.style.display = 'block';
+  out.textContent = '';
+  try {
+    const r = await fetch(API + '/v1/auth/resend-verification', {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    const data = await r.json().catch(function () { return {}; });
+    // textContent throughout: every string below can originate server-side.
+    if (r.ok) {
+      out.style.color = '#065f46';
+      out.textContent = data.message || 'Verification email sent. Check your inbox and your spam folder.';
+      btn.textContent = 'Sent';
+      // Leave it disabled on success — a second press within the throttle window only
+      // earns a 429, and re-enabling invites exactly that.
+      return;
+    }
+    out.style.color = 'var(--red)';
+    // 429 carries a real explanation; anything else gets a plain fallback rather than a
+    // bare status code.
+    out.textContent = data.error || 'Could not send the email just now. Please try again shortly.';
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = 'Could not reach the server. Please try again.';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Send it again';
 }
 
 async function loadDownloadHistory() {

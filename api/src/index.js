@@ -385,6 +385,9 @@ const RATE_LIMITS = {
   'api:register:burst': { max: 30, window: 3600 },
   'api:register': { max: 25, window: 3600 },    // 25 CREATED accounts per hour per IP (per /64 on IPv6)
   'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
+  // Resend-verification, keyed per ACCOUNT (the request is authenticated, so the IP is the
+  // wrong unit — a shared campus address would otherwise exhaust everyone's allowance).
+  'api:resend': { max: 3, window: 3600 },       // 3 verification emails per hour per account
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
   'api:2fa': { max: 5, window: 600 },           // 5 TOTP guesses per ACCOUNT per 10 min.
@@ -3015,6 +3018,11 @@ async function handleMe(request, env, cors) {
       institution: user.institution,
       country: user.country,
       role: user.role,
+      // email_verified is what gates every download route, so the account page cannot tell
+      // a user why their downloads are refused without it. It was absent here, which also
+      // made `!user.email_verified` on the page read as true for EVERYONE — a banner shown
+      // to people who are already verified is worse than no banner at all.
+      email_verified: !!user.email_verified,
       profile_complete: !!user.profile_complete,
       orcid_id: user.orcid_id || null,
       created_at: user.created_at,
@@ -3036,6 +3044,7 @@ async function handleMe(request, env, cors) {
     totp_enabled: !!user.totp_enabled,
     orcid_id: user.orcid_id || null,
     google_id: user.google_id || null,
+    email_verified: !!user.email_verified,   // gates downloads; the account page needs it
     profile_complete: !!user.profile_complete,
     orcid_profile: user.orcid_profile_json ? JSON.parse(user.orcid_profile_json) : null,
     newsletter_subscribed: !!user.newsletter_subscribed,
@@ -3433,6 +3442,18 @@ async function handleResendVerification(request, env, cors) {
   if (user.email_verified) return jsonRes({ message: 'Email already verified' }, 200, cors);
 
   const userId = user.user_id || user.id;
+  // Throttled per ACCOUNT, and only now that we know a mail is actually going to be sent.
+  // Every call sends real email and writes a password_resets row, and until a button existed
+  // nobody found it — so it had no limit at all. Keyed on the user rather than the IP because
+  // the request is authenticated: a shared campus address must not exhaust anyone else's
+  // allowance, and the thing worth bounding is one account's mail volume. Three an hour is
+  // far more than a person who has lost one email needs, and far less than a useful relay.
+  const rlv = await checkRateLimit(env, 'resend:u' + userId, 'api:resend');
+  if (!rlv.ok) {
+    return jsonRes({
+      error: 'We have already sent several verification emails recently. Please check your inbox and spam folder, then try again a little later.'
+    }, 429, cors);
+  }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
   await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
@@ -5206,6 +5227,15 @@ async function handleAccountResendVerification(request, env) {
   const user = await getIdpSessionUser(request, env);
   if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
   if (user.email_verified) return new Response(renderAccountPage(user, { notice: 'Your email is already verified.' }), { status: 200, headers: accountPageHeaders });
+  // Same per-account throttle as the api.* twin. This surface already HAD a visible button,
+  // so it was the one an abuser could find: every press sent real mail and wrote a
+  // password_resets row, with nothing bounding either.
+  const rlv = await checkRateLimit(env, 'resend:u' + user.id, 'api:resend');
+  if (!rlv.ok) {
+    return new Response(renderAccountPage(user, {
+      notice: 'We have already sent several verification emails recently — please check your inbox and spam folder, then try again a little later.'
+    }), { status: 429, headers: accountPageHeaders });
+  }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
   await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
