@@ -1691,7 +1691,21 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   let user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
 
   if (!user) {
-    // Auto-create account — Google emails are already verified
+    // "Google emails are already verified" was an assumption, not a check.
+    //
+    // email_verified was the literal 1 in the INSERT below while profile.verified_email — the
+    // field that actually answers the question — was never read on this branch. It IS read 50
+    // lines down on the link branch (§GOOGLE-VERIFIED), so the same handler trusted Google's
+    // answer when attaching to an existing row and ignored it when creating one. Google does
+    // return verified_email:false for some accounts (notably Workspace identities whose
+    // primary address was never confirmed), and email_verified is a privilege flag here: the
+    // download gate reads it, and so does the admin console gate. Minting it from an
+    // assumption meant an unconfirmed mailbox could arrive pre-verified.
+    //
+    // Now bound from the profile. An account Google will not vouch for is created UNVERIFIED
+    // and takes the ordinary email-verification path, which is exactly what a
+    // password-registered account does.
+    const googleSaysVerified = (profile.verified_email === true || profile.verified_email === 'true') ? 1 : 0;
     const apiKey = 'hfd_' + generateId();
     const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
     const unsubscribeToken = generateId();
@@ -1701,11 +1715,11 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     const passwordHash = await hashPassword(randomPassword);
 
     await env.DB.prepare(
-      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, google_id, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, 0)'
+      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, google_id, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0)'
     ).bind(
       name, email, passwordHash,
       '', country || '', '',
-      apiKey, apiKeyExpires, isAdmin,
+      apiKey, apiKeyExpires, isAdmin, googleSaysVerified,
       unsubscribeToken, ip, ua, profile.id
     ).run();
 
@@ -3108,7 +3122,30 @@ async function handleLogin(request, env, cors, ip, ua, country) {
 
 async function handleLogout(request, env, cors) {
   const cookie = request.headers.get('cookie') || '';
-  const sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
+  let sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
+  // Accept the Bearer session too, mirroring getSessionUser.
+  //
+  // This read the cookie ONLY, while both callers in the repo authenticate by header:
+  // pages/admin.html:375 sends authHeaders() (Authorization: Bearer <session id>) and
+  // js/site.js:279 sends an explicit Bearer. admin.html is served from hfdatalibrary.com and
+  // the cookie is scoped to api.hfdatalibrary.com, so it is not attached to that fetch at all.
+  // The handler therefore found no session id, deleted nothing, cleared a cookie the browser
+  // never had, and returned 200 "Logged out" — the console showed a successful sign-out while
+  // the session stayed valid in D1 for its full 30 days. That session id is exactly what
+  // /v1/auth/sso hands an api_key out for, so "log out" on the admin console left the highest
+  // -privilege credential on the machine.
+  //
+  // Same precedence as getSessionUser (cookie first, then Bearer) so a browser carrying both
+  // behaves identically on both paths.
+  if (!sessionId) {
+    const auth = request.headers.get('authorization') || '';
+    if (auth.startsWith('Bearer ')) {
+      const bearer = auth.slice(7).trim();
+      // Same shape check the cookie gets. generateId() is lowercase hex, so anything else was
+      // never a session id we issued and must not reach the DELETE as a bind value.
+      if (/^[a-f0-9]+$/.test(bearer)) sessionId = bearer;
+    }
+  }
   if (sessionId) {
     await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
   }
@@ -3176,6 +3213,28 @@ async function handle2faSetup(request, env, cors) {
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
 
   const userId = user.user_id || user.id;
+
+  // Re-enrolment on an ALREADY-ENABLED account has to go through disable first.
+  //
+  // This handler's UPDATE sets totp_enabled = 0, and its only gate was "has a session". Two
+  // doors down, handle2faDisable requires BOTH the password and a currently-valid TOTP code
+  // before it will turn the second factor off. So the strong gate was bypassable by calling
+  // the weak endpoint: anyone holding a session — a borrowed browser, a stolen cookie, the
+  // session id that /v1/auth/sso hands out — could POST /v1/auth/2fa/setup and the victim's
+  // second factor was off in one request, no password, no code. Whatever protection
+  // handle2faDisable was providing, it was providing to nobody.
+  //
+  // Blocking only when totp_enabled = 1 keeps every legitimate flow: a user with no 2FA
+  // enrols normally, and one who ran setup but never confirmed (secret present,
+  // totp_enabled = 0) can re-run setup to get a fresh QR code. Changing authenticators means
+  // disable-then-setup, which is the path that already asks for the password and a code.
+  const existing = await env.DB.prepare('SELECT totp_enabled FROM users WHERE id = ?').bind(userId).first();
+  if (existing && existing.totp_enabled) {
+    return jsonRes({
+      error: 'Two-factor authentication is already enabled. Disable it first (which requires your password and a current code) before setting up a new authenticator.',
+    }, 409, cors);
+  }
+
   const secret = generateTotpSecret();
   const otpauthUrl = `otpauth://totp/HF%20Data%20Library:${encodeURIComponent(user.email)}?secret=${secret}&issuer=HF%20Data%20Library`;
 
