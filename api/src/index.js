@@ -5140,6 +5140,24 @@ async function handlePublicStats(env, cors) {
     // Technologie Supérieure, Università Degli Studi and Dr. Franjo Tuđman,
     // all real. Only the specific placeholder word is blocked, never the script.
     '个人',
+    // added 2026-08-02, every one read off the LIVE list. Three groups:
+    //   * role/status answers to a "where" question - a job title is not an employer;
+    //   * explicit refusals ("no school", "no university") - the user answered honestly, it is
+    //     still not an institution;
+    //   * junk, including 'hfddatalibraty', which is a misspelling of this site.
+    'professional', 'supervisor', 'school', 'my self', 'indivisual',
+    'independent research', 'independent studies', 'independent researcher / self-employed',
+    'self-employed', 'self empoyed trader', 'self-employed-as-a-hobby',
+    'no school', 'no university', 'no special institute', 'no ord', 'other company',
+    'dsfsdf', 'hfddatalibraty', 'limitedincorporated', 'university of deez',
+    // Chinese for "court". Generic like 个人 above - it names a kind of body, not one
+    // institution, exactly as the already-blocked 'university' and 'bank' do in English.
+    '法院',
+    // DELIBERATELY NOT BLOCKED, having checked:
+    //   'usa'  - looks like a country, but the University of South Alabama officially goes by
+    //            USA. Blocking it would delete a real school to tidy a placeholder.
+    //   'aix', 'seoul', 'ntu', 'cmu', 'iit', 'ucl' - real institutions abbreviate to each of
+    //            these and more than one does, so neither blocking nor aliasing is safe.
   ];
   // Canonical names so the SAME school typed different ways (alias / typo /
   // locale / casing) merges into ONE row instead of splitting its count across
@@ -5176,17 +5194,49 @@ async function handlePublicStats(env, cors) {
     // it - that only touches strings with NO uppercase at all, and this one has a capital U -
     // but the alias map is keyed on the LOWERCASED value, so it matches and corrects it.
     'university of bath': 'University of Bath',
+    // added 2026-08-02. Each of these was a SECOND row for a school already in the live list,
+    // so the merge is evidenced by the data rather than assumed: the canonical spelling is
+    // sitting right there beside the variant.
+    'the university of hong kong': 'University of Hong Kong',
+    'hku': 'University of Hong Kong',
+    'the hong kong university of science and technology': 'Hong Kong University of Science and Technology',
+    'the university of edinburgh': 'University of Edinburgh',
+    'mcgil university': 'McGill University',
+    'hanyang': 'Hanyang University',
+    'edhec': 'Edhec Business School',
+    // Typos and casing that titleCaseInstitution cannot reach, because each already contains
+    // an uppercase letter. Unambiguous - one real school each.
+    'univerity of bucharest': 'University of Bucharest',
+    'istanbul technical universtiy': 'Istanbul Technical University',
+    'university of alabama': 'University of Alabama',
+    'texas a&m international university': 'Texas A&M International University',
+    'singapore university of technology and design': 'Singapore University of Technology and Design',
+    'new horizon college of engineering, india': 'New Horizon College of Engineering, India',
+    'yonsei univ.': 'Yonsei University',
+    'johns hopkins': 'Johns Hopkins University',
+    'purdue': 'Purdue University',
+    // NOT aliased on purpose: 'grittith' is probably Griffith University, but "probably" is how
+    // a wrong school ends up on the page. 'university of maryland' is left separate from
+    // 'University of Maryland, College Park' - Maryland has several campuses. 'Wroclaw
+    // University of Technology' and 'University of Wroclaw' are two different universities.
   };
-  const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
+  // The blocklist is applied in JS, NOT as bound SQL parameters. It used to be
+  // `LOWER(TRIM(institution)) NOT IN (?,?,?...)` with one variable per entry, which meant the
+  // list had a hard ceiling: D1 caps a statement at 100 bound variables, so growing the
+  // blocklist from 82 to 103 entries on 2026-08-02 made every call fail with
+  // "too many SQL variables" and took the public stats endpoint down on every family site at
+  // once. A junk-word list is exactly the kind of thing that only ever grows, so it must not
+  // live anywhere that has a size limit. Filtering here costs nothing: the query already
+  // fetches every row without a LIMIT and re-aggregates in JS below.
+  const instBlocked = new Set(INSTITUTION_BLOCKLIST.map((x) => x.toLowerCase().trim()));
   // Fetch ALL non-junk institutions (no LIMIT) so aliases can merge BEFORE the
   // top-N cut, then canonicalize + re-aggregate in JS (same approach as the
   // country normalization below). ~150 distinct values, so no LIMIT is fine.
   const instRaw = await env.DB.prepare(
     'SELECT institution, COUNT(*) as users FROM users ' +
     'WHERE is_active = 1 AND TRIM(institution) != "" AND COALESCE(hide_institution, 0) = 0 ' +
-    'AND LOWER(TRIM(institution)) NOT IN (' + instPlaceholders + ') ' +
     'GROUP BY institution'
-  ).bind(...INSTITUTION_BLOCKLIST).all();
+  ).all();
   const instMerged = {};
   for (const row of (instRaw.results || [])) {
     const name = (row.institution || '').trim();
@@ -5206,6 +5256,8 @@ async function handlePublicStats(env, cors) {
     // ('1', '123') and one-character entries. A literal blocklist cannot cover these — there
     // are infinitely many — so they are filtered by SHAPE here instead.
     if (/^[0-9\s.,\-]+$/.test(name) || name.trim().length < 2) continue;
+    // Placeholder filter, moved off the SQL statement — see the note on instBlocked above.
+    if (instBlocked.has(name.toLowerCase())) continue;
     const canon = INSTITUTION_ALIASES[name.toLowerCase()] || titleCaseInstitution(name);
     instMerged[canon] = (instMerged[canon] || 0) + row.users;
   }
