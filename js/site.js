@@ -445,17 +445,42 @@
       //
       // The resume fires exactly WHEN there is no local credential, and logout's whole job is
       // to create that state — so without this, signing out bounced to the IdP on the very next
-      // page load and signed the user straight back in. The server now ends the IdP session too,
-      // but that is a network call that can be slow, fail, or be raced by the reload below, and
+      // page load and signed the user straight back in. The server ends the IdP session too, but
+      // that is a network call that can be slow, fail, or be raced by the reload below, and
       // "did my logout work" must not depend on winning a race. Belt and braces, deliberately.
       //
-      // A deliberate sign-in clears this again (EKD's 'login' event below), so it suppresses
-      // only the AUTOMATIC path and never blocks someone choosing to sign in.
+      // Only a DELIBERATE sign-in clears this again — the SDK's 'login' event carries
+      // `deliberate`, and the listener below gates on it. It used to clear on ANY 'login',
+      // including the automatic resume init() runs on every page load, which is precisely the
+      // path this flag exists to suppress. Ledger R228.
       try { sessionStorage.setItem('ekd_signed_out', '1'); } catch (e) {}
       var t = safeGet('hfd_session');
-      if (t) { try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {} }
+      // LOCAL CREDENTIALS GO FIRST, before any network call. safeDel used to sit AFTER the
+      // await, so a revocation that was merely slow — or accepted and never answered — left
+      // hfd_session in localStorage AND never reached the reload below: the visitor pressed
+      // Sign out and simply stayed signed in, on a page still showing their account. Revoking
+      // server-side is best effort and follows. Ledger R228.
       safeDel('hfd_session');
-      try { if (window.EKD) await window.EKD.logout(); } catch (e) {}
+      var revocations = [];
+      if (t) {
+        try {
+          revocations.push(fetch(API_BASE + '/v1/auth/logout', {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + t }
+          }).catch(function () {}));
+        } catch (e) {}
+      }
+      if (window.EKD) {
+        try { revocations.push(Promise.resolve(window.EKD.logout()).catch(function () {})); } catch (e) {}
+      }
+      // Bounded wait, matching econ's account page. Give the server a moment to hear about it,
+      // but never let a hung connection strand the visitor on a signed-in view whose credentials
+      // this function has already deleted.
+      try {
+        await Promise.race([
+          Promise.all(revocations),
+          new Promise(function (r) { setTimeout(r, 2500); })
+        ]);
+      } catch (e) {}
       window.location.reload();
     };
 
