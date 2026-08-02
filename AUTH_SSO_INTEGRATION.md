@@ -246,19 +246,26 @@ Then confirm an **unregistered** `client_id` and a **mismatched** `redirect_uri`
    on the API host and `/register` on the IdP) and two auto-create paths (Google, ORCID). When
    they disagree, the report is "it let me in on one site but not the other", and the cause is
    always a rule added to one door.
-9. **Charset rules follow whether a field is PUBLIC, not whether it looks foreign.**
-   `institution`, `country` and `role` render on the public stats page, so they stay Latin-only
-   (`isLatinish`). `name` renders nowhere public — it is absent from `/v1/public-stats` entirely
-   — so it uses `isSafeName`: letters from **any** script, rejecting only the invisible
-   characters (control codes and the bidi overrides `U+202A-202E` / `U+2066-2069`, which make a
-   string render in an order that does not match its bytes). ZWNJ/ZWJ are allowed on purpose;
-   Persian and several Indic scripts need them.
+9. **ONE charset rule for all four profile fields, and it does not care about script.**
+   `isSafeName()` is the only validator: `name`, `institution`, `country` and `role` all accept
+   letters from **any** script, and reject only invisible characters — control codes and the bidi
+   overrides `U+202A-202E` / `U+2066-2069`, which make a string render in an order that does not
+   match its bytes. ZWNJ/ZWJ (`U+200C`/`U+200D`) are allowed on purpose; Persian and several
+   Indic scripts need them.
 
-   > Until 2026-08-01 `name` was Latin-only at both registration doors while Google and ORCID
-   > auto-create copied the provider's name in unchecked. Accounts already held Hangul, CJK and
-   > Cyrillic names, so the rule refused people at the password door whom the Google button
-   > admitted — and stopped admin from correcting a typo in a name the system itself had stored.
-   > Fixing it meant changing five call sites, not one; grep for the validator, not for the bug.
+   > There used to be a second validator, `isLatinish`, applied to the publicly rendered fields.
+   > It was removed on 2026-08-02. It had never actually held — Google and ORCID auto-create write
+   > these columns without passing any filter, so accounts already held Hangul, CJK and Cyrillic
+   > values — which meant it refused people at the password door whom the Google button admitted,
+   > and stopped admin correcting a typo in data the system itself had stored. Two validators over
+   > four fields also meant three separate edit paths had each picked a different one.
+
+   > **The rule lived in THREE layers.** Server (`isSafeName`), the sign-up form in
+   > `pages/download.html` (`safeField`), and the admin table in `pages/admin.html`
+   > (`isCleanField`, which used to highlight non-Latin rows amber as if they were suspect).
+   > Changing only the server would have been invisible to every user, because the browser
+   > rejected the value before it was ever sent. When you change a validation rule, grep the
+   > FRONT END too, and assert the client and server agree on a shared battery of cases.
 
 10. **Never put a literal control character in source.** Write `‪`, not the byte. An
     invisible character does not survive an editor round-trip or a re-encode (ledger R196), and
@@ -355,17 +362,36 @@ admin and no support desk to verify anybody's identity.
 
 ---
 
-## 12. The rate limiter is still in shadow mode — how to turn it on
+## 12. The rate limiter — ENFORCING since 2026-08-02
 
-`rateLimit()` on `/authorize` and `/token/*` logs a would-be denial and **never blocks**. Five of
-its six call sites pass `enforce = false`; only `oauth_start_ip` enforces, because that path
-writes state before authentication. The soak it was waiting on concluded PASS on 2026-07-29.
+All six `rateLimit()` call sites now pass `enforce = true`. A denial is a real 429, not a log line.
 
-**To enforce**, change the last argument from `false` to `true` at those five call sites
-(`grep -n "await rateLimit(env," api/src/index.js`), deploy, and watch for `evt:"rate_limit"` in
-`wrangler tail`. To roll back, flip them and deploy again — one command each way.
+**Current ceilings** (`grep -n "_MAX = " api/src/index.js`):
 
-**The evidence that it is safe**, measured 2026-08-01 against production:
+| bucket | keyed on | cap / 60s | why |
+|---|---|---|---|
+| `authz_ip`, `oauth_start_ip` | IP | **10** | a human sign-in touches `/authorize` once |
+| `exch_ip` | IP | **10** | one code exchange follows one sign-in |
+| `exch_acct` | account | **10** | one person cannot legitimately approach this |
+| `rt_ip` | IP | 240 | refreshes are MACHINE-driven — see below |
+| `rt_acct` | account | 60 | same |
+
+**Why the refresh buckets are not 10.** Every open tab renews its 15-minute access token on its
+own schedule, and a browser restoring a dozen tabs refreshes a dozen times in one second through
+no act of the user. Throttling that does not stop an attacker — it signs a legitimate person out
+mid-session, which is the exact failure the limiter exists to prevent causing. Only the
+human-initiated buckets were tightened.
+
+**Known risk, accepted deliberately.** The IP buckets are keyed on IP, and universities NAT an
+entire campus behind a few addresses. Ten sign-ins a minute from one university gateway is
+plausible at the start of a class, and everyone behind it would see the 429 together. The
+per-ACCOUNT bucket has no such problem — it follows the person, not the network. If this is ever
+reported, raise `AUTHZ_IP_MAX` / `EXCH_IP_MAX`: one constant, one deploy, and the same to roll back.
+
+**Watch it** with `wrangler tail` for `evt:"rate_limit"`; `enforce` is now `true` in that record,
+so any hit is a user who was actually refused.
+
+**The measurement that preceded the flip**, taken 2026-08-01 against production:
 
 | bucket | cap (per 60s) | peak observed | headroom |
 |---|---|---|---|
