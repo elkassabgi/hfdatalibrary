@@ -7,6 +7,8 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 
 ## Rules Digest
 
+- R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
+
 - R1. Never push the local hfdatalibrary tree — it holds Ahmed's WIP and predates worktree-pushed commits; edit via a fresh worktree off origin/main. [M-20260713-01]
 - R2. A 2:1 split candidate is numerically identical to a clean 50% crash — never auto-apply; use pipeline/manual_split.py after human confirmation. [M-20260713-02]
 - R3. Econ first passes for store-backed sources run ONLY on this workstation (data/clean_full/<src>); CI runs no-op with "source dir missing". [M-20260714-01]
@@ -5188,3 +5190,47 @@ otherwise have broken the workflow that runs the sources it fixes.
 
 Related: R245 (what the upload fixes), R246, R43 (stop-asking is the failure mode — this is
 the legitimate exception: a gate only the user can open).
+
+### R251 — a standing instruction I never wrote down, and therefore broke five times
+
+Ahmed: *"This is the fifth time, you use dbnomics, I explicitly told you to document this in
+your .md files that we will not use dbnomics."*
+
+He is right, and the evidence is unambiguous: `grep -rniE "not use dbnomics|no dbnomics|
+dbnomics.*(forbidden|banned|prohibit|never)"` across every .md in both repos returned
+NOTHING. Told at least five times, written down zero. Minutes before he said it I had run
+two live probes against api.db.nomics.world and quoted the results back to him as findings.
+
+The mechanism is not forgetfulness, it is architecture. An instruction that exists only in
+conversation dies at the next compaction, and what survives is the CODE — 101 relay-map
+entries, a `_dbnomics.py` module, a staleness audit tool, three live relay fetchers. So each
+new session wakes up surrounded by artefacts that make DBnomics look like a supported path,
+with nothing anywhere saying it is banned. The artefacts argued for it and the rule was not
+in the room.
+
+Compounding it: DBnomics is genuinely convenient — one API over hundreds of datasets — so it
+presents itself as leverage every time coverage is the goal. It is the opposite. 98 of the
+101 datasets we ever took from it have not been re-indexed in >180 days (UNCTAD: 1,581 days,
+4.3 years), and the vintage signal is DBnomics' own hash, so a frozen dataset reports
+`no_change` forever while the health gate sees a source succeeding daily. An aggregator that
+stops silently is strictly worse than no source at all, because it manufactures the
+appearance of freshness.
+
+**Fixed**: written as §0 of `econfindatalibrary/CLAUDE.md` — first section, loaded every
+session, before any of the artefacts can make their case — and as R251 at the head of this
+digest.
+
+**The rules.**
+1. WRITE A STANDING INSTRUCTION DOWN THE MOMENT IT IS GIVEN, into the file that loads
+   itself. Anything I only remember is something I will violate after the next compaction.
+   The user should never have to repeat a rule a second time, let alone a fifth.
+2. Put it where the CONTRADICTING EVIDENCE lives. The repo is full of DBnomics machinery
+   that implies the opposite; the ban has to be louder than the code, i.e. §0 of CLAUDE.md,
+   not a line in a doc nobody opens.
+3. Convenience is the tell. When an approach is attractive precisely because it collapses a
+   lot of work, check whether it was ruled out for exactly that reason.
+4. "I was only reading, not ingesting" is not a defence. Probing the banned source and
+   quoting its numbers is using it.
+
+Related: R246 (reported a config figure as if it were reality), R249 (confident claims from
+tools that could not support them).
