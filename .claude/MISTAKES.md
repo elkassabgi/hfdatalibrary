@@ -3981,3 +3981,61 @@ parser ceiling, if I had asked what the split implied instead of what the messag
    rely on — especially when it explains why the obvious concern does not apply.
 
 Related: R214 (measured a proxy), R222 (a hypothesis must predict the observed pattern).
+
+## R225
+
+**I changed a validation rule on the server while the browser went on enforcing the old one.**
+
+Ahmed approved allowing non-Latin institution and country names. I found every server-side gate —
+five call sites, two registration doors, three edit paths, the ORCID auto-create — swept them all,
+tested 14 cases, deployed, and verified the deployed bundle no longer contained the old validator.
+It was a thorough sweep of exactly one layer.
+
+The rule also lived in the sign-up form (`pages/download.html`), which ran its own copy of the
+Latin-only regex and refused the value **before it was ever sent**. A user typing 北京大学 would
+have seen the identical rejection, from a page my server change could not reach. It lived in a
+third place too: the admin table highlighted any non-Latin row amber as if it were suspect, which
+after the change meant flagging correct data as dirty — and the rows that genuinely deserve
+attention, the ones carrying invisible bidi characters, sat unflagged in the same column.
+
+I found it only because I asked "would this actually be visible to a user?" rather than "did I
+change every server call site?" The second question had a clean, complete, satisfying answer.
+
+**The rules.**
+1. A validation rule normally lives in MORE THAN ONE layer: server, client form, and any admin or
+   display surface that re-implements it to decorate output. Changing one is not changing the rule.
+2. grep the FRONT END for the rule whenever you change it server-side. The symptom of missing this
+   is silent: the feature simply does not appear to work, with no error anywhere.
+3. When a rule is duplicated across client and server, assert they AGREE — run both implementations
+   over one shared battery and require zero disagreements. I did this and it caught nothing only
+   because I had already fixed both; without it, drift is invisible until a user reports it.
+4. Ask "what would the user see?", not "did I edit every call site?" The second question is
+   answerable and feels complete while the feature stays broken.
+
+Related: the standing "an example means the class" rule; R221 (fixed one map, missed its sibling).
+
+## R226
+
+**I broke a rule twice more within the hour of writing it down.**
+
+R223, logged this session, says: never write a literal control character into source; write the
+escape, and if the tooling keeps interpreting it, construct the backslash programmatically. Having
+written that, I then used the Edit tool to add a bidi-rejecting regex to `pages/download.html` —
+and typed the literal characters again. Then, on the very next edit, did it a third time in
+`pages/admin.html`. Both had to be repaired with the same `chr(92)` script as before.
+
+The lesson is not "try harder to remember the rule". I *had* the rule, freshly written, in
+context. The failure is that the rule described what NOT to do while leaving the natural action —
+typing the characters into an Edit — still available and still the path of least resistance. A
+prohibition that leaves the default unchanged gets violated at the first moment of momentum.
+
+**The rules.**
+1. For any regex containing control, bidi or zero-width characters, do not use the Edit tool at
+   all. Write the line from a script that builds every backslash with `chr(92)`. This is a
+   DIFFERENT ACTION, not a more careful version of the same one.
+2. After ANY edit touching such a regex, immediately count raw invisible bytes in the file and
+   require 0. It is one command and it converts a silent corruption into an instant failure.
+3. When a mistake recurs, fix the DEFAULT rather than restating the rule. A rule I have to
+   remember at the moment of acting is a rule that will lose to momentum.
+
+Related: R223 (the original), R196 (invisible encoding damage that took a day to find).
