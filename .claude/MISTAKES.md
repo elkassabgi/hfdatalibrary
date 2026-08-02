@@ -4409,3 +4409,32 @@ drifts from the data behind it. Two fixed and pushed today (fed_board, fhfa: 0% 
 resolving, econfindatalibrary 2c371006); the rest are per-source and tracked.
 
 Related: R230 (measure the population before quoting a magnitude), R51 (an untrustworthy gate).
+
+**R231 correction (same day, found while acting on it).** The MECHANISM in R231 is correct and
+verified in code: `partial` never sets `last_success_utc`, so RED-SLA cannot fire for an
+always-partial source, and demoting ATTENTION would genuinely bury that population. That part
+stands.
+
+The COUNT does not. I read "41 sources have never succeeded" out of the LOCAL
+`data/_aqueduct/state.db`, and that file is not the authoritative state for cloud-tier sources.
+CI runs with `AQUEDUCT_BACKEND=r2` against state in R2; the local copy is a partial merge. Proof:
+gleif, usda, snb, who_sdg, worldbank, bea, boc and sec_edgar all demonstrably RAN in today's CI
+job (30738981790) with real outcomes — and have NO rows whatsoever in the local file. Only 12
+units carry a 2026-08-02 attempt locally against 20 sources attempted in CI.
+
+So "18 RED-UNRUN sources that never ran" was an artefact of the vantage point, not a finding.
+Those sources run; I was looking at the wrong database. Same failure as R227, where I called D1
+rows stale from the wrong side.
+
+What survives, because it was verified independently of that file:
+- The mechanism argument above (read from health.py and _common.finalize, not from state).
+- The fed_board/fhfa key-shape fix, proven directly against catalog.db: 0% -> 100% of sampled
+  cursor keys resolving. Nothing about it depends on state.
+- The csv-coherence class itself, confirmed in PRODUCTION by the CI log rather than by me:
+  `gleif/_all: merged 3391691 obs but reported no series_cursors — cannot re-derive CSVs`
+  `usda/_all: merged 57786638 obs but reported no series_cursors`
+  Both are `partial` today. Note task #32 recorded that sweep as completed for gleif — it is not.
+
+**The rule.** Before quoting a count off a state store, establish WHICH store the thing being
+measured writes to. A local file that opens, queries cleanly and returns plausible numbers gives
+no hint that it is the wrong copy — every symptom of the mistake looks like data.
