@@ -4139,3 +4139,47 @@ CI actually runs.
 3. A number I report repeatedly deserves one audit of its definition, not just its arithmetic.
 
 Related: R214 (measured a proxy), R224 (a checker's name is a claim).
+
+### R226 — I served a source the owner had explicitly retired, and neither of my checks could see it
+
+I catalogued, derived, D1-synced, deployed and announced `ksh` — 25,057 series — as a new served
+source. It had been RETIRED five weeks earlier by Ahmed's own commit 5095976, 2026-07-02:
+
+    Per owner decisions (one owner per source; maximum data, fully automated):
+    - Retire ingest_pwt.py (PWT 10.0; penn_world_table 11.0 is the owner),
+      ingest_ksh_hungary.py (ksh_stadat is the owner), ...
+
+The decision was right and the numbers say so plainly: the ksh store is frozen at 2026-06-23
+with 512,995 rows over 25 files, while ksh_stadat is current to 2026-07-29 with 1,260,990 rows
+over 98,423 series — four times the data, and actually updating. I published a stale duplicate
+of a source the library already owns properly.
+
+BOTH OF MY GATES PASSED IT, and neither was capable of catching this:
+  * broaden_catalog's hostability gate — correctly, the licence IS cc-by-4.0 CONFIRMED CLEARED.
+    A licence says whether we MAY host it, never whether we SHOULD.
+  * my key-overlap audit — 0 of 109 ksh keys appear in ksh_stadat, which I read as "distinct
+    data, therefore a real gap". It only ever meant "different key convention", the exact trap
+    I had documented that same hour for ilo/ilostat and then walked into anyway.
+
+The evidence that mattered was in neither place. It was in git history, and in a MISSING FILE:
+the fetcher `updater/strategies/fetchers/ksh.py` still exists and still imports
+`jobs/ingest_ksh_hungary.py`, which was deleted. I only found it because I tried to promote ksh
+to live and the import raised FileNotFoundError.
+
+WITHDRAWN the same day: catalogue rows deleted, D1 rows deleted (25,057), removed from
+SUPPORTED_SOURCES, worker redeployed, and the id confirmed answering 404. The 25,057 R2 objects
+are still present — the bulk delete was refused by the permission classifier — but they are
+unreachable with no catalogue row. Manifest in logs/ksh_withdrawal_manifest.json.
+
+**The rules.**
+1. Before serving a source that is dark, ask WHY it is dark. A store with data and no catalogue
+   row is as likely to be a retirement as an oversight, and the two look identical from the data.
+2. A retired source leaves fingerprints: a fetcher whose ingest is gone, a store with a frozen
+   mtime, a sibling source with the same publisher and more rows. Check the git log for the
+   source id before adding it.
+3. "May we host this?" and "should this exist?" are different questions. A licence gate answers
+   only the first, and I treated a pass as an answer to both.
+4. When I have just written down a caveat — that a key miss does not prove distinctness — apply
+   it to the very next case, not only to the one that produced it.
+
+Related: R225 (read the comment before fixing what looks misconfigured), R220, R214.
