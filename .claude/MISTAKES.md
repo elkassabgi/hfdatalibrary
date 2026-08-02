@@ -4561,3 +4561,43 @@ were already running.
 
 Related: R230, and the standing "a reported example is one instance of a class" rule — this is
 that rule failing on the class of SCHEDULERS rather than the class of sources.
+
+### R235 — I wrote "it works without a key" into the registry without testing it
+
+Building the census fetcher, I found there is no CENSUS_API_KEY repo secret and wrote this into
+the registry entry and the workflow, as justification for scheduling it into CI:
+
+    "the API serves keyless requests and 20 flows a day is far inside the anonymous allowance,
+     so this runs either way"
+
+Plausible — many public APIs do exactly that. I had not tried it. When I did, one command later:
+
+    keyless HTTP 200   Content-Type: text/html   8,531 bytes
+    <title>Missing Key</title>
+
+The Census API answers an unauthenticated request with **HTTP 200 and an HTML error page**. Not
+401, not 403. So the claim was false, and worse, the failure mode it hid is the nastiest kind: a
+fetcher that trusted the status code would have recorded a clean, empty, successful run every
+single day, forever. That is the same false green as bls, dst and the relay audit — the fourth
+instance today, and this one I would have built myself.
+
+It also would have been the WRONG FIX. The key is not missing at all: Ahmed's key is in `.env`
+on the workstation. The correct answer was never "run keyless in CI", it was `run_location:
+local`, where the credential already lives. I invented a workaround for a problem that did not
+exist because I never checked the premise.
+
+**Fixed before shipping**: the fetcher detects the Missing Key page by content and raises
+DefinitiveError (a missing credential is a config fault no retry mends); census is routed
+run_location: local, not live: true; and the workflow passthrough is documented as "only so
+adding the secret is sufficient later", not as a thing that works today.
+
+**The rules.**
+1. Do not write an empirical claim into a config comment you have not run. A comment is
+   evidence to the next reader; an untested one is a fabricated citation.
+2. Never infer success from a status code alone on an API you have not exercised. Check
+   Content-Type and body shape — 200-with-an-error-page is common and is invisible to every
+   `raise_for_status()` in the world.
+3. When you find yourself designing around a missing credential, first ask whether it is
+   missing HERE or missing EVERYWHERE. The answer changes the design, not just the workaround.
+
+Related: R230, R232 (both about greens produced by not looking).
