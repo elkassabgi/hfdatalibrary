@@ -4225,3 +4225,33 @@ symptom, opposite verdict, and only the test could tell them apart.
 
 Related: R224 (a checker's name is a claim), R226 (ask why it is that way before changing it),
 R220 (a 404 is evidence about the id first).
+
+### R228 — two DuckDB jobs sharing one spill directory delete each other's temp file
+
+Every derive and audit tool in this repo sets `temp_directory` to the same path,
+`logs/_duckspill`. I have run three and four of them concurrently all session and it worked —
+until a probe and a measurement both spilled on the same 427M-row table at the same moment:
+
+    IO Error: Failed to delete file "logs/_duckspill\duckdb_temp_storage_DEFAULT-0.tmp":
+    The system cannot find the file specified
+
+and the sibling process died with exit 139. Both lost ~10 minutes of scanning.
+
+The cause is that DuckDB names its spill file after the DATABASE, not the process:
+`duckdb_temp_storage_DEFAULT-0.tmp` for every in-memory connection. Two processes pointed at one
+directory are therefore writing and deleting the SAME file. Nothing warns; it is invisible while
+the jobs happen not to spill simultaneously, which is most of the time, which is exactly what
+made it look safe for hours.
+
+Fixed here by making the directory per-process (`logs/_duckspill/pid<N>`). The same shared path
+is still in derive_istat_flows, derive_ilostat_indicators, derive_census_tables,
+catalog_istat_flows, catalog_ilostat_indicators, audit_dark_redundancy and audit_key_integrity —
+none has bitten yet, and all of them are one concurrent spill away from it.
+
+**The rules.**
+1. A scratch path shared by processes needs the PID in it. "It has worked so far" is a statement
+   about timing, not about safety.
+2. When two concurrent jobs fail together, suspect a shared resource before suspecting either
+   job. Neither stack trace mentioned the other process.
+3. Concurrency that has been fine for hours is not proven safe — it is unproven in the direction
+   that matters, because the failure requires an overlap that is rare by construction.
