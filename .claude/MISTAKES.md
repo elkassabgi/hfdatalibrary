@@ -3938,3 +3938,46 @@ non-existent bug in code that had already shipped correctly.
 3. A hypothesis that explains the mechanism but not the PATTERN has not been tested yet.
 
 Related: R220 (a 404 is evidence about the id first), R216 (a green result from my own harness).
+
+### R223 — I read "size does not fit in an int" as a hard ceiling and never tested whether it was
+
+Four imf_gfs*_direct sources fail every CI run with `OverflowError('size does not fit in an int')`
+or `ParseError('out of memory')`. I recognised the signature, matched it to pyexpat's INT_MAX
+limit, and concluded: a single XML document over 2 GiB cannot be parsed however it is fed, so the
+only fix is a smaller document. I wrote that into a task, into a code comment as settled fact,
+and built request-slicing as the primary remedy.
+
+Then I ran it. GFS_BS parses on this machine at **2,293,565,648 bytes** — past the ceiling I had
+just declared absolute — and produces 954,482 observations. The slicing fallback never fired.
+
+The real cause was three lines away, in `iter_series`:
+
+    for _ev, el in ET.iterparse(path, events=("end",)):
+        if el.tag.split("}")[-1] == "Series":
+            yield el
+            el.clear()
+
+`clear()` empties an element's children but the PARENT keeps holding it, so the tree grows by one
+retained node per series — 297,673 of them for GFS_BS — and nothing is ever freed. Its docstring
+asserted "Memory stays flat because each element is cleared once consumed", which was simply
+false. Detaching the element from its parent as well took the same pull from an unbounded climb
+to a **137 MB peak**, with output byte-identical: same 954,482 rows, set-difference zero in both
+directions.
+
+Two things made the wrong answer attractive. The error message NAMES a size limit, so it reads
+like a verdict rather than a symptom. And the failure was environment-split — fine on a 383 GB
+workstation, fatal on a 16 GB runner — which is the signature of a memory leak and not of a
+parser ceiling, if I had asked what the split implied instead of what the message said.
+
+**The rules.**
+1. An exception message names what the runtime NOTICED, not what caused it. `OverflowError` from
+   a parser is a symptom of pressure; find what generates the pressure before believing the
+   limit is the story.
+2. Before building a fix for an impossibility, REPRODUCE the impossibility. One run of the
+   failing input would have cost minutes and saved a wrong design.
+3. A failure that appears on a small machine and not a large one is about RESOURCE GROWTH.
+   Reach for the leak first; a genuine hard limit fails everywhere.
+4. A docstring claiming an invariant ("memory stays flat") is a claim to verify, not a fact to
+   rely on — especially when it explains why the obvious concern does not apply.
+
+Related: R214 (measured a proxy), R222 (a hypothesis must predict the observed pattern).
