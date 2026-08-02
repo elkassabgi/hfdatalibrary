@@ -405,3 +405,53 @@ undone:
   University of Wrocław, École de Technologie Supérieure, Università Degli Studi di Bergamo and
   Dr. Franjo Tuđman Defense and Security University. Block the specific placeholder word, never
   the script.
+
+### 13.1 The two presentation maps every stats page carries
+
+The endpoint returns institutions **unordered apart from user count**. Ranking and branding are a
+per-page concern, so each site's `stats.html` carries two maps keyed on the institution's
+**display name**:
+
+* `INST_PRESTIGE` — `{name: rank}`. Sort is `rank ?? 9999`, then alphabetical. Only ranked schools
+  surface into the visible block; everything else sorts alphabetically behind the toggle.
+* `INST_DOMAINS` — `{name: 'domain.edu'}` for the favicon. A value may instead be
+  `CUSTOM:<url>` when a school has no usable favicon at its own domain.
+
+Copy BOTH maps verbatim into a new site. They are presentation, not data: they must agree across
+sites or the same institution ranks differently on two pages of the same family. Verified
+2026-08-01 — hf and econ each carry 98 domain entries and 71 prestige entries with zero
+differences, and render all 277 institutions in an identical order.
+
+**The hazard, and it has fired.** These maps are keyed on the display name, which
+`INSTITUTION_ALIASES` in the worker can CHANGE. Adding an alias silently orphans the key in every
+map that used the old name. On 2026-08-01, aliasing `UCLA` and `HKUST` to their full names
+orphaned both — the prestige break was visible (wrong rank) and got fixed; the icon break was
+invisible (a missing favicon renders as empty space, no console error) and shipped. See R221.
+
+> **Rule.** After adding or changing an alias, grep BOTH maps on BOTH sites for the old key. A
+> rename has as many consequences as there are maps keyed on the renamed value.
+
+**Verify by simulating the render, not by reading the file.** Extract the page's own maps and run
+them against the live payload, printing a marker per property that must be present:
+
+```bash
+curl -s https://api.hfdatalibrary.com/v1/public-stats > ps.json
+node -e "
+const fs=require('fs'); const d=JSON.parse(fs.readFileSync('ps.json','utf8'));
+const p=fs.readFileSync('stats.html','utf8');
+const g=re=>{const m=p.match(re);return new Function(m[0]+'return '+m[0].match(/var (\w+)/)[1]+';')();};
+const P=g(/var INST_PRESTIGE\s*=\s*\{[\s\S]*?\};/), D=g(/var INST_DOMAINS\s*=\s*\{[\s\S]*?\};/);
+const order=d.institutions.slice().sort((a,b)=>{const ar=P[a.institution]||9999,br=P[b.institution]||9999;
+  return ar!==br?ar-br:a.institution.localeCompare(b.institution);});
+console.log('no icon in visible top 20: '+order.slice(0,20).filter(i=>!D[i.institution]).length);
+order.slice(0,20).forEach((i,n)=>console.log((D[i.institution]?'[icon] ':'[GAP ] ')+(n+1)+'. '+i.institution));
+"
+```
+
+`no icon in visible top 20: 0` is the pass condition. Run the same script against the other
+family sites and diff the output — the ordered lists must be byte-identical.
+
+**Casing is fixed in the worker, not the page.** `titleCaseInstitution()` only repairs names with
+**no** uppercase at all (`harvard university`). A name like `University of bath` already contains a
+capital, so it is left alone — repair that with an `INSTITUTION_ALIASES` entry instead, which
+matches on the lowercased value and therefore catches mixed-case forms too.
