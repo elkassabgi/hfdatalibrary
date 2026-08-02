@@ -4601,3 +4601,46 @@ adding the secret is sufficient later", not as a thing that works today.
    missing HERE or missing EVERYWHERE. The answer changes the design, not just the workaround.
 
 Related: R230, R232 (both about greens produced by not looking).
+
+### R236 — I sandboxed 4 of 21 units, and both bugs were in the other 17
+
+I built the census EITS fetcher, verified it end-to-end on a sandbox of FOUR flows (marts, qfr,
+vip, mhs), watched two clean runs — advance then idempotent — and pushed it. The four were
+chosen because they were interesting: the furthest behind, the retired one, a control. They were
+not chosen to be representative, and I never said "four of twenty-one" to myself.
+
+Both defects lived in the seventeen I skipped.
+
+**One flow failed the whole source.** `_flows()` finds 21 `eits__*` files; only 20 have
+`cell_value`. eits/qtax names its variables in UPPERCASE — in our store AND upstream, where
+asking for `cell_value` returns 400 "unknown variable". My case-sensitive lookup found no value
+column, counted a structural break, and `finalize` turned that into a DefinitiveError. Census
+would have failed every single run, forever, on a source I had just declared proven. I had even
+NOTICED the discrepancy — I printed "flows discovered: 21" next to a 20-file measurement and
+moved on.
+
+**Then my fix for the second bug was worse than the bug.** qtax stores 1,344 state series a
+`for=us:*` tail cannot reach, so I added `for=state:*`. The state response omits STATE and adds
+`us`, so the keys it builds have a shape the store has never held — and merge, deduping on
+(series_key, obs_date), did not extend those 1,344 series. It created 1,209 NEW ones. qtax went
+1,421 -> 2,630 distinct series. Real values, plausible keys, no error anywhere. I caught it only
+because I diffed series COUNTS against production out of habit, not because anything complained.
+
+**Fixed**: case-insensitive lookup for the two fixed column names; `for=state:*` reverted so the
+gap stays open, honest and NAMED (`tail UNDER-COVERED qtax geo AK,AL,...`) rather than papered
+over with duplicates; and a key-SHAPE guard that refuses to merge any key whose dimension set is
+absent from the store, so this class cannot ship again on the strength of someone remembering to
+diff counts.
+
+**The rules.**
+1. A sandbox is a SAMPLE. Say the fraction out loud — "four of twenty-one" — and the gap
+   announces itself. "It worked on the ones I tried" is the same sentence as R230's bls
+   dismissal, one layer down.
+2. Run the whole population before declaring a thing proven, especially when the population is
+   21 items and the run takes four minutes. I had no excuse of cost.
+3. A discrepancy you print and do not chase is a finding you declined. 21 vs 20 was on my screen.
+4. When closing a coverage gap, check the new data's KEY SHAPE against the old. Adding rows
+   under new keys looks identical to adding rows under old keys in every metric except distinct
+   series — which is why that is the metric to diff.
+
+Related: R230 (a sample that could not detect what it sampled for), R235 (same fetcher, same day).
