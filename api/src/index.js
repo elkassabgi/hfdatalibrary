@@ -5163,6 +5163,12 @@ async function handlePublicStats(env, cors) {
     // Chinese for "court". Generic like 个人 above - it names a kind of body, not one
     // institution, exactly as the already-blocked 'university' and 'bank' do in English.
     '法院',
+    // added 2026-08-02 after web-verifying all 249 live entries (18 agents, 516 searches).
+    // Only these four survived a second agent whose job was to PROVE each one real: no
+    // company registry, university listing, domain or search engine had any record. Three
+    // others the first pass wanted to delete were RESCUED by that second pass and kept -
+    // 'Maolei' is a registered Chinese bearing company, 'Rmuut' is a real Thai university.
+    'backtesting platform', 'maingonav', 'sergio moura', 'zisnjk inc.',
     // DELIBERATELY NOT BLOCKED, having checked:
     //   'usa'  - looks like a country, but the University of South Alabama officially goes by
     //            USA. Blocking it would delete a real school to tidy a placeholder.
@@ -5225,6 +5231,70 @@ async function handlePublicStats(env, cors) {
     'yonsei univ.': 'Yonsei University',
     'johns hopkins': 'Johns Hopkins University',
     'purdue': 'Purdue University',
+    // added 2026-08-02 from the 249-entry verification sweep. ONLY genuine defects are
+    // renamed: misspellings, joined or missing words, broken casing, and acronyms a reader
+    // cannot resolve. The sweep also proposed ~60 renames that were REJECTED because the
+    // stored value was already the institution's recognisable name - adding 'Inc.', 'The',
+    // a legal long form or a native-language parenthetical makes the page longer and worse.
+    // 'USA' is deliberately NOT renamed: it is a real abbreviation of the University of
+    // South Alabama, but someone typing it almost certainly means the country, and guessing
+    // would invent an affiliation. 'Postech' is left alone - already recognisable, and
+    // renaming it would orphan its rank and icon.
+    // Rescued from deletion by the adversarial pass and kept as-is: Maolei, Rmuut (renamed
+    // to its full name below), Policand Institution, University of Sweden.
+    "grittith": "Griffith University",
+    "burgndy": "Burgundy School of Business",
+    "conitive cartography": "Cognitive Cartography",
+    "yanan university": "Yan’an University",
+    "university north texas": "University of North Texas",
+    "university of california irvine": "University of California, Irvine",
+    "abertay": "Abertay University",
+    "bowling green": "Bowling Green State University",
+    "murdoch": "Murdoch University",
+    "saxion": "Saxion University of Applied Sciences",
+    "sogang": "Sogang University",
+    "ottawa u": "University of Ottawa",
+    "dauphine": "Université Paris Dauphine",
+    "distrital": "Universidad Distrital Francisco José de Caldas",
+    "op jindal": "O.P. Jindal Global University",
+    "tennessee tech": "Tennessee Tech University",
+    "windesheim": "Windesheim University of Applied Sciences",
+    "jedha": "Jedha Bootcamp",
+    "rmuut": "Rajamangala University of Technology Thanyaburi",
+    "buaa": "Beihang University",
+    "cuit": "Chengdu University of Information Technology",
+    "iiitb": "International Institute of Information Technology Bangalore",
+    "iiitg": "Indian Institute of Information Technology Guwahati",
+    "iit m": "Indian Institute of Technology Madras",
+    "kamk": "Kajaani University of Applied Sciences",
+    "ncku": "National Cheng Kung University",
+    "scnu": "South China Normal University",
+    "tamu": "Texas A&M University",
+    "tum": "Technical University of Munich",
+    "ubc": "University of British Columbia",
+    "ucl": "University College London",
+    "uncw": "University of North Carolina Wilmington",
+    "unifi": "University of Florence",
+    "uq": "University of Queensland",
+    "usyd": "University of Sydney",
+    "usiu": "United States International University - Africa",
+    "ute": "Universidad UTE",
+    "vdu": "Vytautas Magnus University",
+    "escuela superior politecnica de chimborazo": "Escuela Superior Politécnica de Chimborazo",
+    "ies ventura moron": "IES Ventura Morón",
+    "univerza v ljubljani, fakulteta za elektrotehniko": "University of Ljubljana, Faculty of Electrical Engineering",
+    "guangzhoujuchuang": "Guangzhou Juchuang",
+    "cicc": "China International Capital Corporation",
+    "msd": "MSD",
+    "nanhua future": "Nanhua Futures",
+    "riotinto": "Rio Tinto",
+    "quant house": "QuantHouse",
+    "zidle msg": "Zidle Macro Strategy Group",
+    "wroclaw university of technology": "Wrocław University of Science and Technology",
+    "top gradnja d.o.o.": "Top Gradnja d.o.o.",
+    "sharq": "Eastern Petrochemical Company (SHARQ)",
+    "sdic trust": "SDIC Taikang Trust",
+    "true alpha": "True Alpha",
     // NOT aliased on purpose: 'grittith' is probably Griffith University, but "probably" is how
     // a wrong school ends up on the page. 'university of maryland' is left separate from
     // 'University of Maryland, College Park' - Maryland has several campuses. 'Wroclaw

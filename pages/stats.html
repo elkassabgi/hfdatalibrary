@@ -353,7 +353,7 @@ async function loadStats() {
       'University of Manchester': 'manchester.ac.uk',
       'Singapore university of technology and design': 'sutd.edu.sg',
       'Hongkong university': 'hku.hk',
-      'HKUST': 'hkust.edu.hk',
+      'HKUST': 'hkust.edu.hk','Hong Kong University of Science and Technology': 'hkust.edu.hk',
       'Michigan': 'umich.edu',
       'University of Bath': 'bath.ac.uk',
       'University of bath': 'bath.ac.uk',
@@ -374,7 +374,7 @@ async function loadStats() {
       'Northwestern University': 'northwestern.edu',
       'University of Michigan': 'umich.edu',
       'University of California, Berkeley': 'berkeley.edu',
-      'UCLA': 'ucla.edu',
+      'UCLA': 'ucla.edu','University of California, Los Angeles': 'ucla.edu',
       'London School of Economics': 'lse.ac.uk',
       'University of Oxford': 'ox.ac.uk',
       'University of Cambridge': 'cam.ac.uk',
@@ -424,7 +424,7 @@ async function loadStats() {
       'National Chengchi University': 'www.nccu.edu.tw',
       'Abertay': 'abertay.ac.uk',
       'CMU': 'cmu.edu',
-    };
+    'Yan’an University': 'yau.edu.cn','Abertay University': 'abertay.ac.uk','Indian Institute of Information Technology Guwahati': 'iiitg.ac.in','Escuela Superior Politécnica de Chimborazo': 'espoch.edu.ec'};
 
     // Only show an icon we can VERIFY: an explicit, checked entry in INST_DOMAINS.
     // The old code guessed "<name>.edu" for anything unmapped, which showed the
@@ -535,7 +535,7 @@ async function loadStats() {
       // real companies sink below universities (consistent with Creative Robots)
       'Amazon': 9000, 'NVIDIA': 9000, 'MBBANK': 9000, 'Soros Fund Management': 9000,
       'Creative Robots': 9000,
-    };
+    'Yan’an University': 310,'Indian Institute of Information Technology Guwahati': 235,'Escuela Superior Politécnica de Chimborazo': 345};
 
     if (d.institutions && d.institutions.length > 0) {
       var sorted = d.institutions.slice().sort(function(a, b) {
