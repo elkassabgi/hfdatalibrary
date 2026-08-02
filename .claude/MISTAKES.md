@@ -4892,3 +4892,51 @@ interruption stored zero.
 4. When you rule something out, check that your counter-evidence came from the mechanism you
    are reasoning about. "Later indicators have the data" only refutes starvation if the fetcher
    is what put it there.
+
+## R228
+
+**A sign-out that only held if the network cooperated, plus a comment that described the opposite of the code.**
+
+Ahmed reported: signing out of econ flashed the signed-out page and immediately returned to
+signed-in, API key on screen. He guessed stale cache, since it did not happen in incognito. It was
+not cache — every page and script serves `max-age=0, must-revalidate`, and incognito differs
+because a fresh profile has no identity-provider cookie to resume FROM.
+
+Two defects of mine, and either alone reproduces it.
+
+**1. `logout()` cleared local tokens only on success.**
+
+```js
+async function logout() {
+  var rt = getRt();
+  await postJson('/logout', ...);   // offline / blocked / 5xx / hung
+  clearLocal();                      // never runs
+  emit('logout');
+}
+```
+The refresh token survived any failed or slow revocation. The page reloaded, `init()` refreshed
+from that surviving token, and signed the visitor back in. A sign-out must never depend on
+reaching the network — clear locally FIRST, then revoke server-side as best effort.
+
+**2. The suppression flag was wiped by the very thing it existed to suppress.**
+
+`ekd_signed_out` says "stay out for this browser session". Both sites cleared it inside
+`EKD.on('login')`, and that event fires for the AUTOMATIC resume too, not only a deliberate
+sign-in. So: sign out, reload, init() resumes, the handler wipes the flag, signed back in.
+
+The comment above that line read: *"A deliberate sign-in clears this again, so it suppresses only
+the AUTOMATIC path."* I wrote that. It states the intent exactly and the code does the reverse —
+there was no way for the handler to know which kind of login it was, and I never gave it one. The
+SDK now sends `deliberate: true|false` and both sites gate on it.
+
+**The rules.**
+1. Teardown runs BEFORE the network call it reports, never after. `await` between "user asked to
+   stop" and "local state cleared" is a window where a timeout silently undoes the user's decision.
+2. If a handler must distinguish two causes, it needs the cause PASSED IN. A comment asserting
+   "this only happens on path A" is not a mechanism — and here the same event carried both paths.
+3. A comment describing intent is not evidence of behaviour. When one says "only X", find the
+   line that ENFORCES only-X. If there is none, the comment is the bug report.
+4. When the user offers a diagnosis ("it's cached"), check it and then keep going. Cache was
+   disproved in one command by reading the headers; stopping there would have shipped nothing.
+
+Related: R225 (a rule spread across layers), R222 (measured the wrong thing and reported it).
