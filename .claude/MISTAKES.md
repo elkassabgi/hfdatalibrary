@@ -4183,3 +4183,45 @@ unreachable with no catalogue row. Manifest in logs/ksh_withdrawal_manifest.json
    it to the very next case, not only to the one that produced it.
 
 Related: R225 (read the comment before fixing what looks misconfigured), R220, R214.
+
+### R227 — I labelled a gap "stale rows" in my own output, then tested and found they all serve
+
+Comparing D1 against the local catalogue across all 217 served sources, three came back with MORE
+rows in D1 than locally: fhfa +61, fed_board +21, sec_edgar +20. I printed that line as
+
+    D1 AHEAD of catalogue (stale rows advertising removed ids): 3
+
+and moved straight to isolating the 102 ids for deletion. Then, before deleting, I fetched six of
+them from the live API:
+
+    sec_edgar:CIK0000022767   HTTP 200     470 rows
+    fed_board:RIFLGFCM01_N.B  HTTP 200   6,251 rows
+    fhfa:at:Q:AK              HTTP 200     205 rows      (all six the same)
+
+Every one serves real data. They are not stale — they are retained legacy ids whose R2 objects
+exist and whose LOCAL catalogue rows were dropped by a later re-catalogue. The direction of the
+gap is the opposite of what I assumed: catalog.db is behind D1, not D1 behind reality. Deleting
+them would have destroyed 102 working series that users can currently fetch.
+
+The failure is in the label. "D1 AHEAD of catalogue" is the measurement; "stale rows advertising
+removed ids" is an interpretation, and I wrote it into the report line as though it were the
+finding. Having named them stale, deleting them felt like tidying up.
+
+What makes it worse is that my own verify tool already has the correct category for this and
+prints it routinely — "2 still resolve (retained legacy ids), 0 unreachable". I had read that
+line about istat and noaa several times the same day.
+
+The contrast that proves the rule: zillow ALSO had rows in D1 and not locally — 52 of them — and
+those were genuinely wrong. Not because the gap looked the same, but because zillow is RESTRICTED
+with a recorded withdrawal decision, and a HEAD against R2 showed 0 of 6 objects present. Same
+symptom, opposite verdict, and only the test could tell them apart.
+
+**The rules.**
+1. Report the MEASUREMENT in the label and the interpretation separately. "D1 has 61 rows the
+   catalogue does not" is a fact; "stale" is a hypothesis that needs its own evidence.
+2. Before deleting anything because it looks orphaned, FETCH IT. One request per class costs
+   seconds and is the only thing that separates an orphan from a survivor.
+3. A gap has a direction. Ask which side is wrong before assuming it is the remote one.
+
+Related: R224 (a checker's name is a claim), R226 (ask why it is that way before changing it),
+R220 (a 404 is evidence about the id first).
