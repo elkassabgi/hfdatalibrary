@@ -4483,3 +4483,40 @@ unguarded non-zero exit aborts before rc can be inspected.
    usual trap; the code is identical in both places and only the data is missing.
 
 Related: R230 (a sample that could not detect the thing it was sampling for), R51.
+
+### R233 — my fix planted a false red that would only appear once the source got healthy
+
+I changed dst's cadence from monthly to daily so it could converge on a publisher moving ~10
+tables a day. Correct fix, measured, proven — 200 tables drained in one run against 40 before.
+
+`cadence` also drives the health gate's DATA-LATENESS clock. Daily cadence means a 3-day
+tolerance. dst's data is monthly, newest observation 62 days old. So the same commit that fixed
+dst's convergence guaranteed it would go RED-DATA permanently.
+
+I did not see it, because the gate showed dst as ATTENTION — `elif attention:` is evaluated
+BEFORE the data check, and dst was partial from my own budget test. The red was sitting behind a
+mask that would lift precisely when dst finished draining and reported ok. A defect that appears
+when things get BETTER: the green-to-red transition would have looked like a new regression
+weeks later, with the actual cause buried in an unrelated cadence change.
+
+I only found it by sweeping every live source's OBSERVED publication frequency against its
+declared cadence — a check I ran for a different reason (sizing a separate task), not because I
+suspected my own change. Eight sources were mis-clocked; mine was one of them, and the newest.
+
+**Fixed** (9375378e): `data_cadence` in the registry now drives the lateness clock while
+`cadence` keeps driving scheduling. dst goes 3d -> 84d. Every value is MEASURED — distinct
+obs_date over the trailing 3 years, the count written beside it — because this field can hide
+staleness, and R231 is the entry about me nearly hiding staleness on plausible reasoning. It
+also tightens: annual polling over monthly data goes 1,095d -> 84d.
+
+**The rules.**
+1. When you change a config value, find EVERY consumer of it. `cadence` drove scheduling AND the
+   lateness clock; I reasoned about one and silently rewired the other.
+2. Ask what a fix does to the MONITORING, not only to the data. A source that is fixed but now
+   reads red is not fixed.
+3. A masked defect is not an absent one. dst read ATTENTION, so the data verdict was never
+   computed — "the gate is not complaining" meant "the gate has not looked yet".
+4. Precedence in a health classifier hides state by design. Whenever an earlier branch wins,
+   deliberately evaluate the later ones anyway before concluding anything is fine.
+
+Related: R231 (the same precedence, and the same field, from the other direction), R232.
