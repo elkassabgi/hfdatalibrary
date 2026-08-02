@@ -271,6 +271,21 @@ A bounce to `accounts.elkassabgidata.com` here means the silent resume is not co
 marker. Confirmed passing on econdatalibrary.com and hfdatalibrary.com on 2026-08-02, and
 confirmed working in normal use by Ahmed the same day.
 
+**4. It must hold in a DIFFERENT tab.** This is the check that catches §8.13, and check 3 cannot
+find it — `sessionStorage` is per-tab, so a single-tab test passes while a second tab resumes
+straight past the marker. In tab A, sign out. Then open the site in a NEW tab and run:
+
+```js
+sessionStorage.getItem('ekd_signed_out');   // null — correct, this tab never saw the sign-out
+localStorage.getItem('ekd_signed_out');     // '1'  — the durable copy MUST be here
+sessionStorage.getItem('ekd_silent_tries'); // null — proves the resume guard never even entered
+```
+
+`ekd_silent_tries` is the reliable witness: it is incremented INSIDE the guard, so its absence
+means the guard refused to start. Do not read `ekd_silent_done` for this — it is also set by
+earlier attempts and by other code paths, and a stale value from a previous test will make a
+broken build look like it passed.
+
 ---
 
 ## 8. Invariants — do not break these
@@ -340,6 +355,14 @@ confirmed working in normal use by Ahmed the same day.
     ```
 
     A new site copying the old snippet reintroduces "I signed out and it signed me back in".
+13. **The signed-out marker must be written to BOTH `sessionStorage` AND `localStorage`, and
+    cleared from both.** `sessionStorage` is scoped to a single TAB. Written only there, a
+    sign-out in one tab left every other tab — and every tab opened afterwards — free to resume,
+    which signed the visitor straight back in. That only bites when server-side revocation did
+    not land, which is precisely the case the marker exists to cover, so the two failures compose
+    instead of cancelling. `localStorage` is the durable, cross-tab copy; the resume guard reads
+    either; a deliberate sign-in must remove BOTH or the durable copy outlives the sign-in and
+    suppresses resume from then on. Verified across two real tabs on 2026-08-02.
 
 ---
 
