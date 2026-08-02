@@ -4672,3 +4672,40 @@ a silent discard into my own fetcher in the same session.
    differently-shaped responses corrupts silently — no exception, no error, just wrong columns.
 
 Related: R232 (a monitor that examined nothing), R236 (same fetcher, same day).
+
+### R238 — I changed a cadence without checking the budget of the job it runs in
+
+dst could not converge on Statistics Denmark: monthly cadence, 40 tables a run, against ~10
+tables published a day. I fixed the drain loop, moved it to daily, proved it, pushed it. Good
+change.
+
+Then, much later and for an unrelated reason, I looked at how long the daily CI job takes:
+
+    2026-08-02 run   267 of 300 timeout-minutes used
+    updater step     261.8 minutes (08:03:24 -> 12:25:11)
+    statfin          2,700s — exactly the 45-minute per-source cap
+    worldbank_wdi    2,700s — same
+    dst, measured    24.8 minutes to drain 200 tables
+
+267 + 25 = 292 against a 300-minute ceiling. And the ceiling is not a soft one: `Push state to
+R2` runs AFTER the updater step, so a timeout part-way through discards the whole run's state —
+the identical failure that cost six completed sources their state on 2026-08-01.
+
+So a change that was correct in isolation put a shared, already-strained job within eight
+minutes of losing every run. I had all three facts available when I made it — the job's
+timeout, the fact that two sources already sit at their cap, and dst's own measured drain time
+which I had just watched print. I did not put them in the same sentence.
+
+**Fixed** (e6c2b61f): DST_BUDGET_MIN=12 for the CI job only, fetcher default unchanged. Still
+drains ~97 tables a run at its measured ~8/min, clearing the backlog in about a week, and the
+per-chunk manifest checkpoint means a shorter budget defers work rather than losing it.
+
+**The rules.**
+1. Promoting a source's cadence is a change to the SHARED job, not to that source. Before
+   raising a frequency, measure what the job it lands in currently spends and what remains.
+2. Know where the state push sits relative to the work. If it is at the end, the timeout is a
+   data-loss boundary, not a performance one, and "close to the limit" is the wrong posture.
+3. A resource used by many and owned by none drifts to full. Two sources pinned at the
+   per-source cap was visible for weeks and read as normal.
+
+Related: R233 (the same dst change, its other unchecked consumer — the lateness clock).
