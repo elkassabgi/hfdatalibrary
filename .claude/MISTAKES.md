@@ -4340,3 +4340,33 @@ source three months stale on 88.6% of its series would have been closed as a fal
 4. A shape in the data can refute a pile of correct individual measurements. Look at the shape.
 
 Related: R213 (a zero-test is not a completeness test), R219, R227.
+
+**R230 correction + outcome (same day).** Two numbers in the entry above were wrong in my
+favour, found while building the fix:
+
+- "three months behind" was two. Upstream CES publishes 20,191 series at 2026-05-01 and only
+  1,856 at 2026-06-01 — the detailed industry series legitimately lag the headline by a month.
+  Our 19,535 series sat at 2026-03-01, so the real gap against upstream was 2 months, not 3.
+  I had compared our frontier to the NEWEST period anyone had, not to what upstream actually
+  published for those series. A staleness claim needs the upstream frontier PER SERIES as the
+  baseline, not the max over all series.
+- "the same question applies to every other survey" (task #55) resolved much smaller than the
+  alarm suggested. 21 of 63 surveys have <50% of series at their own newest period, but that
+  shape has three causes and only one is a bug: terminated programmes (mu/mw end 2009, ml 2013),
+  ordinary within-survey series churn, and genuine under-coverage. Measuring coverage directly —
+  distinct series in the fetched tail vs distinct series in the store — found only FOUR:
+  ce 3.8%, wd 47.8%, ap 71.6%, ci 81.6%. cu and cw sit at 97.9% coverage despite a 37% frontier
+  share, which is churn. Had I "fixed" the 21 I flagged, 17 of them were healthy.
+
+So the shape that refuted the dismissal was right to make me look, and wrong as a measure of
+size. It is a DETECTOR, not an estimator. Confirm with the mechanism-specific measurement before
+quoting a magnitude — here that was coverage, and it was cheap.
+
+**Fixed** (econfindatalibrary 7414c91): coverage is measured into a sidecar each parse; selection
+escalates to the spanning file set on evidence, bounded by a byte budget so it cannot become the
+OOM that abs and bis caused; the unchanged-vintage skip no longer hides a freeze (it ran before
+any download, so a frozen survey never gathered the evidence it was frozen); and a tail that
+still under-covers downgrades the result to `partial`, which does not set last_success_utc.
+Proven on a sandbox copy: ce/wd/ap now match upstream EXACTLY — identical frontier distributions,
+0 series behind — and 21,207 of 22,049 CES series advanced. ci/ap/wd advanced 0: their gaps were
+real but latent, the uncovered series being dormant ones already at their upstream frontier.
