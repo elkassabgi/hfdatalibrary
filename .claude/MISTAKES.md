@@ -4776,3 +4776,40 @@ become refreshable tonight, with nobody registering anything.
    evidence as a code change. I told Ahmed twice to go register for something he already had.
 
 Related: R235 (same fetcher family, same day, the 200-that-means-failure half of this).
+
+### R241 — I measured the file the writer writes, not the files the reader reads
+
+bea completed its first ever run. I checked the result, found 17,699 series in the store against
+240 in the catalogue, and filed a task saying 17,459 series were dark and cataloguing them was a
+free win — negligible against D1's headroom.
+
+The real number is 912,990.
+
+`data/clean_full/bea/bea.parquet` — the file the FETCHER writes, and the only one its docstring
+mentions — holds 106,074 rows / 17,699 series. Beside it sit 591 parquets in per-dataset
+directories from an earlier full ingest: 67,445,770 rows / 913,230 series / 186 MB. And
+`_resolve_bea` opens the WHOLE `bea/` directory as one dataset. The served store was never the
+file I measured.
+
+The correction matters beyond the count. At 725.5 bytes/row those 912,990 series need ~662 MB of
+a 2.13 GB D1 headroom — a third of everything left, competing with eia and the rest of the
+backlog. "Negligible, just do it" and "spends a third of the remaining budget" are different
+decisions, and I had written the first one down.
+
+The same measurement turned up a second thing: the fetcher's `_stored_frontier` reads only
+bea.parquet, so it computed its request window from a subset whose frontier (2026-01-01) is
+three months STALER than the tree's (2026-04-01). Harmless today — too early is a superset and
+merge dedups — but it is reading the wrong store, and if the subset were ever ahead the window
+would skip real data.
+
+**The rules.**
+1. The store is what the RESOLVER opens, not what the fetcher writes. Read the resolver before
+   quoting a store size; a fetcher's docstring describes its own file, not the source.
+2. When a source has both a grouped file and per-dataset directories, assume they are different
+   populations until measured. One of them is usually a migration artefact and it is not always
+   the one you are looking at.
+3. A number that changes a decision from "free" to "a third of the budget" is not a detail. Size
+   the resource cost before recommending, not after.
+
+Related: R231 (the local state.db that was not the authoritative one) — same failure, different
+store.
