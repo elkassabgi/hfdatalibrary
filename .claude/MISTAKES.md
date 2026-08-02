@@ -3910,3 +3910,31 @@ ceiling. A word list only ever grows, so it must not live anywhere that has a si
 
 Related: R222 (measured staging, reported production), R218 (a check that passed while the real
 build failed), R220 (confident wrong answers on first-pass checks).
+
+### R222 — a mixed pass/fail across identical code paths is a rollout signal, not a logic bug
+
+Seconds after deploying the worker I probed all eight newly-served IMF sources. Five returned
+HTTP 200 with real CSVs; imf_ifs, imf_mfs and imf_dot returned 501 not_migrated. I went looking
+for what made those three different — and found a real-looking candidate almost immediately:
+`supportedSources(env)` prefers a runtime `env.SUPPORTED_SOURCES` variable over the compiled-in
+list, which would silently override the code I had just edited.
+
+That hypothesis was wrong twice over. The env var is commented out in wrangler.toml, so it was
+never in play; and it could not have explained the symptom anyway, because it would have failed
+ALL eight, not three. Re-running the identical probe a minute later returned 200 for all three.
+It was Cloudflare propagating the new version across edge locations — some requests were still
+being served by the previous deploy.
+
+The thing I nearly did was edit a correct list, or add a defensive override, to "fix" a
+non-existent bug in code that had already shipped correctly.
+
+**The rules.**
+1. After a deploy, WAIT before probing, and re-run any failure once before diagnosing it.
+   Global rollout is not instant and the window looks exactly like a partial outage.
+2. When some items fail and others succeed through the SAME code path with the same shape of
+   input, suspect the environment — rollout, cache, replication lag — before the logic. Ask
+   "what would make this fail for a subset?" and check whether the candidate explanation
+   actually predicts the observed subset. Mine predicted all-or-nothing and I ran with it anyway.
+3. A hypothesis that explains the mechanism but not the PATTERN has not been tested yet.
+
+Related: R220 (a 404 is evidence about the id first), R216 (a green result from my own harness).
