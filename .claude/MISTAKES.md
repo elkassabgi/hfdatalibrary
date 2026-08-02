@@ -3789,3 +3789,45 @@ be believed. Production was one `curl` away the whole time.
 
 Related: R220 (confident wrong answers on first-pass checks), R198 (a healthy run made to look
 broken by measuring the wrong clock).
+
+## R223
+
+**I wrote invisible bytes into source, then trusted three "success" messages over the file.**
+
+Adding a name validator that must reject bidi overrides, I meant to write the escape text
+`‪` into the JavaScript. What landed was the actual U+202A byte — my editor input was
+interpreted rather than kept literal. Source now contained raw control and bidi characters:
+invisible in every diff, unreviewable, and exactly the class of hazard R196 is about.
+
+The repair took four passes, and each failed pass PRINTED SUCCESS:
+
+* Pass 1 asserted `count(needle) == 1`, replaced, wrote the file, printed "rewrote both regexes"
+  — and the bytes were still there.
+* Pass 2 relocated the lines by index, rewrote them, and reported "raw chars: 7220", a number I
+  produced by omitting `\n` from my own exclusion list. I had broken the measurement, not the file.
+* Pass 3 anchored on the function, rewrote the block, and left a DUPLICATED comment because pass 1
+  had in fact inserted its half.
+
+The actual cause surfaced only when I stopped reading my output and read Python's: a
+`SyntaxWarning` for an invalid escape `\p`. Passing `\u202A` through the shell heredoc collapsed
+it to `‪`, which Python then decoded into the very control character I was trying to remove.
+Every "fix" had been re-inserting the bug. The escaping level in the tool chain was itself the
+variable, and I never checked it because each pass told me it had worked.
+
+The fix was to stop expressing backslashes in a layer that eats them — build them with `chr(92)`
+— after which the count went to 0 on the first try.
+
+**The rules.**
+1. NEVER write a literal control or format character into source. Write the escape text. If a
+   tool keeps interpreting it, construct the backslash programmatically.
+2. A script's own success message is a statement of intent. Verification means RE-READING the
+   artifact and asserting on it — in the same breath, not the next turn.
+3. When a check returns an absurd number, suspect the check before the subject. 7220 "control
+   characters" in a file that had 9 was my predicate, not the file.
+4. Read the interpreter's warnings, not only my own prints. The `SyntaxWarning` naming the exact
+   escape was on screen for three passes before I looked at it.
+5. When an edit passes through shell -> language -> regex, each layer can consume an escape.
+   Verify at the destination, never at the source.
+
+Related: R196 (BOM-less encoding silently dropped code — trace, don't theorise), R218 (a syntax
+check that passed while the real build failed), R222 (reported a state I had not measured).
