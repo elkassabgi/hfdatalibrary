@@ -3698,3 +3698,31 @@ were the diagnosis sends the reader past the real one.
 4. A guard's message states the DISCREPANCY as fact and its causes as a list. "119 of 123 —
    these 4 are missing: … (3 were REFUSED by the derive, 1 changed after the run)" beats one
    confident wrong cause.
+
+### R220 — I invented two ids, got 404, and nearly filed it as a bug in the paired split
+
+Verifying istat end-to-end I fetched three ids. The first, `istat:101_1015#ART`, came back HTTP
+200 with 191,739 rows. The other two — `istat:183_277#SP~ITC1` and `istat:183_285#ADD~A` — came
+back 404, and both were the NEW paired-split shape I had just built. The obvious reading was that
+paired splits were broken.
+
+They were not. I had made those two ids up. `SP`, `ITC1`, `ADD` and `A` were plausible-looking
+dimension values I typed from memory of the dimension NAMES (FORMGIUR+ITTER107,
+TIPO_DATO+ATECO_2007) without ever reading a real value. The 404 was the system correctly
+refusing an id that does not exist. Pulling three REAL part ids out of the catalogue gave
+`183_285#LU~28220`, `183_277#X1360~IT111` and `183_285#LUEMPDAA~46692` — all HTTP 200, and every
+row inside `183_277#X1360~IT111` carries `FORMGIUR=X1360` and `ITTER107=IT111`, which is the
+split working exactly as designed.
+
+The seductive part is that the invented ids failed in a pattern that matched a real hypothesis:
+the single-dimension id worked, the paired ones didn't, and I had just written the paired-split
+code. Confirmation was one step away in the wrong direction.
+
+**The rules.**
+1. NEVER hand-author an identifier to test with. Draw it from the catalogue, the store listing,
+   or the tool's own output. A fabricated key tests my memory, not the system.
+2. When a new feature appears to fail, check first whether the INPUT was real. A 404 is evidence
+   about the id before it is evidence about the code.
+3. A failure that lands exactly where I expected it is the one to distrust most.
+
+Related: R215 (nearly published misattributed data), R214 (measured a proxy).
