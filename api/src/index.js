@@ -5124,6 +5124,10 @@ async function handlePublicStats(env, cors) {
     'mit': 'Massachusetts Institute of Technology',
     'lse': 'London School of Economics',
     'babson collage': 'Babson College',   // unambiguous misspelling of a real school
+    // Renders as "University of bath" in the visible top 20. titleCaseInstitution cannot fix
+    // it - that only touches strings with NO uppercase at all, and this one has a capital U -
+    // but the alias map is keyed on the LOWERCASED value, so it matches and corrects it.
+    'university of bath': 'University of Bath',
   };
   const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
   // Fetch ALL non-junk institutions (no LIMIT) so aliases can merge BEFORE the
