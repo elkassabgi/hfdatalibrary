@@ -4881,10 +4881,24 @@ I finally counted the orchestrator's own `>>> source/unit` lines in the 2026-08-
 
     sources ATTEMPTED in a 4h22m updater step: 20
 
-Against ~106 live cloud sources. So a "daily" source is actually touched about every FIFTH
-day, and the number I have been quoting overstates the refresh rate by roughly 5x. dst's
-RED-SLA — 8 days without a success on a daily source — was never a failure at all: it had
-not been ATTEMPTED in 8 days. I was one step from hunting a bug inside dst.
+Against ~106 live cloud sources. The orchestrator says so itself, in the same log:
+
+    RUN BUDGET 240 min SPENT — 76 source(s) NOT ATTEMPTED this run: abs, adb, barro_lee, …
+    this run is INCOMPLETE by design — stopping early beats being killed at the 300-minute
+    ceiling, which would also lose the state push, the D1 syncs and the digest
+
+So the number I quote every cycle overstates the refresh rate by roughly 5x, and the system
+had been reporting the true figure in plain language all along. Nobody read it, because the
+run was red anyway (R248).
+
+**Correction, made while writing this entry.** I first wrote that dst proved the point — 8
+days without an attempt on a daily source. It does not. The same log lists dst under `NOT DUE
+this tick … their cadence has not elapsed`, and it was right: dst was still `monthly` at
+08:02Z, because my own change to `cadence: daily` landed at 14:37Z, six hours AFTER the run
+(240654b5). Its RED-SLA is my cadence edit arriving between two runs — R233 exactly — not
+starvation. I reached for the most available example instead of the one I had checked, in an
+entry whose whole subject is claiming a cause I had not verified. The budget finding stands
+on the orchestrator's own line; dst was never evidence for it.
 
 Where the time went, from the same log:
 
@@ -4918,14 +4932,14 @@ own bound (14881d91) landed after this run, so its timeout here predates the fix
    though nothing is lost.
 
 Related: R243 (the sweep that found it and mis-triaged it), R190 (a bound over a fixed order),
-R244, R247.
+R248, R247.
 
 ### R247 — a concurrent write to the ledger deleted eighteen entries, including the one warning about concurrent writes
 
 Mid-session, `.claude/MISTAKES.md` went from 5,186 lines / 81 entries to 4,351 / 62. Commit
 c219fc4 ("Mistakes: R230 corrected") carried 48 insertions and 883 DELETIONS: it rewrote R230
 correctly and, in the same write, dropped R228, R229 and R231–R245 — eighteen entries,
-including R244/R245 written minutes earlier and R230's own predecessor about a `git add` glob
+including R248/R245 written minutes earlier and R230's own predecessor about a `git add` glob
 sweeping a concurrent session's work.
 
 The mechanism is a whole-file write from a stale buffer: the session had the file's contents
@@ -4938,6 +4952,12 @@ Nothing was actually lost, because the pre-image was still in history: c901cdf h
 entries and c219fc4 held the corrected R230, so the repair is a merge of the two, verified by
 counting headers on both sides (81 in, 81 out, zero dropped) rather than by eyeballing the
 result.
+
+The same collision produced a duplicate NUMBER. I wrote "R244" while an R244 already existed
+("the audit scored every module against a store of the same NAME"), because I took the next
+number from a view of the file that predated it. That is not new here: R200, R205-R210,
+R215-R230 and R244 are all shared by two DIFFERENT entries, so cross-references like "see R228"
+are already ambiguous in a document whose whole value is being re-read. Mine is renumbered R248.
 
 **The rules.**
 1. An append-only document must be APPENDED to, never rewritten wholesale. Insert at an
@@ -4952,7 +4972,7 @@ result.
 
 Related: R246, R230 (the entry being corrected when this happened).
 
-### R244 — a gate that CRASHES reads as a verdict about the data
+### R248 — a gate that CRASHES reads as a verdict about the data
 
 The 06:00 UTC cron had failed three days running. Every step passed — updater, state push,
 D1 sync, catalog sync, digest — and only the last one, `Health gate (fail past 2x SLA)`, was
@@ -5030,7 +5050,7 @@ itself is blocked pending permission.
 4. Two identical counts in a comparison are a fingerprint, not a coincidence. Chase it.
 
 Related: R152 (a note that names its own cause without verifying it), R241 (measured the file
-the writer writes, not the one the reader reads), R231, R244.
+the writer writes, not the one the reader reads), R231, R248.
 
 ## R228
 
