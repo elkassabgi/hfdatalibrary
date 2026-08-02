@@ -4940,3 +4940,41 @@ SDK now sends `deliberate: true|false` and both sites gate on it.
    disproved in one command by reading the headers; stopping there would have shipped nothing.
 
 Related: R225 (a rule spread across layers), R222 (measured the wrong thing and reported it).
+
+## R229
+
+**I wrote the invariant, then shipped without sweeping the codebase for other violations of it.**
+
+R228 (minutes earlier) states the rule: *teardown clears local state BEFORE the network call,
+never after.* I derived it from the SDK's `logout()`, fixed that, wrote it into the ledger, added
+it as invariant 11 in the SSO doc, deployed, and reported the bug fixed.
+
+hf's own `__hfdLogout` had the identical defect the whole time, and worse:
+
+```js
+var t = safeGet('hfd_session');
+if (t) { try { await fetch(API_BASE + '/v1/auth/logout', ...); } catch (e) {} }
+safeDel('hfd_session');            // AFTER the await
+try { if (window.EKD) await window.EKD.logout(); } catch (e) {}
+window.location.reload();          // unreachable if either await hangs
+```
+
+`catch` does not save this. A rejected request is caught; a connection ACCEPTED AND NEVER ANSWERED
+just pends, so `safeDel` never runs, the reload never runs, and the visitor presses Sign out and
+stays signed in on a page still showing their account. econ's account page already had a 2.5s race
+for exactly this reason — the pattern was in the codebase, correct, one repo over.
+
+I only found it because I kept working after reporting: verifying hf's listener led me to read the
+surrounding function. Had I stopped at "fixed and verified", it would have shipped.
+
+**The rules.**
+1. The moment a rule is worth writing down, GREP FOR IT. A newly-written invariant is a search
+   query: `await` before a teardown, in every repo, before claiming the class is closed.
+2. `try/catch` around `await` handles FAILURE, not SILENCE. A hung connection is neither resolved
+   nor rejected. Any await on the network that gates UI state needs a timeout, not just a catch.
+3. When one surface already solves a problem (econ's 2.5s race), that is the fix to propagate —
+   look for the sibling that lacks it instead of re-deriving.
+4. "Fixed and verified" means the CLASS is swept, not that the reported instance passes.
+
+Related: R228 (the rule this violates, written minutes before), R226 (broke a rule right after
+writing it), R225 (fixed one layer of a rule that lived in three).
