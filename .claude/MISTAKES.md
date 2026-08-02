@@ -4854,3 +4854,41 @@ After the fix: 258,223 obs, store -> 251,203, last_obs 2026-06-01 — exactly BE
    only the row count tells you which you got. Check what a window parameter MEANS, once, live.
 
 Related: R230 (green over data never looked at), R240 (the key), R241 (the store).
+
+### R243 — a hard timeout on an accumulate-then-merge fetcher does not truncate, it DISCARDS
+
+worldbank_wdi collects every observation into lists and calls merge_and_write ONCE, after the
+loop. The orchestrator kills it at 45 minutes. So the merge never executes and the entire run's
+work — 45 minutes of API calls, 227,000+ observations in hand — is thrown away. Every run.
+Forever. It has no unit_state row at all: it has never succeeded once since it was built.
+
+Everything in its store is what the original bulk ingest left. That is the answer to a question
+I had spent hours on: NY.GDP.MKTP.CD has no 2025 not because of starvation, not because of the
+date window, but because THIS FETCHER HAS NEVER STORED ANYTHING.
+
+And I had "ruled out" starvation by observing that 189 indicators ranked LATER than GDP do have
+2025 — reasoning that the walk must therefore reach past GDP. The premise was that those values
+came from the fetcher. They did not; they predate it. I ruled out the right suspect using
+evidence that was not evidence.
+
+The shape is general and nasty: a hard cap is normally a TRUNCATION — you keep what you did and
+lose the tail. On an accumulate-then-merge fetcher it is a DISCARD, and the two are
+indistinguishable from outside. The run looks busy, burns its whole budget, exits, and the store
+is byte-identical to before.
+
+**Fixed** (14881d91): the fetcher bounds itself at 35 minutes, UNDER the orchestrator's 45, so it
+yields on its own terms and the merge runs; rotation carries the remainder forward. Verified: a
+2-minute budget now merges +13,400 rows and bookmarks at indicator 351 of 1,498, where before an
+interruption stored zero.
+
+**The rules.**
+1. Ask where the WRITE happens relative to the loop. One merge after the loop means any
+   interruption is total loss, not partial progress — and a per-source cap is an interruption
+   by design.
+2. A fetcher must bound ITSELF below any external cap. Being killed and yielding are not the
+   same event: one runs your cleanup, the other does not.
+3. "It ran for its full budget" is not evidence of work. Check the STORE changed, not that the
+   process was busy.
+4. When you rule something out, check that your counter-evidence came from the mechanism you
+   are reasoning about. "Later indicators have the data" only refutes starvation if the fetcher
+   is what put it there.
