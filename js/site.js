@@ -317,11 +317,15 @@
             EKD_READY = true;
             window.EKD.init();                                          // clientId = this origin, callback /auth/callback
             // D42: SDK events NEVER paint directly — they re-run the single nav owner.
-            window.EKD.on('login',  function () {
-              // A deliberate sign-in retires the "stay signed out" flag, so silent resume works
-              // again on the next visit. Without this, one logout would disable cross-site
-              // recognition for the rest of the browser session even after signing back in.
-              try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
+            window.EKD.on('login',  function (detail) {
+              // ONLY a DELIBERATE sign-in retires the "stay signed out" flag. This event ALSO
+              // fires for the automatic resume init() runs on every page load, and clearing the
+              // flag there defeated the whole suppression: sign out, reload, init() resumes,
+              // this handler wipes the flag, signed back in. The old comment here claimed it
+              // "suppresses only the AUTOMATIC path" - the code did exactly the opposite.
+              if (detail && detail.deliberate) {
+                try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
+              }
               safeDel('ekd_notice_demoted'); paintUserWidget();
             });
             window.EKD.on('logout', function () { paintUserWidget(); });
