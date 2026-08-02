@@ -4349,3 +4349,51 @@ explicitly rather than globbing) — but it took nobody's work but my own.
 
 Related: R210 (assumed a concurrent session had NOT done work, and duplicated it — the mirror
 image of this error, and the entry that primed me to believe in a phantom collaborator here).
+
+## R231
+
+**I guarded against a MISSING value and called it a guard against a WRONG one. The docstring promised what the code did not do.**
+
+Earlier this session I wrote `_coverage_clause` in econ's site generator, which turns a source's
+catalogued dates into the public claim "1961–2024" on each dataset page. Its docstring says:
+
+> OMITTED entirely when neither is -- 45 of 203 sources have no usable end date and 21 no usable
+> start, and **an invented range would be the worst kind of error on an academic catalogue**.
+
+I believed that. It only ever tested whether the field was ABSENT. `MAX(end_date)` is never absent
+when the table has rows — it is whatever the worst row contains. Measured against catalog.db on
+2026-08-02, the pages were one regeneration away from publishing, as fact:
+
+```
+eurostat       1947–9999      statfin        1900–9999
+cso            0001–9999      stat_slovenia  0001–6152
+sec_edgar      1927–6016      hagstofa       1900–3005
+```
+
+A sentinel `9999-12-31` is not a missing date, so it sailed through the check written to stop
+exactly this, on a site whose entire proposition is that its numbers can be trusted.
+
+The fix had to be sharper than a cutoff, because two of the outliers are TRUE. un_wpp really does
+project to 2101 and FAO outlook tables to 2100, so "end must be ≤ this year" would have deleted
+real coverage. maddison and ggdc really do start in year 1 — their next distinct starts are 0730,
+1000, 1300, 1348. Meanwhile cso's are 0001, 0011, 0029, 0101, 0111 and scb's is a lone 0114
+before jumping to 1749: period codes parsed as years. Same shape, opposite truth.
+
+So: a plausibility ceiling that admits real projections, a CORROBORATION test for ancient starts
+(trusted only when other ancient values stand near them), and — for cso, where both bounds are
+broken and the bad starts corroborate each other — no claim at all. 8 sources change; maddison's
+year 1, un_wpp's 2101 and all 112 already-correct counts are untouched.
+
+**The rules.**
+1. `MIN`/`MAX` over a column is an aggregate of the WORST ROW, not a summary of the data. Any
+   aggregate repeated to the public needs a plausibility test, not just a null check.
+2. "Missing" and "present but impossible" are different failures. A guard against one is not a
+   guard against the other, however the comment above it reads.
+3. When a docstring states a safety property, find the LINE that enforces it. I wrote that
+   docstring and still did not check — the claim felt true because I had meant it.
+4. Before filtering outliers, check whether the outlier is real. Year 1 is garbage for Ireland's
+   CSO and a genuine observation for the Maddison Project; a blanket cutoff would have published
+   one lie and deleted one truth.
+
+Related: R228 (a comment describing behaviour the code contradicted), R219 (defaults that felt
+obviously correct and were not).
