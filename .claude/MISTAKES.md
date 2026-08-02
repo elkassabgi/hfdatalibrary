@@ -3831,3 +3831,40 @@ The fix was to stop expressing backslashes in a layer that eats them — build t
 
 Related: R196 (BOM-less encoding silently dropped code — trace, don't theorise), R218 (a syntax
 check that passed while the real build failed), R222 (reported a state I had not measured).
+
+### R221 — I announced "raw key as title" and wrote 694,300 rows with no title at all
+
+IMF retired the dataflow ids and the code vocabulary the imf_* stores were built against, so
+titles could not be decoded. I made the catalogue tool DEGRADE instead of dying — correct call,
+since refusing would have left 38 million observations unreachable to protect a nicety — and it
+printed, for each source:
+
+    TITLES DEGRADED: imf_ifs rows get their RAW KEY as title.
+
+It did not. With no key order, `title_for()` returns the empty string, and I had set
+`dim_codes, order = {}, []` and then passed its result straight through. Seven of the eight
+sources got **empty** titles: 694,300 catalogue rows that are invisible to search AND
+uninformative to anyone who finds them — strictly worse than the ugly-but-usable outcome I had
+just told myself I was choosing.
+
+Two things kept it alive for four steps. First, the tool's own progress line, "rows to write:
+100,706   with an unresolved part: 0", reads as success — but `unresolved` only increments when
+`tot and hit < tot`, and with no codelists `tot` is 0, so the counter is structurally incapable
+of firing in exactly the situation it was supposed to describe. Second, my check afterwards
+compared each title against the native key and reported "raw-key titles=0", which I could have
+read as "none of them are raw keys — so what ARE they?" but nearly read as a formatting quirk.
+What actually exposed it was printing a sample title and seeing `e.g. ` with nothing after it.
+
+**The rules.**
+1. A degradation message describes what the code DOES, not what I intended. If I print "falls
+   back to X", the very next thing I write is the assertion that the fallback produced X.
+2. A counter that can only fire when a lookup table exists cannot report "the lookup table is
+   missing". Every metric needs the question: what value does this take in the failure mode it
+   is meant to detect?
+3. Empty is not a safe default. Blank titles, blank units, blank geography — a NULL that means
+   "we could not compute this" must be replaced by the most useful thing that IS known (here,
+   the key the user types to fetch the series), not left for the UI to render as nothing.
+4. When a verification returns zero, say out loud what the non-zero population actually is.
+   "raw-key titles = 0" and "titles are empty" are the same fact; only one of them is alarming.
+
+Related: R219 (a summary that omits a disposition), R213 (a zero-test is not a completeness test).
