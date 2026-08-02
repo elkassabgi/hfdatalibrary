@@ -532,13 +532,19 @@ async function loadUsers() {
     const d = await r.json();
     usersState.totalMatching = d.total_matching != null ? d.total_matching : (d.total || 0);
 
-    // Latin-only check matching the server-side validator (flag pre-validator records).
-    const isLatinish = s => !s || (/^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s));
-    const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
+    // Mirrors isSafeName() in api/src/index.js. This used to flag any NON-LATIN value as suspect,
+    // which stopped being true on 2026-08-02: a user may write 北京大学 or Московский, and doing
+    // so is correct data, not a defect. Highlighting it amber taught the reader to distrust
+    // perfectly good rows — and the rows that DO deserve attention (invisible bidi/control
+    // characters, which can make a stored string display in an order that does not match its
+    // bytes) were sitting unflagged in the same column.
+    const isCleanField = s => !s || (!/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)
+      && /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s) && /[\p{L}]/u.test(s));
+    const dirtyMark = (s) => isCleanField(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Contains symbols or invisible characters">' + esc(s || '(empty)') + '</span>';
 
     const html = (d.users || []).map(u => {
       const rowStyle = (u.shared_ip || u.disposable_email) ? 'background:#fef2f2; box-shadow:inset 3px 0 0 #dc2626;'
-        : (!isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role)) ? 'background:#fffbeb; box-shadow:inset 3px 0 0 #f59e0b;' : '';
+        : (!isCleanField(u.name) || !isCleanField(u.institution) || !isCleanField(u.country) || !isCleanField(u.role)) ? 'background:#fffbeb; box-shadow:inset 3px 0 0 #f59e0b;' : '';
       const ipCell = u.last_login_ip
         ? '<code style="font-size:0.75rem;">' + esc(u.last_login_ip) + '</code>' +
           (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c;" title="Shared by ' + u.shared_ip_count + ' accounts">&#9888; ' + u.shared_ip_count + '</span>' : '')
@@ -553,7 +559,7 @@ async function loadUsers() {
         '<td><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733;</span>' : '') + '</td>' +
         '<td style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</td>' +
         '<td>' + dirtyMark(u.institution) + '</td>' +
-        '<td>' + (u.country ? (isLatinish(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
+        '<td>' + (u.country ? (isCleanField(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
         '<td>' + dirtyMark(u.role) + '</td>' +
         '<td class="mono">' + u.download_count + '</td>' +
         '<td class="mono">' + fmtVol30(u.bytes_30d, u.downloads_30d) + '</td>' +

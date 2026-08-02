@@ -1486,12 +1486,19 @@ async function registerUser() {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Please fill in all fields.</p>';
     return;
   }
-  // Profile fields render publicly (stats page world map, institutions list).
-  // Reject non-Latin characters before submission — server enforces same rule.
-  const latinish = s => /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s);
-  if (!latinish(name) || !latinish(institution) || !latinish(country) || !latinish(role)) {
+  // Mirrors isSafeName() in api/src/index.js — keep the two in step. Any script is accepted;
+  // only invisible characters are refused (control codes, and the bidi overrides that make a
+  // string render in an order that does not match its bytes). ZWNJ/ZWJ are allowed, because
+  // Persian and several Indic scripts need them.
+  //
+  // This used to be a Latin-only test, and it mattered that it lived here: the server stopped
+  // refusing non-Latin values on 2026-08-02, but the form went on rejecting them in the browser,
+  // so the server change would have been invisible to every user typing 北京大学.
+  const safeField = s => !/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)
+    && /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s) && /[\p{L}]/u.test(s);
+  if (!safeField(name) || !safeField(institution) || !safeField(country) || !safeField(role)) {
     result.style.display = 'block';
-    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must use English/Latin letters only (e.g. write "China", not "中国").</p>';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must each contain at least one letter, and cannot contain symbols or invisible characters.</p>';
     return;
   }
   if (password.length < 8) {

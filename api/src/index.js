@@ -6145,7 +6145,7 @@ async function handleAccountUpdateProfile(request, env) {
   // country and role are already required non-blank by the check above.
   if (!charsetOkOrUnchanged(name, user.name) || !charsetOkOrUnchanged(institution, user.institution) ||
       !charsetOkOrUnchanged(country, user.country) || !charsetOkOrUnchanged(role, user.role)) {
-    return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must use English/Latin letters only.' }), { status: 200, headers: accountPageHeaders });
+    return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must each contain at least one letter, and cannot contain symbols or invisible characters.' }), { status: 200, headers: accountPageHeaders });
   }
   await env.DB.prepare('UPDATE users SET name = ?, institution = ?, country = ?, role = ?, profile_complete = 1 WHERE id = ?')
     .bind(name || user.name || '', institution, country, role, user.id).run();
