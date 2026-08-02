@@ -4039,3 +4039,36 @@ prohibition that leaves the default unchanged gets violated at the first moment 
    remember at the moment of acting is a rule that will lose to momentum.
 
 Related: R223 (the original), R196 (invisible encoding damage that took a day to find).
+
+## R227
+
+**A regex insert into a JS object literal produced `,,` and broke the stats page. Caught by parsing, not by reading.**
+
+Renaming institutions orphaned the rank/icon keys they were listed under (the R221 failure mode),
+so I wrote a script to append the new keys to `INST_PRESTIGE` and `INST_DOMAINS` on both stats
+pages: match the literal, replace the closing `};` with `,<new entries>};`.
+
+On econ that produced valid JS. On hf the last entry already carried a trailing comma, so the
+result was `'Creative Robots': 9000,\n ,'Yan'an University': 310` — an elision, which is legal in
+an ARRAY and a syntax error in an OBJECT. The whole inline script stopped executing, which on a
+stats page means every number renders blank.
+
+Two things about how it was caught. It was NOT caught by looking at the diff: the diff was four
+clean-looking lines and I had read them. It was caught because I ran the page through a parser
+immediately after editing, as a separate step, and the parse failed loudly. And it was only found
+on ONE of the two files — identical edit, identical script, different pre-existing formatting.
+
+The repair (`,\s*,` collapse) was itself a global regex on an HTML file, so I diffed afterwards to
+confirm it had touched exactly the two intended sites and nothing else.
+
+**The rules.**
+1. Do not append to a structured literal by string surgery. PARSE it, add the key, serialise it
+   back — or at minimum handle both "ends with a comma" and "does not" explicitly.
+2. After any programmatic edit to a file containing code, PARSE IT. Reading the diff is not
+   verification: the defect here was a comma at the start of a line I had already looked at.
+3. Run the check on EVERY file the script touched. Identical edits diverge on pre-existing
+   formatting, and one file parsing fine says nothing about the other.
+4. After a repair made with a broad regex, diff to prove the blast radius was exactly the target.
+
+Related: R221 (renames orphan the maps keyed on the old name — the very thing this edit was
+fixing), R226 (verify at the destination, immediately).
