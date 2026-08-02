@@ -4255,3 +4255,46 @@ none has bitten yet, and all of them are one concurrent spill away from it.
    job. Neither stack trace mentioned the other process.
 3. Concurrency that has been fine for hours is not proven safe — it is unproven in the direction
    that matters, because the failure requires an overlap that is rare by construction.
+
+### R229 — I re-derived an analysis that existed, and my conclusion was the one it had rejected
+
+I framed the remaining auto-update backlog as "ONE problem: 93 DBnomics-relayed sources with no
+fetcher" (task #48) and recommended building a shared DBnomics fetcher as a floor — ids
+preserved, all 93 scheduled at once, no churn. I verified the key shape against the live API,
+confirmed `<PROVIDER>_<DATASET>:<series_code>` reproduces our stored keys exactly, and started
+writing `updater/strategies/fetchers/_dbnomics.py`.
+
+It already existed. Written 2026-07-30, 10,545 bytes, three sources already built on it
+(who_hwf, who_rs, who_sdg), and its docstring opens by naming my plan as the trap:
+
+    "the obvious repair for a frozen tail source is 'fetch it from DBnomics again'. That only
+     works where DBnomics is STILL INDEXING the provider. It largely is not."
+
+with the measurement I had not made — UNCTAD's newest index 2023-06-30, FAO 2024-05-09, UNESCO
+2022-04-04, against WHO and BEA which are current. Hence: "a fetcher built on this base would run
+nightly, succeed, and transfer nothing new — a green run asserting currency it cannot have."
+
+There was also `tools/audit_upstream_liveness.py`, built for exactly the question I was
+answering by hand, whose docstring criticises the way I had been reporting progress all session:
+"reporting 'N of 202 sources scheduled' invites the reading that the remaining sources are all
+fetcher work. They are not."
+
+Running it settled it: of 105 pending sources / 1,384,410 series, **96 sources and 1,365,599
+series sit behind a dead or stale relay**. They do not need fetchers. They need re-derivation
+from the real publisher WITH exact id reproduction — the reserved decision in #46, which
+tools/prove_faostat_repair.py exists to make safe because a wrong key template "does not error,
+it mints a parallel id space beside the live series and reports success."
+
+Nothing was lost but time, because I checked before writing. The failure was doing the
+verification LAST: I confirmed my premise against the upstream API before confirming that the
+premise was novel.
+
+**The rules.**
+1. Before building a component, grep the tree for it. `ls updater/strategies/fetchers/_*.py`
+   would have taken two seconds and cost me none of this.
+2. When a codebase has a tool named for the exact question being asked, the answer is probably
+   already recorded — and probably better than the one being re-derived.
+3. Prior sessions leave REASONS, not just artefacts. A module's docstring rejecting the approach
+   being proposed is the strongest possible review, and it is free.
+4. Verify novelty before verifying correctness. I proved my idea worked before checking whether
+   it was already known not to.
