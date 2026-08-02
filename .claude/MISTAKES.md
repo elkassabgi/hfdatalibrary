@@ -5310,3 +5310,37 @@ one afternoon: 181/181 and 6,693/6,693 keys, zero drift.
 
 Related: R251 (why the aggregator era happened), R252, R246 (a number that describes config, not
 reality).
+
+## R232
+
+**A generator held a hard-coded copy of a value that had moved on, so regenerating would have silently undone a deployed fix.**
+
+Caught before deploying, not after. econ's `gen_site.py` writes every dataset page, and the page
+template carried `<script src="assets/sso.js?v=20260801k">` as a literal. The live pages had since
+been re-pinned to `20260802a` when the cross-tab sign-out marker shipped. Regenerating all 217
+pages would therefore have rolled the cache-buster BACKWARDS on every one of them — and because
+`?v=` is precisely what makes a browser re-fetch, returning visitors would have been served the
+script from before the sign-out fix. The symptom would have been Ahmed's original bug reappearing
+across the whole site, hours after I told him it was fixed, with nothing in the sign-out code
+changed to explain it.
+
+The near-miss was luck of sequencing: I checked what the temp regeneration emitted before copying
+it over, saw `20260801k` where the live site had `20260802a`, and only then understood that the
+pin lives in TWO places — the generated HTML and the generator that overwrites it.
+
+**The general shape.** Any value that is (a) hand-edited on a deployed artifact and (b) also
+emitted by a generator will drift, and the generator always wins the next time it runs. A
+cache-buster is the nastiest instance because reverting it produces no error and no visual
+difference — just old code being served again.
+
+**The rules.**
+1. Before running a generator over deployed files, diff its output against what is LIVE, not
+   against what is in the working tree. The working tree is where the hand-edit already happened.
+2. If you hand-edit a value on generated output, fix the GENERATOR in the same breath. The edit
+   is otherwise a countdown to being overwritten.
+3. Cache-busters, build stamps and version pins need a comment saying what they gate and when
+   they were last bumped — a bare string tells the next reader nothing about what reverting costs.
+4. "Regenerate and deploy" is not a read-only operation on anything the generator writes.
+
+Related: R229 (a fix that existed one repo over and was not propagated), R228 (the sign-out fix
+this would have silently reverted).
