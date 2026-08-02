@@ -4893,6 +4893,86 @@ interruption stored zero.
    are reasoning about. "Later indicators have the data" only refutes starvation if the fetcher
    is what put it there.
 
+### R244 — a gate that CRASHES reads as a verdict about the data
+
+The 06:00 UTC cron had failed three days running. Every step passed — updater, state push,
+D1 sync, catalog sync, digest — and only the last one, `Health gate (fail past 2x SLA)`, was
+red. The obvious reading is "the gate is doing its job, something is stale".
+
+It was not assessing anything. It was dying:
+
+    AttributeError: 'str' object has no attribute 'get'   (health.py:226)
+
+Ten registry entries carry `upstream_verified` as a free-text NOTE instead of the structured
+`{latest_obs, checked}` claim. `assess()` called `.get()` on whatever the registry held, so the
+first malformed entry killed the assessment for ALL 217 SOURCES. Three days of "the gate is
+red" meant three days of NOBODY CHECKING, and it looked exactly like the opposite.
+
+The exit code is identical either way. That is the whole trap: a gate reports on the data, so a
+red gate gets read as a fact about the data, and the one reading it has to actively remember
+that the gate can also be reporting on itself.
+
+**Fixed** (1c5cb036): a non-dict cannot carry latest_obs/checked, so it cannot suppress
+RED-DATA — the safe direction, since suppression is the privileged outcome and must never be
+granted by accident. It is SURFACED as ATTENTION rather than swallowed, because a field in the
+wrong shape is a defect someone should fix, not one to route around in silence. First real
+verdict in days: `{"RED-SLA": 1, "RED-DATA": 2, "RED-UNRUN": 4, "ATTENTION": 58, "OK": 65}`.
+
+**The rules.**
+1. A failing check has two possible subjects — the thing checked, or the checker. Read the
+   ERROR, not the colour, before concluding which.
+2. One malformed input must never end an assessment that covers many subjects. Per-item
+   `try` and carry on; a sweep that dies on item 1 silently reports nothing about items 2..N.
+3. Validate the SHAPE of anything hand-maintained before calling a method on it. A registry
+   field is a human-edited free-text surface, whatever the schema says.
+
+Related: R232 (a monitor whose inputs are absent in CI), R231 (partial never sets last_success).
+
+### R245 — the note blamed a cap the code had already returned before reaching
+
+Reading those first honest gate results: 54 sources `partial`, and on 28 of them the note read
+
+    csv coherence unmet: N changed series_keys have no catalog mapping for X
+    and the source exceeds the derive-all cap (§5.7)
+
+I had FIXED this exact defect once already, in the branch twenty lines below, after riksbank
+emitted "over derive-all cap" while holding 117 rows against a 5,000 cap (R152). I fixed the
+sibling and left this one — the copy on the dominant failure path.
+
+And here it is worse than unverified. Under `BACKEND == "r2"`, which is what CI runs,
+`_catalog_ids_for` returns at the r2 guard BEFORE the cap is consulted at all. The note named
+a condition the code CANNOT have evaluated. Unfalsifiable boilerplate, on 28 sources, mailed
+out daily in the digest.
+
+The real cause took one query. R2's coherence catalog held **4,605,291 of 10,853,209 series**
+— 57.6% of the catalogue absent. noaa: **10 rows on R2 against 3,135,873 locally**.
+cepii_gravity: 0 against 1,143,250. Nothing could map because nothing was there. Those sources
+merge their rows every run and then demote to `partial` — and a `partial` never sets
+`last_success_utc`, so RED-SLA can never fire for them either (R231). They were both broken
+and unmonitorable, and the note pointed at a cap.
+
+The tell was in the numbers I had already printed: for thirteen imf_*_direct sources the
+unmapped count EQUALLED the catalog row count exactly (319,571 = 319,571). The code's own
+comment documents that signature — stat_latvia, 1,952 = 1,952 — as meaning the catalogue is
+complete and only the grain differs. I had the fingerprint and read past it.
+
+**Fixed** (83d23f49): the note now MEASURES the catalogue and distinguishes the two causes,
+which need opposite fixes — no rows at all (uncatalogued / purged / stale reference) versus
+rows present but none matched (grain mismatch). Refresh tool hardened (020a47c7); the upload
+itself is blocked pending permission.
+
+**The rules.**
+1. When you fix a hardcoded cause, GREP FOR THE SENTENCE. The same wrong explanation is
+   usually pasted in the sibling branch, and the copy you skip is the one on the hot path.
+2. Before trusting a diagnostic, check the code can even REACH the condition it names in the
+   configuration that produced it. An early return upstream makes the message unfalsifiable.
+3. "No mapping" is never a leaf cause. Ask what the reader actually read — the reference the
+   RUNNER pulled, not the one on your disk. They diverged by 6.2 million series.
+4. Two identical counts in a comparison are a fingerprint, not a coincidence. Chase it.
+
+Related: R152 (a note that names its own cause without verifying it), R241 (measured the file
+the writer writes, not the one the reader reads), R231, R244.
+
 ## R228
 
 **A sign-out that only held if the network cooperated, plus a comment that described the opposite of the code.**
