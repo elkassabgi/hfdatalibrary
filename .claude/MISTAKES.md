@@ -3868,3 +3868,45 @@ What actually exposed it was printing a sample title and seeing `e.g. ` with not
    "raw-key titles = 0" and "titles are empty" are the same fact; only one of them is alarming.
 
 Related: R219 (a summary that omits a disposition), R213 (a zero-test is not a completeness test).
+
+## R224
+
+**I took the public stats endpoint down on every family site by adding words to a list.**
+
+Cleaning junk out of the institutions list, I grew `INSTITUTION_BLOCKLIST` from 82 entries to 103
+and deployed. Every call to `/v1/public-stats` then returned
+`D1_ERROR: too many SQL variables` — on hf, on econ, and on anything else reading the family
+endpoint, simultaneously.
+
+The list was applied as `LOWER(TRIM(institution)) NOT IN (?,?,?…)` with **one bound variable per
+entry**, and D1 caps a statement at 100. So the blocklist had a hard ceiling of ~100 words that was
+written down nowhere, enforced by nothing, and invisible at every previous size. Adding the 101st
+placeholder word broke a page.
+
+**How I let it through.** I did simulate the change before deploying — and the simulation was
+convincing. I extracted `INSTITUTION_BLOCKLIST`, `INSTITUTION_ALIASES` and
+`titleCaseInstitution()` out of the source, ran them over the live payload, and checked the
+output: 22 junk entries removed, 14 merges, 278 -> 250, plus four self-checks on the maps
+(duplicates, key casing, aliases pointing at blocked values, alias chains). All clean.
+
+Every one of those checks tested the TRANSFORMATION. Not one of them executed the QUERY. The
+defect was not in what the list said, it was in how the list reached the database — and I had
+verified the list, so I felt verified.
+
+The fix was to stop binding it at all. The query already fetches every row with no LIMIT and
+re-aggregates in JS, so the placeholder filter belongs in the same JS pass: a `Set` lookup with no
+ceiling. A word list only ever grows, so it must not live anywhere that has a size limit.
+
+**The rules.**
+1. Extracting a pure function and testing it is NOT testing the endpoint. If the change ships
+   inside a request path, exercise the request path — locally, or immediately after deploy and
+   before moving on.
+2. Ask what SCALES with the thing being changed. Adding to a list is only free if nothing is
+   per-element; a bound parameter per entry is a limit hiding inside a loop.
+3. After deploying a change to a live read path, curl it. I curled it, saw the 500, and fixed it
+   in minutes — the process worked; it should have run before the deploy, not after.
+4. A convincing simulation is not coverage. Name what the simulation did NOT touch before
+   trusting it.
+
+Related: R222 (measured staging, reported production), R218 (a check that passed while the real
+build failed), R220 (confident wrong answers on first-pass checks).
