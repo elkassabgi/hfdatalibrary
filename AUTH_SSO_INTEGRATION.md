@@ -361,3 +361,47 @@ shadow while Ahmed was actively testing sign-in, because a stray 429 would be in
 from a real fault — and the security benefit is small (the caps are far above any human, so this
 guards against automation, which is also bounded by the other limiter). It is a deliberate
 change for a quiet moment, not something to slip in.
+
+---
+
+## 13. Family-wide stats (institutions, countries) — use the shared endpoint
+
+Every family site reads the **same `users` table**, so "institutions represented" and "countries"
+are the same answer everywhere. Do **not** recompute them per site.
+
+```js
+const FAMILY_STATS = 'https://api.hfdatalibrary.com/v1/public-stats';
+const d = await (await fetch(FAMILY_STATS)).json();
+// d.institutions        -> [{institution, users}, ...]  cleaned, deduplicated, canonical casing
+// d.countries           -> {CC: n}
+// d.country_count, d.total_users, d.total_visitors, d.total_page_views
+```
+
+**Why centralised.** Each site used to compute this itself and the copies drifted: on 2026-08-01
+hf showed 277 institutions while econ showed 50, because the deduplication and junk-filtering
+shipped in one worker and not the other. Duplicated logic over shared data drifts by default —
+the only question is when you notice.
+
+**Why it costs a new site nothing.** `api.hfdatalibrary.com` is already a hard dependency of
+every family site — the same worker serves `accounts.elkassabgidata.com`, so all sign-in goes
+through it. Its CORS is **registry-driven**: any origin present in `sso_clients` is allowed
+automatically, so a site inherits this the moment it is registered (§7.1). Verified 2026-08-01:
+`econdatalibrary.com`, `ipdatalibrary.com` and `elkassabgidata.com` are all allowed; an
+unregistered origin gets the canonical fallback and is refused.
+
+**Always keep a fallback.** econ retains its own list and uses it if the family fetch fails, so a
+transient error degrades to slightly-stale data rather than an empty section.
+
+**Site-specific numbers stay local.** Downloads, bytes served, top sources — those differ per
+site and come from that site's own API. Only the family-wide block is shared.
+
+**The cleaning lives in one place.** `INSTITUTION_BLOCKLIST`, `INSTITUTION_ALIASES` and
+`titleCaseInstitution()` in `api/src/index.js`. Two lessons are baked in and should not be
+undone:
+
+* the blocklist was **English-only**, so `个人` ("personal" in Chinese) sat in the list exactly as
+  "Personal" would have. Users write this field in their own language;
+* **never filter on "is non-ASCII"** — the same list legitimately contains Universidad de Jaén,
+  University of Wrocław, École de Technologie Supérieure, Università Degli Studi di Bergamo and
+  Dr. Franjo Tuđman Defense and Security University. Block the specific placeholder word, never
+  the script.
