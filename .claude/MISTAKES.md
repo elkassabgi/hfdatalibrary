@@ -5344,3 +5344,51 @@ difference — just old code being served again.
 
 Related: R229 (a fix that existed one repo over and was not propagated), R228 (the sign-out fix
 this would have silently reverted).
+
+### R254 — I replaced a crashing dedup with a silent one, and a different guard caught it
+
+`merge._dedup` used to call `group_by`, which took the process down on bis/LBS.parquet
+(0xC0000005 / SIGABRT). I rewrote it sort-based: sort by (keys…, __i), then mark a row as
+"same as next" with `pc.equal` per key, AND them together, invert, filter. The rewrite fixed
+the crash and I moved on.
+
+Arrow's `equal()` returns **NULL** when either side is null. The NULL survives `and_()`,
+`invert()` turns it into NULL, and `filter()` DROPS null-mask rows. So any dedup key that was
+null deleted every row but the last of its sorted run.
+
+treasury has four DATELESS endpoints where `obs_date` is null BY DESIGN — identity is the
+dimension columns. `fbp_dpai_account_summary`: 185 rows upstream, 185 in R2, 185 distinct
+(account_desc, account_nbr), and `_dedup` returned ONE. Every run since 2026-07-23 refused with
+"refusing shrink 185->1 (< 97% of existing)".
+
+The refusal is the only reason I ever saw it, and that is the frightening part. The
+never-shrink ratio is a guard against a DIFFERENT failure; it caught this one by accident,
+because the loss happened to be total. A source with only SOME null keys would have lost
+exactly those rows, landed above 97%, and published as a clean merge. Silent, permanent, and
+invisible to every check we have.
+
+The old group_by code did NOT have this bug — group_by treats null as a group. I preserved the
+comment explaining "same semantics as before" and did not preserve the semantics.
+
+**Fixed**: grouping semantics, not comparison semantics — two rows null in the same position
+ARE the same key:
+    eq = or_(fill_null(equal(lhs, rhs), False), and_(is_null(lhs), is_null(rhs)))
+Verified on all four cases: 185 distinct with a null key -> 185 (was 1); non-null path
+unchanged; a genuine duplicate on a null key still collapses to 1 with new-wins; null vs
+non-null still distinct.
+
+**The rules.**
+1. When you re-implement something, enumerate the INPUT CLASSES the old one handled, not just
+   the bug you are fixing. Null was a class. "Same semantics as before" in a comment is a
+   claim, and I wrote it without testing it.
+2. NULL is not a value — in Arrow, comparisons involving it are neither true nor false, and a
+   null MASK silently drops rows rather than keeping or rejecting them. Any predicate built
+   from `equal` over user data needs an explicit null policy.
+3. A guard firing for a reason it was not designed for is a NEAR MISS, not a success. Ask what
+   the same bug would look like just under the threshold — here, partial null keys, published
+   clean.
+4. Trace to the code before blaming the source. Upstream had 185, R2 had 185, the fetcher
+   produced 185 distinct identities; only then was it obvious the loss was ours.
+
+Related: R241 (measure what the reader reads), R249 (match the tool to the claim), R26 (the
+group_by crash this rewrite was for).
