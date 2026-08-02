@@ -4370,3 +4370,42 @@ still under-covers downgrades the result to `partial`, which does not set last_s
 Proven on a sandbox copy: ce/wd/ap now match upstream EXACTLY — identical frontier distributions,
 0 series behind — and 21,207 of 22,049 CES series advanced. ci/ap/wd advanced 0: their gaps were
 real but latent, the uncovered series being dormant ones already at their upstream frontier.
+
+### R231 — I nearly weakened a gate to make CI green, on reasoning that was simply false
+
+The daily health gate reds. A prior task had framed this as noise — "fails on 54 sources, 36 of
+them merely `partial`" — and reserved "should partial red CI?" as a policy call.
+
+I built a tidy argument for demoting ATTENTION below the SLA check: `partial` means "will retry",
+a one-tick transient shouldn't red CI, and anything genuinely stuck would still be caught by
+RED-SLA because a source that stays partial never advances its success clock. Clean, principled,
+and it would have made CI green.
+
+It is false, and one query showed it. `partial` never sets `last_success_utc` — so for a source
+that is ALWAYS partial, `succ_age` is null, and RED-SLA cannot fire at all. The safety net I was
+relying on does not exist for exactly the population I was about to silence.
+
+    ATTENTION            45 sources
+      past SLA            1   (ecb, 16.8d against a 2d SLA)
+      within SLA          3
+      NEVER SUCCEEDED    41   <- last_success_utc is null; RED-SLA can never fire
+
+Those 41 have never once had a clean run. ATTENTION is the only thing surfacing them. Demoting it
+would have buried 41 sources — including ones fetching 150M rows a tick — behind a green check.
+
+**The rules.**
+1. When a change would make a red gate quieter, the burden of proof inverts: prove the signal is
+   redundant, don't argue it. "Something else would catch it" is a claim about a mechanism —
+   go read that mechanism's actual firing condition.
+2. A gate's noise is a hypothesis about the WORLD, not about the gate. "54 sources fail, so the
+   gate is too strict" and "54 sources fail, so 54 sources are broken" fit the same evidence.
+   Measure which before touching the threshold.
+3. Inherited framings are not evidence. This one arrived as a task with a number in it, and I
+   nearly acted on the number without re-deriving it.
+
+The real finding under the noise: 24 of the 41 are stuck on ONE check (csv coherence) — they
+update the parquet fine but their cursor keys don't map to catalog ids, so every published CSV
+drifts from the data behind it. Two fixed and pushed today (fed_board, fhfa: 0% -> 100% of keys
+resolving, econfindatalibrary 2c371006); the rest are per-source and tracked.
+
+Related: R230 (measure the population before quoting a magnitude), R51 (an untrustworthy gate).
