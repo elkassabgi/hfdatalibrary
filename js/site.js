@@ -221,7 +221,12 @@
       // paths already work and must not be disturbed.
       if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
       // An explicit logout this browser session means "stay out" — never auto-resume over it.
-      if (sessionStorage.getItem('ekd_signed_out')) return;
+      // Either store: sessionStorage is per-TAB, so a sign-out in one tab left every other
+      // tab (and any tab opened afterwards) unprotected — open the site in a new tab and the
+      // resume signed you straight back in. That only bites when server-side revocation did
+      // not land, which is exactly the case this marker exists to cover. localStorage is the
+      // durable copy; the sessionStorage read stays for tabs that predate this change.
+      if (sessionStorage.getItem('ekd_signed_out') || localStorage.getItem('ekd_signed_out')) return;
       // Never bounce from the callback itself — that is the flow returning, not starting.
       if (location.pathname.indexOf('/auth/callback') === 0) return;
 
@@ -325,6 +330,8 @@
               // "suppresses only the AUTOMATIC path" - the code did exactly the opposite.
               if (detail && detail.deliberate) {
                 try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
+                try { localStorage.removeItem('ekd_signed_out'); } catch (e) {}   // BOTH, or the
+                // durable copy outlives the sign-in and suppresses resume forever after.
               }
               safeDel('ekd_notice_demoted'); paintUserWidget();
             });
@@ -454,6 +461,7 @@
       // including the automatic resume init() runs on every page load, which is precisely the
       // path this flag exists to suppress. Ledger R228.
       try { sessionStorage.setItem('ekd_signed_out', '1'); } catch (e) {}
+      try { localStorage.setItem('ekd_signed_out', '1'); } catch (e) {}   // survives into OTHER tabs
       var t = safeGet('hfd_session');
       // LOCAL CREDENTIALS GO FIRST, before any network call. safeDel used to sit AFTER the
       // await, so a revocation that was merely slow — or accepted and never answered — left
