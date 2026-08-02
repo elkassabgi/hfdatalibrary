@@ -4709,3 +4709,34 @@ per-chunk manifest checkpoint means a shorter budget defers work rather than los
    per-source cap was visible for weeks and read as normal.
 
 Related: R233 (the same dst change, its other unchecked consumer — the lateness clock).
+
+### R239 — I printed a value I had not measured, then read it back as evidence
+
+Probing whether worldbank_wdi was behind its publisher, I wrote a comparison loop and formatted
+each line as:
+
+    print(f'{pos} {ind} upstream years WITH values: {yrs}  (ours: 2023)')
+
+`yrs` was measured. `(ours: 2023)` was a STRING I TYPED, inferred from a median I had computed
+over a different population minutes earlier. The output then read:
+
+    EARLY-headline  NY.GDP.MKTP.CD  upstream years WITH values: ['2023','2024','2025']  (ours: 2023)
+
+and I said, out loud, that GDP was two years stale. The store's actual max for that indicator is
+2024-12-31. I had fabricated one half of my own comparison and then believed the comparison.
+
+It happened to point at something real — 2025 GDP genuinely is missing, 233 entities upstream
+against 0 stored — but that is luck, not method. The number I asserted was wrong, and if the
+store had held 2025 I would have filed a fabricated finding with a screenshot of my own
+hardcoded label as proof.
+
+**The rules.**
+1. Never put a constant in the same output line as a measurement. If both sides of a comparison
+   are meant to be evidence, both sides get queried. A literal that LOOKS like data is worse
+   than no data, because it survives review.
+2. When a probe is checking "us vs them", the "us" side is not context — it is half the finding.
+3. My own terminal output is not a source. It is only as good as the code that produced it, and
+   I wrote that code thirty seconds earlier with an assumption baked in.
+
+Related: R230 and R232 — this is the same family, a conclusion resting on something that was
+never actually looked at.
