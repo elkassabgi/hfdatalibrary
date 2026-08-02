@@ -837,6 +837,37 @@ function isLatinish(s) {
       && /[\p{Script=Latin}]/u.test(s); // require at least one actual letter
 }
 
+// A person's NAME is not a public-presentation field, and that is the whole reason isLatinish
+// does not belong on it. isLatinish exists because institution and country render publicly on
+// the stats page (world map, institutions list). `name` renders nowhere public — it appears
+// zero times in the /v1/public-stats payload; it is seen by the account owner, by admin, and
+// in admin email.
+//
+// Meanwhile Google and ORCID auto-create copy the provider's display name straight into the
+// column without passing any charset filter, so accounts already hold CJK, Cyrillic and Hangul
+// names. Applying isLatinish at password registration therefore rejected people whom this same
+// service accepts through the Google button — the same person and the same name, refused at one
+// door and admitted at the other. It also blocked admin from correcting a typo in any such name.
+//
+// So allow letters from ANY script, but do not read that as "allow everything non-Latin". The
+// characters worth refusing here are not scripts, they are the invisible ones:
+//   * control codes;
+//   * bidi overrides (U+202A-202E, U+2066-2069), which make a stored string render in an order
+//     that does not match its bytes — the trick behind "spoofed" display text. No name needs one.
+// ZWNJ/ZWJ (U+200C/U+200D) are deliberately ALLOWED: Persian and several Indic scripts require
+// them to render correctly, and excluding them would reintroduce the same defect one script over.
+function isSafeName(s) {
+  if (typeof s !== 'string' || s.length === 0) return false;
+  // Control and bidi characters are written as ESCAPES, never as literal bytes: an invisible
+  // byte in source does not survive a round-trip through an editor or a re-encode (ledger R196),
+  // and a reviewer cannot see what they are approving.
+  if (/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)) return false;
+  // \p{M} matters: many scripts compose a base letter plus combining marks.
+  // \u200C/\u200D are ZWNJ/ZWJ, allowed on purpose (see the note above the function).
+  return /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s)
+      && /[\p{L}]/u.test(s); // require at least one actual letter
+}
+
 // Gate for the EDIT forms (as opposed to registration): a submitted profile value only has
 // to clear isLatinish when the user is actually changing it.
 //
@@ -860,11 +891,14 @@ function isLatinish(s) {
 // What this deliberately does NOT do is scrub a bad value that is already stored. Getting
 // junk out of a column is a data cleanup plus output escaping at the render sites; an
 // input validator only decides what may go in from here on.
-function latinOkOrUnchanged(submitted, stored) {
+// `check` is the charset rule for THIS field: isLatinish for the publicly rendered ones
+// (institution, country, role) and isSafeName for `name`, which is not public. Defaulting to
+// isLatinish keeps every existing caller behaving exactly as before.
+function latinOkOrUnchanged(submitted, stored, check) {
   const v = (submitted == null ? '' : String(submitted)).trim();
   if (v.length === 0) return true;
   if (v === (stored == null ? '' : String(stored)).trim()) return true;
-  return isLatinish(v);
+  return (check || isLatinish)(v);
 }
 
 function rateLimitResponse(retryAfter, cors) {
@@ -3095,10 +3129,16 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) {
     return jsonRes({ error: 'One or more fields exceed length limits' }, 400, cors);
   }
-  // Latin/English characters only — these strings render publicly on the stats page
-  // (world map, institutions list) and in admin emails. Reject CJK, Cyrillic, Arabic, etc.
-  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
-    return jsonRes({ error: 'Name, institution, country, and role must use English/Latin letters only.' }, 400, cors);
+  // institution/country/role render publicly on the stats page (world map, institutions list),
+  // so they stay Latin-only. `name` does NOT render publicly — it is absent from the
+  // /v1/public-stats payload entirely — and Google/ORCID sign-in already stores non-Latin names
+  // unchecked, so gating it here only refused people at the password door whom the Google door
+  // admits. It gets isSafeName instead: letters from any script, no invisible characters.
+  if (!isSafeName(name)) {
+    return jsonRes({ error: 'Please enter your name.' }, 400, cors);
+  }
+  if (!isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
+    return jsonRes({ error: 'Institution, country, and role must use English/Latin letters only.' }, 400, cors);
   }
   // Normalize country to ISO-2 if recognized — "United States" / "USA" / "us" all
   // become "US". Falls back to original (trimmed) for unrecognized free-text so we
@@ -3783,7 +3823,11 @@ async function handleUpdateProfile(request, env, cors) {
     if (typeof body[field] !== 'string') return jsonRes({ error: `${label} must be a string` }, 400, cors);
     const v = body[field].trim();
     if (v.length > (field === 'institution' ? 200 : 100)) return jsonRes({ error: `${label} too long` }, 400, cors);
-    if (!latinOkOrUnchanged(v, user[field])) return jsonRes({ error: `${label} must use English/Latin letters only.` }, 400, cors);
+    const check = field === 'name' ? isSafeName : isLatinish;
+    if (!latinOkOrUnchanged(v, user[field], check)) {
+      return jsonRes({ error: field === 'name' ? 'Please enter your name.'
+        : `${label} must use English/Latin letters only.` }, 400, cors);
+    }
     updates.push(`${field} = ?`); values.push(v);
   }
   if (body.newsletter_subscribed !== undefined) {
@@ -4828,8 +4872,12 @@ async function handleAdmin(path, request, env, cors, ip) {
       if (typeof body[f] === 'string') {
         let v = body[f].trim();
         if (v.length === 0) continue; // skip empty (don't wipe field)
-        if (!isLatinish(v)) {
-          return jsonRes({ error: `${f} must use English/Latin letters only.` }, 400, cors);
+        // Admin edits these to fix typos and unify naming. `name` takes the any-script rule —
+        // otherwise admin could not correct a misspelling in a name the system itself stored
+        // via Google or ORCID.
+        if (!(f === 'name' ? isSafeName(v) : isLatinish(v))) {
+          return jsonRes({ error: f === 'name' ? 'Name contains characters that are not allowed.'
+            : `${f} must use English/Latin letters only.` }, 400, cors);
         }
         if (f === 'country') v = normalizeCountry(v) || v;
         updates.push(`${f} = ?`);
@@ -6680,8 +6728,11 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
       const role = isLatinish(rawRole) ? rawRole.trim().slice(0, 100) : '';
       const ctry = isLatinish(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
       const emailLocal = profEmail.split('@')[0];
-      const safeName = isLatinish(name) ? name.trim().slice(0, 100)
-        : (isLatinish(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
+      // isSafeName, not isLatinish: ORCID supplies the researcher's own name, and discarding a
+      // Hangul or Cyrillic one in favour of their email local-part renamed real people to a
+      // mail prefix. institution/role/country above stay Latin-only — those are rendered publicly.
+      const safeName = isSafeName(name) ? name.trim().slice(0, 100)
+        : (isSafeName(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
       const profileJson = profile ? JSON.stringify(profile) : null;
       const apiKey = 'hfd_' + generateId();
       const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
@@ -7107,7 +7158,11 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   if (!name || !email || !password || !institution || !role || !userCountry) return rerr('All fields are required.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rerr('Invalid email address.');
   if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) return rerr('One or more fields exceed length limits.');
-  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) return rerr('Name, institution, country, and role must use English/Latin letters only.');
+  // Same split as /v1/auth/register: name accepts any script (isSafeName), the publicly
+  // rendered fields stay Latin-only. Both registration doors must agree — this is the family
+  // IdP, so a rule that differs here produces "it let me in on one site" bug reports.
+  if (!isSafeName(name)) return rerr('Please enter your name.');
+  if (!isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) return rerr('Institution, country, and role must use English/Latin letters only.');
   const normalizedCountry = normalizeCountry(userCountry) || userCountry.trim();
   const pw = checkPasswordStrength(password);
   if (!pw.ok) return rerr(pw.error);
