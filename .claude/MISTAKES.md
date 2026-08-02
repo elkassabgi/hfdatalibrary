@@ -4813,3 +4813,44 @@ would skip real data.
 
 Related: R231 (the local state.db that was not the authoritative one) — same failure, different
 store.
+
+### R242 — three bugs in one fetcher, each invisible until the one in front of it was fixed
+
+bea has existed for weeks and never once refreshed anything. Fixing it took three separate
+changes, and they had to be made IN ORDER, because each fault was hidden behind the previous
+one:
+
+1. `BEA_API_KEY is not set` — the key was in `.env`, and nothing loads `.env` (R240). The
+   fetcher refused before doing any work.
+2. `AttributeError: 'str' object has no attribute 'year'` — `_stored_frontier` was annotated
+   `-> dt.date | None` and returned the string `merge._max_obs_date` is annotated to return.
+   Only observable once the key check passed.
+3. `Year=2023,2027` — BEA's Year is a comma-separated LIST, not a range, so the fetcher asked
+   for exactly 2023 and a year that does not exist. Only observable once it got far enough to
+   make a request. Measured: that request returns 516 rows and one year, against 1,806 rows and
+   four for the enumerated list.
+
+Bug 3 is the one that matters most, because bugs 1 and 2 FAILED LOUDLY and bug 3 did not. With
+1 and 2 fixed the source ran, merged, and reported `ok` — while pulling a single stale year.
+Store 106,074 -> 106,074, "no new rows", green. Had I stopped at "bea runs now" — which I very
+nearly did, having watched it print `ok` and a first-ever last_success_utc — I would have
+recorded a source as fixed while it silently fetched 1/5th of its window forever.
+
+What caught it was refusing to accept the green: the health gate said RED-DATA at 123 days, I
+assumed that was a clock artefact like bfs, went to prove it with `data_cadence`, measured bea's
+real publication cadence as MONTHLY, and only then asked the publisher what it actually had —
+2026M06 against our 2026-04-01. The upstream comparison is what broke it open, again.
+
+After the fix: 258,223 obs, store -> 251,203, last_obs 2026-06-01 — exactly BEA's own frontier.
+
+**The rules.**
+1. Fixing the error a source REPORTS does not mean the source works. A loud failure can be the
+   last thing standing between you and a quiet one.
+2. When a fetcher starts working for the first time, verify its OUTPUT against the publisher,
+   not its status. "It ran and said ok" is the weakest evidence in this codebase.
+3. Bugs queue. After fixing one, assume the next is now newly reachable and go looking, rather
+   than treating the first green as the end of the investigation.
+4. Range-vs-list is a silent API failure mode: both forms are accepted, both return 200, and
+   only the row count tells you which you got. Check what a window parameter MEANS, once, live.
+
+Related: R230 (green over data never looked at), R240 (the key), R241 (the store).
