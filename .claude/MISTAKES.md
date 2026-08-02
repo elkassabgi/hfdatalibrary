@@ -4939,7 +4939,21 @@ SDK now sends `deliberate: true|false` and both sites gate on it.
 4. When the user offers a diagnosis ("it's cached"), check it and then keep going. Cache was
    disproved in one command by reading the headers; stopping there would have shipped nothing.
 
-Related: R225 (a rule spread across layers), R222 (measured the wrong thing and reported it).
+**Confirmed fixed.** Ahmed verified sign-out behaving correctly in normal use on 2026-08-02,
+after the fix was deployed to the SDK, hfdatalibrary.com and econdatalibrary.com. Independently
+verified before that in a real browser: with a deliberately unhonourable token planted so the
+revocation call fails, `logout()` cleared `ekd_rt` and flipped `isLoggedIn()` to false in the same
+synchronous turn; and a primed post-sign-out reload stayed on the site's own origin with no bounce
+to the IdP and no credential re-established.
+
+**The regression test is now written down** as §7.7 of `AUTH_SSO_INTEGRATION.md` — three console
+checks, no credentials required. Note the trap recorded there: this bug does NOT reproduce in a
+private window, because a fresh profile has no IdP cookie and no refresh token to resume FROM. The
+one place a person naturally tests is the one place the bug cannot appear, which is why Ahmed's
+first instinct was that it must be a caching problem.
+
+Related: R225 (a rule spread across layers), R222 (measured the wrong thing and reported it),
+R229 (the same defect, still unfixed in hf when this entry was written).
 
 ## R229
 
@@ -4976,5 +4990,79 @@ surrounding function. Had I stopped at "fixed and verified", it would have shipp
    look for the sibling that lacks it instead of re-deriving.
 4. "Fixed and verified" means the CLASS is swept, not that the reported instance passes.
 
+**Swept afterwards, as the rule demands.** econ's sign-out was already correct (it is where the
+2.5s race came from). hf's account DELETION was examined and deliberately left alone: there the
+local clear is conditional on the server confirming, which is right — a failed delete must leave
+the person signed in. Same shape, opposite correct answer, so "teardown before the network" is a
+rule about SIGN-OUT, not about every destructive handler.
+
 Related: R228 (the rule this violates, written minutes before), R226 (broke a rule right after
-writing it), R225 (fixed one layer of a rule that lived in three).
+writing it), R225 (fixed one layer of a rule that lived in three). Regression test: §7.7 of
+AUTH_SSO_INTEGRATION.md.
+
+---
+
+### R244 — the audit scored every module against a store of the same NAME, so the shared helper was unflaggable
+
+`tools/audit_cursor_blowup.py` grew a CLASS 2 sweep on 2026-07-30 for the whole-file-read OOM
+class. It printed `CLASS 2 ... 0` and exited 0. It was reading a real surface and reporting an
+honest count of it — the surface just could not contain the worst instance.
+
+Two independent reasons, both the same mistake:
+
+1. Risk was `rows_by_src.get(module_name)` — the store DIRECTORY OF THE SAME NAME. A source
+   module owns such a store; a HELPER owns none. `_giant` and `_imf_direct` looked up nothing,
+   scored 0.0 GB, and could never be flagged however fatal their reads were.
+2. The offender loop iterated `ranked`, which is keyed by STORE. A module with no store is not
+   in `ranked` at all, so it was never even visited.
+
+What hid behind that: `_giant._max_obs_date` was a bare `blob.read_table(out_path)` — every
+column, every row, to take one max — on the hot path of both giant callers (oecd, eurostat),
+once per selected flow. oecd's largest flow file is 1,792,000,000 rows over five columns, two of
+them strings: 15.4 GB compressed on disk, >125 GB decoded. Nothing we own can hold that.
+
+**The read did not merely cost memory — it always threw, and the bare `except: return None`
+laundered that into `since=None`, which `_since_param` renders as an empty string: a silent
+FULL-HISTORY re-pull of the flow, reported as success.** Self-perpetuating, too — the re-pull
+keeps the file huge, so the next tick fails identically, forever. A memory bug wearing the
+costume of a slow source. oecd ran over three hours on 2026-08-01.
+
+The same defect had ALREADY been fixed on 2026-07-30 in `statcan.py:399` and in
+`merge._max_obs_date`. The instances were fixed; the shared driver both of them exist to serve
+was not. And `blob.iter_batches` — written that same day, whose docstring literally says "use
+this for any scan whose result is an AGGREGATE (a max, a map, a count)" and "narrowing a fatal
+read to a slightly smaller fatal read is not a fix" — was sitting there unused.
+
+**Fixed.** `_max_obs_date` now answers from parquet row-group STATISTICS (zero decode; measured
+complete on 8,960/8,960 oecd row groups and 13/13 eurostat), falls back to `blob.iter_batches`
+if any row group lacks stats, and is LOUD when it cannot answer instead of silently downgrading
+to a full re-pull. Added `blob.read_metadata` (R2-routed, mirrors `read_schema`).
+
+Proven, not assumed: new == old on 12/12 files where the old one can still run; peak Arrow
+allocation 1,842.9 MB -> 0.1 MB on a 13.6M-row file and 655.6 MB -> 0.1 MB on a 7.0M-row one;
+and it answers the 1,792,000,000-row file in 0.16s, which the old path cannot answer at all.
+The first peak measurement reported 0.0 MB for BOTH implementations — `max_memory()` is a
+process-lifetime high-water mark, so every delta after the first call is 0. An A/B where both
+arms read identical indicts the harness (global R2c); re-measured one arm per fresh process.
+
+**The gate is fixed too, and proven to FAIL** (R142): helpers are now judged against the stores
+of the modules that import them, the loop iterates MODULES not stores, and a module that maps to
+NO store is NAMED in a new CLASS 2b and fails the run rather than scoring 0. Reverted `_giant`
+to its pre-fix form and confirmed the audit reports `CLASS 2: 1 — _giant ... worst store oecd,
+largest file 1,792,000,000 rows -> ~125 GB` and exits 1; restored byte-identical.
+
+**The rules.**
+1. When an audit maps code to data BY NAME, enumerate what has no name in that space. Shared
+   helpers, base classes and mixins are exactly the code that runs for every source — the
+   highest-leverage place for a defect and the easiest for a name-keyed gate to miss.
+2. An unjudgeable unit is not a clean unit. Scoring it 0 and moving on is indistinguishable
+   from proving it safe. Name it and fail.
+3. Fixing every INSTANCE while leaving the shared driver they delegate to is not sweeping the
+   class (R9b) — it is sweeping the callers of the class.
+4. A whole-file read wrapped in `except: return None` is not a crash risk, it is a SILENT
+   DOWNGRADE risk. Ask what the None means downstream: here it meant "re-download everything".
+5. Before writing a new bounded primitive, grep for whether last week's already exists unused.
+
+Related: R242 (three queued bugs in one fetcher; the last failed silently), R228 (grep for a
+rule the moment it is worth writing down), R172 (an early exit must answer whether the gate
+advances), R142 (prove a gate fails).
