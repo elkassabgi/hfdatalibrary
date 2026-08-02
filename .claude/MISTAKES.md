@@ -4520,3 +4520,44 @@ also tightens: annual polling over monthly data goes 1,095d -> 84d.
    deliberately evaluate the later ones anyway before concluding anything is fine.
 
 Related: R231 (the same precedence, and the same field, from the other direction), R232.
+
+### R234 — I fixed two of three bypass paths and wrote the warning that should have found the third
+
+The coverage tool counted a source as scheduled if `live: true`. That under-reports, because
+workflows dispatch sources explicitly and ignore the flag. I found that, built `extra_scheduled()`
+to parse the workflow files, and wrote this into its docstring:
+
+    "`live` is not the whole schedule and treating it as such under-reports."
+
+Then I enumerated exactly two bypass paths — updater-heavy.yml and sec-edgar-daily.yml — and
+stopped. There are three. The workstation runner picks its targets like this:
+
+    tools/_list_local_sources.py
+    ids = {e.source_id for e in registry if e.run_location == "local"}
+
+No mention of `live`. So ten local-tier sources with `live: false` have been running on the
+workstation while my headline reported them as not scheduled at all: bis, bls, cbs_nl, eia,
+faostat, gus_dbw, istat, oecd, statcan, vdem. Corrected, 112 -> 119 of 217 sources.
+
+Two things make this worth an entry rather than a shrug.
+
+First, I had already generalised the lesson correctly IN WRITING and then applied it to a list
+instead of to the question. The right question was "what dispatches work?" — a small, closed set
+I could have enumerated from the repo. The question I actually answered was "which workflow
+files mention sources?", which silently excluded the scheduler that is not a workflow file.
+
+Second, it was wrong in the SAFE direction. Under-reporting coverage never looks like a bug: the
+number is unflattering, nobody disputes an unflattering number, and it survives indefinitely.
+I found it only because I went looking for promotable sources and noticed the "unscheduled" ones
+were already running.
+
+**The rules.**
+1. When you catch a category error, fix the CATEGORY. "live is not the whole schedule" demanded
+   an enumeration of schedulers; I enumerated two examples of one kind and called it done.
+2. Audit numbers that flatter you AND numbers that do not. A pessimistic error is still an error
+   and is much likelier to go unchallenged.
+3. `git grep` for the field, not for the file. One grep for `run_location` would have shown a
+   second consumer selecting on it.
+
+Related: R230, and the standing "a reported example is one instance of a class" rule — this is
+that rule failing on the class of SCHEDULERS rather than the class of sources.
