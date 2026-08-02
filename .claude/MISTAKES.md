@@ -4072,3 +4072,34 @@ confirm it had touched exactly the two intended sites and nothing else.
 
 Related: R221 (renames orphan the maps keyed on the old name — the very thing this edit was
 fixing), R226 (verify at the destination, immediately).
+
+### R224 — my own verifier says SERVED without ever asking the thing that serves
+
+tools/verify_source_served.py is the gate I have used all session to call a source done. For noaa
+it printed:
+
+    noaa: SERVED — MISSING 0, 0 unreachable objects, sample byte-identical; 10 retained legacy id(s)
+
+against 3,135,873 catalogue rows and 3,135,873 R2 objects. Then I queried D1, which is what the
+worker actually reads to answer a request, and found **10 rows**. Every one of the other
+3,135,863 series would have 404'd. The source was not served in any sense a user would recognise.
+
+The tool checks catalogue↔R2 in both directions and byte-compares a sample — genuinely useful,
+and completely silent about the third leg. A series is reachable only if it is in D1 AND its
+source is in SUPPORTED_SOURCES AND its object is in R2. My verifier tests one edge of that
+triangle and names its verdict "SERVED".
+
+It has been right until now by luck: every earlier source this session was small enough that I
+ran sync_catalog_d1 immediately afterwards in the same breath, and I confirmed several by direct
+D1 query. noaa is the first where the sync is hours of work, so the gap between "verified" and
+"synced" became long enough to notice. The bug was there the whole time.
+
+**The rules.**
+1. A checker's NAME is a claim. If it says SERVED it must test everything serving requires, or
+   it must be renamed to what it actually tests (catalogue↔R2 coherence).
+2. Verify at the surface the user touches. Local artefacts agreeing with each other is not
+   evidence that a request succeeds — only a request succeeding is.
+3. When a pipeline has N stages, the completeness check enumerates N stages. I had catalogue,
+   R2, D1 and SUPPORTED_SOURCES in my head as four steps and wrote a verifier for two.
+
+Related: R219 (a summary that omits a disposition), R213 (a zero-test is not a completeness test).
