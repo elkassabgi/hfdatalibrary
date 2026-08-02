@@ -5267,3 +5267,46 @@ migration is still correct and still the right move. The damage was to the CLAIM
    stand in for the second, especially once it is being quoted to the user.
 
 Related: R246, R249 (same shape, same day), R105 (recall is not the gate).
+
+### R253 — the whole unscheduled backlog was one shape, and I had been counting it as work
+
+97 sources / 1,366,990 series sat in the coverage report as "served but NOT scheduled at all",
+and I had carried that number for cycles as if it were a queue of fetchers to write. This cycle
+I attributed every one of them:
+
+    imf          36   #46  series ids churn on every publisher refresh — Ahmed's call
+    unctad       38   #70  upstream re-coded all 38 dataset ids (0 of 38 match) + BPM6 revision
+    fao          18   #19  element re-code solvable to 79%, last 20% is a restructure
+    unesco        4   #69  upstream re-coded AND shrank (382 of our codes vs 42 upstream)
+    hf_equities   1   #50  CSVs in a bucket the econ worker cannot reach
+                 ---
+                  97
+
+Not one is "write a fetcher". Three are the SAME defect — a publisher restructured its coding
+scheme after a one-time ingest, so our series ids no longer exist upstream — and the rest are a
+product decision and a binding. The backlog was never a build queue; it was a pile of
+already-made decisions nobody had labelled.
+
+What made it look like work was the label. "Served but not scheduled" describes a STATE, and I
+kept reading it as a TASK. Each family individually looked like the next thing to pick up, and
+only counting them together showed there was nothing to pick up at all.
+
+The three re-code cases share a tell worth naming: our stored keys are slugged display LABELS
+(`acp-africa`, `percentage-of-gross-domestic-product`) rather than publisher codes. That is the
+signature of an aggregator-era ingest, and it means even a correct dataset mapping may not
+reproduce our ids — the labels have to slug identically too. Where the keys were publisher
+CODES instead (WHO GHO: IndicatorCode + SpatialDim + Dims), the migration was exact and took
+one afternoon: 181/181 and 6,693/6,693 keys, zero drift.
+
+**The rules.**
+1. A backlog category is not a task list until every member has a named next action. Attribute
+   the whole set once, early — the aggregate can be a different KIND of thing from what each
+   member looked like.
+2. Slugged display labels in a series key mean the ids were minted by an intermediary, not the
+   publisher. Treat that as a migration RISK flag before promising anything about re-pointing.
+3. When three unrelated families fail the same way, stop treating them as three investigations
+   and name the shape — publishers re-code, and a one-time ingest's ids expire with the scheme
+   that produced them.
+
+Related: R251 (why the aggregator era happened), R252, R246 (a number that describes config, not
+reality).
