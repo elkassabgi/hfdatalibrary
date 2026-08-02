@@ -4644,3 +4644,31 @@ diff counts.
    series — which is why that is the metric to diff.
 
 Related: R230 (a sample that could not detect what it sampled for), R235 (same fetcher, same day).
+
+### R237 — the drop counter existed, and I never printed it
+
+Extending the census tail to qtax's state geographies, every state row was being discarded. The
+code did the right thing — a row whose dimension set matches no stored key shape is skipped
+rather than invented — and incremented `unknown_shape` to record it. I never printed that
+variable. So the run reported `ok`, said "qtax: +66 row(s)", and threw away several thousand
+rows on the way, and the only visible symptom was a series count that was too small if you
+happened to compare it against production.
+
+The cause underneath was mundane: `for=us:*` and `for=state:*` return DIFFERENT headers (16
+columns ending `us`, 17 ending `state`), and I concatenated the bodies under the first header.
+Every column of the second response shifted by one, so the dimensions read as garbage. But the
+mundane bug would have been obvious in a minute if the skip had been on screen.
+
+I have now written some version of "a source must never report green over data it did not look
+at" into six commit messages today — bls, dst, gleif, the relay audit, census twice. And I wrote
+a silent discard into my own fetcher in the same session.
+
+**The rules.**
+1. If you increment a counter for discarded input, PRINT it in the same commit. A variable that
+   only a debugger can see is not instrumentation.
+2. "Skipped for a good reason" and "skipped because I broke something" look identical from the
+   outside. The count is what separates them, so the count has to be visible without asking.
+3. When two responses feed one parse, they need one header each. Sharing a header across
+   differently-shaped responses corrupts silently — no exception, no error, just wrong columns.
+
+Related: R232 (a monitor that examined nothing), R236 (same fetcher, same day).
