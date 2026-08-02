@@ -4103,3 +4103,39 @@ D1 query. noaa is the first where the sync is hours of work, so the gap between 
    R2, D1 and SUPPORTED_SOURCES in my head as four steps and wrote a verifier for two.
 
 Related: R219 (a summary that omits a disposition), R213 (a zero-test is not a completeness test).
+
+### R225 — I was given a three-part definition and implemented one part, then reported against it
+
+The standing order defines the metric precisely: scheduled = "registry live:true + the
+updater-heavy matrix + sec-edgar-daily". tools/status_where_and_proven.py implemented the first
+clause only:
+
+    live = bool(entry and entry.get("live") is True)
+
+so every source dispatched by a workflow instead of the daily orchestrator counted as PENDING —
+"served but NOT scheduled at all: it will never refresh", in the tool's own words. Nine sources
+were misfiled: un_wpp, bundesbank, sec_edgar and the six imf_gfs*_direct.
+
+The under-report was 6 sources and 556,715 series. Every cycle I reported "N of M scheduled" it
+was wrong in the same direction.
+
+What makes this worse than an oversight is that the registry SAYS SO, in the entry I eventually
+read: "live:false keeps it out of the daily run; the heavy matrix dispatches it explicitly,
+which bypasses the live gate." I had been treating `live:false` as "not scheduled" while the
+codebase documented it as "scheduled by a different mechanism". I only noticed because I was
+about to PROMOTE four of those sources to live:true — which would have moved them out of the
+isolation they were deliberately put in, onto the daily run whose per-unit Deadline cannot bound
+a single blocking pull. The wrong metric was about to cause a wrong change.
+
+The fix parses both workflow files rather than hardcoding a list, so it cannot drift from what
+CI actually runs.
+
+**The rules.**
+1. When given a definition with N clauses, implement N clauses — and write the count into the
+   code so a reader can check. A metric that silently drops a term is worse than no metric,
+   because it is quoted with confidence.
+2. Before "fixing" something that looks misconfigured, read its comment. `live:false` on a
+   source with a working fetcher is a question, not a finding.
+3. A number I report repeatedly deserves one audit of its definition, not just its arithmetic.
+
+Related: R214 (measured a proxy), R224 (a checker's name is a claim).
