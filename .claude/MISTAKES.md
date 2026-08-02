@@ -3726,3 +3726,66 @@ code. Confirmation was one step away in the wrong direction.
 3. A failure that lands exactly where I expected it is the one to distrust most.
 
 Related: R215 (nearly published misattributed data), R214 (measured a proxy).
+
+## R221
+
+**Renaming a value broke a second lookup keyed on it, and I fixed only the first.**
+
+Cleaning the institutions list, I added aliases that canonicalised display names — `UCLA` became
+`University of California, Los Angeles`, `HKUST` became
+`Hong Kong University of Science and Technology`. Two maps on the stats page are keyed on that
+display name: `INST_PRESTIGE` (sort order) and `INST_DOMAINS` (favicon). The rename orphaned the
+key in BOTH. I noticed the ranking was wrong, fixed `INST_PRESTIGE`, verified the ordering, and
+called it done. The icons stayed broken — silently, because a missing favicon renders as empty
+space, not as an error.
+
+It surfaced only because I simulated the page's own render against the live payload and printed a
+marker per institution. `Hong Kong University of Science and Technology` came back with no icon at
+position 9 of the visible top 20 — a school Ahmed had specifically asked about.
+
+The trap is that fixing the first map FEELS like fixing the bug. The rename had one cause and I
+found it; the second consequence lives in a different data structure with a different symptom and
+no error path. Having just fixed a rank ordering, I was primed to believe the rename problem was
+the rank problem.
+
+**The rules.**
+1. When a value is renamed, enumerate EVERY structure keyed on that value BEFORE fixing any of
+   them. Grep for the old key, not for the symptom I happened to notice.
+2. A fix that resolves the reported symptom is not evidence the cause has one consequence.
+3. Verify by simulating the actual render and printing a per-item marker for each property that
+   should be present. A missing favicon has no error path; only an explicit check finds it.
+
+Related: the standing "an example means the class" rule — a reported instance is one member of a
+set, and the set here was "maps keyed on institution name", not "the ranking map".
+
+## R222
+
+**I announced a production outage that existed only in my own staging copy.**
+
+Deploying econ requires rebuilding a clean tree from `HEAD` (to keep a concurrent session's
+unpublished SEO work unpublished) and then re-pinning the `sso.js?v=` cache-buster. I built the
+staging tree, counted the pins, and found 212 pages on the OLD pin `f` against 2 on the current
+`k`. `sso.js` had changed five times after `f` was set, including the cross-site SSO fix. I wrote
+to Ahmed that returning visitors were getting pre-SSO JavaScript on every page but two, and that
+this was "very likely the bug the user reported".
+
+It was not. The working tree was already fully re-pinned at `k`, and live had been serving `k` with
+current `sso.js` all along. The `f` I measured was in the staged-from-`HEAD` copy — an intermediate
+artifact of a procedure whose very next step is the re-pin I had not run yet. I measured my own
+half-finished scratch directory and reported it as production.
+
+What makes this worse than a private miscalculation: the claim was about user-visible breakage, it
+named a bug Ahmed had personally reported, and it was delivered with a causal story tidy enough to
+be believed. Production was one `curl` away the whole time.
+
+**The rules.**
+1. A claim about what USERS experience must be measured against the LIVE origin. A local tree, a
+   staging copy, and `HEAD` are all evidence about intent, never about what is being served.
+2. Before reporting an outage, fetch the live URL. This is one command and it is not optional.
+3. Distrust a measurement taken mid-procedure. If the next step of the runbook would change the
+   number, the number is not a finding.
+4. A diagnosis that neatly explains a bug the user already reported is the one to verify hardest —
+   the fit is what makes it persuasive, not what makes it true.
+
+Related: R220 (confident wrong answers on first-pass checks), R198 (a healthy run made to look
+broken by measuring the wrong clock).
