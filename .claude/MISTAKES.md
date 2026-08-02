@@ -5146,3 +5146,41 @@ largest file 1,792,000,000 rows -> ~125 GB` and exits 1; restored byte-identical
 Related: R242 (three queued bugs in one fetcher; the last failed silently), R228 (grep for a
 rule the moment it is worth writing down), R172 (an early exit must answer whether the gate
 advances), R142 (prove a gate fails).
+
+## R230
+
+**`git add catalog/site/*.html` swept another session's uncommitted work into my commit, and their next push published it.**
+
+For a whole day I protected econ deploys with a careful rule: build the tree from `git archive HEAD`
+and overlay ONLY my own files, so a concurrent session's uncommitted SEO rewrite (216 pages of new
+titles, descriptions and canonicals) stays unpublished. I ran that dance correctly four times.
+
+Then I needed to bump the `sso.js?v=` cache-buster, which legitimately touches every page, and
+reached for `git add catalog/site/*.html`. That glob does not stage "my pin bump" — it stages the
+FILES, and every one of those files also carried their SEO edit. 217 files went in under my commit
+message. Minutes later the other session pushed, and my commit rode out with theirs.
+
+Damage, stated exactly: the live site is UNAFFECTED — that deploy was built from the previous HEAD
+and the leak check passed, verified afterwards by fetching econdatalibrary.com/bls and seeing the
+original title. What broke is the INVARIANT the deploy procedure rests on: `git archive HEAD` was
+"safe to publish", and now HEAD contains work that was deliberately not published. The next econ
+deploy by anyone publishes 216 rewritten pages.
+
+I did not unwind it. The commit was already on origin, and the reflog showed the other session
+committing between my own commits — it is live shared history, and force-pushing over an active
+collaborator to tidy my mistake is a worse act than the mistake.
+
+**The rules.**
+1. NEVER `git add` a glob or a directory in a repo where someone else has uncommitted work. Name
+   every path explicitly, however many there are.
+2. "My change touches every file" does not make staging every file correct. The unit git stages is
+   the FILE, not the hunk. If a change spans files someone else is editing, either stage nothing
+   and let the build apply it (the pin bump is re-applied at staging time anyway — it never needed
+   committing), or use `git add -p`.
+3. Before committing in a shared repo, `git status --short` and READ IT. 217 lines of output was
+   the warning, and I piped it to `tail -1`.
+4. When a mistake is already published to a branch someone else is pushing to, the fix is to
+   DOCUMENT it, not to rewrite history under them.
+
+Related: R210 (duplicated work a concurrent session had already committed — same repo, same
+failure to look before acting).
