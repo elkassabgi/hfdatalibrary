@@ -4298,3 +4298,45 @@ premise was novel.
    being proposed is the strongest possible review, and it is free.
 4. Verify novelty before verifying correctness. I proved my idea worked before checking whether
    it was already known not to.
+
+### R230 — the dismissal sampled the covered sliver and called the whole survey fresh
+
+The health gate flagged bls RED-DATA. The diagnosis I received said it was a lateness-clock
+artefact: bls "is EXACTLY level with the publisher", "zero lag on every flagship survey", with
+four series probed live against the BLS API and matching upstream exactly, plus byte-perfect
+Last-Modified agreement on the tracked files. Every one of those statements is true.
+
+The adversarial pass refuted it, and I confirmed the number myself on ce.parquet:
+
+    22,049 distinct CES series
+       175 at frontier 2026-06-01   0.8%
+       667 at 2026-05-01            3.0%
+     1,670 at 2026-04-01            7.6%
+    19,535 at 2026-03-01           88.6%   <- three months behind
+
+The four sampled series — CUUR0000SA0, CES0000000001, LNS14000000, JTS…JOL — all sit inside the
+842 series carried by the ONE file the fetcher tracks (`_choose_tail_files` keeps only
+`*Current*`; CES ships 55 data files and one matches). So the sample was drawn entirely from the
+0.8% that updates, and it could not have detected the freeze no matter how carefully each probe
+was done.
+
+The tell was in the distribution, not the sample: a real publication calendar clusters series at
+the same recent period. A staircase — 0.8% / 3% / 7.6% / 88.6% — traces one file's coverage.
+
+What makes this worth recording as MY mistake rather than an agent's: I had already written
+"never trust an agent's report at face value" into how I work today, and I still built the first
+diagnosis prompt to ask "is this red real?" without requiring a POPULATION measurement. The
+refutation only caught it because I had separately told it to attack dismissals. Had I skipped
+that phase to save time — which I considered, since the fix looked like a bug fix — a flagship
+source three months stale on 88.6% of its series would have been closed as a false alarm.
+
+**The rules.**
+1. A freshness claim needs the DISTRIBUTION, never a sample. "N series checked and current" says
+   nothing about the other 22,000; "88.6% share one frontier" says everything.
+2. When probes are chosen by prominence — the headline series, the flagship survey — they are
+   drawn from exactly the subset most likely to be covered. Prominence and coverage correlate.
+3. Adversarially verify the DISMISSALS specifically. A false "real problem" costs someone a
+   look; a false "all fine" buries the finding permanently.
+4. A shape in the data can refute a pile of correct individual measurements. Look at the shape.
+
+Related: R213 (a zero-test is not a completeness test), R219, R227.
