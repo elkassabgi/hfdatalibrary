@@ -242,6 +242,27 @@ Then confirm an **unregistered** `client_id` and a **mismatched** `redirect_uri`
    `sso_refresh_tokens` is swept on `absolute_expires_at`, **never** `expires_at` — a retained
    used row is what turns a replayed stolen token into *detected theft* rather than a silent
    rejection.
+8. **Every registration door applies the SAME field rules.** There are two (`/v1/auth/register`
+   on the API host and `/register` on the IdP) and two auto-create paths (Google, ORCID). When
+   they disagree, the report is "it let me in on one site but not the other", and the cause is
+   always a rule added to one door.
+9. **Charset rules follow whether a field is PUBLIC, not whether it looks foreign.**
+   `institution`, `country` and `role` render on the public stats page, so they stay Latin-only
+   (`isLatinish`). `name` renders nowhere public — it is absent from `/v1/public-stats` entirely
+   — so it uses `isSafeName`: letters from **any** script, rejecting only the invisible
+   characters (control codes and the bidi overrides `U+202A-202E` / `U+2066-2069`, which make a
+   string render in an order that does not match its bytes). ZWNJ/ZWJ are allowed on purpose;
+   Persian and several Indic scripts need them.
+
+   > Until 2026-08-01 `name` was Latin-only at both registration doors while Google and ORCID
+   > auto-create copied the provider's name in unchecked. Accounts already held Hangul, CJK and
+   > Cyrillic names, so the rule refused people at the password door whom the Google button
+   > admitted — and stopped admin from correcting a typo in a name the system itself had stored.
+   > Fixing it meant changing five call sites, not one; grep for the validator, not for the bug.
+
+10. **Never put a literal control character in source.** Write `‪`, not the byte. An
+    invisible character does not survive an editor round-trip or a re-encode (ledger R196), and
+    a reviewer cannot see what they are approving.
 
 ---
 
