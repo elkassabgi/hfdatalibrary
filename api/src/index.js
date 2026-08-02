@@ -120,10 +120,25 @@ const EDL_RT_TTL_HOURS = 720;  // refresh-token absolute cap = 30 days (G-H LOCK
 const CODE_TTL_SEC = 60;       // one-time authorization code
 const GESTURE_TTL_SEC = 300;   // consent gesture HMAC token, 5 min
 const RT_GRACE_SEC = 10;       // benign multi-tab refresh race window
-// §18 DO rate-limit ceilings (per minute); log-only shadow for the first soak.
-const AUTHZ_IP_MAX = 120;
-const EXCH_IP_MAX = 120;
-const EXCH_ACCT_MAX = 30;
+// §18 DO rate-limit ceilings (per minute). ENFORCING since 2026-08-02 (Ahmed) — no longer shadow.
+//
+// The three HUMAN buckets are 10/min at Ahmed's instruction. A person signing in touches
+// /authorize once and exchanges once, so 10 is ~10x a real sign-in and still stops password
+// guessing dead. Measured peak before enforcement was 5 logins/IP/min.
+//
+// KNOWN RISK, deliberately accepted: these are keyed on IP, and universities NAT their whole
+// campus behind a handful of addresses. Ten sign-ins a minute from one university gateway is
+// plausible at the start of a class, and everyone behind it would see the 429 together. If that
+// is ever reported, raise AUTHZ_IP_MAX / EXCH_IP_MAX — one constant and one deploy. The
+// per-ACCOUNT bucket has no such problem, since it follows the person rather than the network.
+const AUTHZ_IP_MAX = 10;
+const EXCH_IP_MAX = 10;
+const EXCH_ACCT_MAX = 10;
+// The refresh buckets are NOT 10. Refreshes are machine-driven, not human: every open tab renews
+// its 15-minute access token on its own schedule, and a browser restoring a dozen tabs refreshes
+// a dozen times in one second through no act of the user. Throttling that does not stop an
+// attacker — it signs a legitimate person out mid-session, which is the exact failure the limiter
+// exists to avoid causing. They stay high and now merely enforce.
 const RT_IP_MAX = 240;
 const RT_ACCT_MAX = 60;
 
@@ -827,30 +842,24 @@ async function checkRateLimit(env, key, ruleName, opts) {
   return { ok: true };
 }
 
-// Profile fields are displayed publicly (stats page world map, institutions list,
-// admin emails). Restrict them to Latin script + digits + common punctuation so a
-// user submitting "中国" doesn't render Chinese characters under the world map.
-// Allows accented Latin (é, ü, ñ, etc.) for European institutions/names.
-function isLatinish(s) {
-  if (typeof s !== 'string' || s.length === 0) return false;
-  return /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s)
-      && /[\p{Script=Latin}]/u.test(s); // require at least one actual letter
-}
-
-// A person's NAME is not a public-presentation field, and that is the whole reason isLatinish
-// does not belong on it. isLatinish exists because institution and country render publicly on
-// the stats page (world map, institutions list). `name` renders nowhere public — it appears
-// zero times in the /v1/public-stats payload; it is seen by the account owner, by admin, and
-// in admin email.
+// THE ONE charset rule for every user-supplied profile field: name, institution, country, role.
 //
-// Meanwhile Google and ORCID auto-create copy the provider's display name straight into the
-// column without passing any charset filter, so accounts already hold CJK, Cyrillic and Hangul
-// names. Applying isLatinish at password registration therefore rejected people whom this same
-// service accepts through the Google button — the same person and the same name, refused at one
-// door and admitted at the other. It also blocked admin from correcting a typo in any such name.
+// There used to be a second validator here, isLatinish, that accepted only Latin script, and it
+// was applied to institution and country because those render publicly on the stats page. It was
+// removed on 2026-08-02 (Ahmed's decision) along with the whole two-validator split. Two reasons
+// it had to go:
 //
-// So allow letters from ANY script, but do not read that as "allow everything non-Latin". The
-// characters worth refusing here are not scripts, they are the invisible ones:
+//   * It never actually held. Google and ORCID auto-create copy the provider's values straight
+//     into these columns without passing any filter, so accounts already held Hangul, CJK and
+//     Cyrillic values. The rule therefore refused people at the password door whom the same
+//     service admitted through the Google button — the same person, the same string — and it
+//     stopped admin correcting a typo in anything the system itself had stored.
+//   * Two validators over four fields meant every new code path had to pick the right one, and
+//     three separate edit paths had each picked differently. One rule cannot be applied
+//     inconsistently.
+//
+// So: letters from ANY script are allowed. Do not read that as "allow everything". The characters
+// worth refusing are not scripts, they are the invisible ones:
 //   * control codes;
 //   * bidi overrides (U+202A-202E, U+2066-2069), which make a stored string render in an order
 //     that does not match its bytes — the trick behind "spoofed" display text. No name needs one.
@@ -869,7 +878,7 @@ function isSafeName(s) {
 }
 
 // Gate for the EDIT forms (as opposed to registration): a submitted profile value only has
-// to clear isLatinish when the user is actually changing it.
+// to clear the charset check when the user is actually changing it.
 //
 // Why the distinction is necessary. Non-Latin text gets into these columns without ever
 // passing this filter — Google auto-create copies users.name straight out of Google's
@@ -891,14 +900,18 @@ function isSafeName(s) {
 // What this deliberately does NOT do is scrub a bad value that is already stored. Getting
 // junk out of a column is a data cleanup plus output escaping at the render sites; an
 // input validator only decides what may go in from here on.
-// `check` is the charset rule for THIS field: isLatinish for the publicly rendered ones
-// (institution, country, role) and isSafeName for `name`, which is not public. Defaulting to
-// isLatinish keeps every existing caller behaving exactly as before.
-function latinOkOrUnchanged(submitted, stored, check) {
+// ONE charset rule for every profile field, as of 2026-08-02 (Ahmed's call). The split that
+// used to live here - Latin-only for the publicly rendered institution/country, any-script for
+// name - is gone: institution and country may now be written in the user's own script too. The
+// only thing still refused is the invisible characters isSafeName rejects.
+//
+// The `check` parameter is kept because callers pass it, but every caller now passes isSafeName
+// or nothing, and the default is isSafeName.
+function charsetOkOrUnchanged(submitted, stored, check) {
   const v = (submitted == null ? '' : String(submitted)).trim();
   if (v.length === 0) return true;
   if (v === (stored == null ? '' : String(stored)).trim()) return true;
-  return (check || isLatinish)(v);
+  return (check || isSafeName)(v);
 }
 
 function rateLimitResponse(retryAfter, cors) {
@@ -3137,8 +3150,8 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   if (!isSafeName(name)) {
     return jsonRes({ error: 'Please enter your name.' }, 400, cors);
   }
-  if (!isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
-    return jsonRes({ error: 'Institution, country, and role must use English/Latin letters only.' }, 400, cors);
+  if (!isSafeName(institution) || !isSafeName(userCountry) || !isSafeName(role)) {
+    return jsonRes({ error: 'Institution, country, and role contain characters that are not allowed.' }, 400, cors);
   }
   // Normalize country to ISO-2 if recognized — "United States" / "USA" / "us" all
   // become "US". Falls back to original (trimmed) for unrecognized free-text so we
@@ -3801,14 +3814,14 @@ async function handleUpdateProfile(request, env, cors) {
   // So: trim, cap the length, and require the charset. The typeof guard is not cosmetic
   // either — `{"name": 42}` threw on .length and surfaced as a 500.
   //
-  // The charset check goes through latinOkOrUnchanged and NOT isLatinish directly. The
-  // first version of this loop called isLatinish on every submitted field, and account.html
+  // The charset check goes through charsetOkOrUnchanged and NOT isSafeName directly. The
+  // first version of this loop called the validator on every submitted field, and account.html
   // prefills all four inputs from the stored row and posts all four on every save, so a
   // Google user whose stored name is Chinese/Cyrillic/Arabic got
   // "Name must use English/Latin letters only." on the very save that was meant to fill in
   // their institution — profile_complete could never reach 1 and they could never download
   // again. Only a value that DIFFERS from what is already stored is a value the user is
-  // introducing; the reasoning is written out at latinOkOrUnchanged. `user` comes from
+  // introducing; the reasoning is written out at charsetOkOrUnchanged. `user` comes from
   // getSessionUser, which SELECTs u.*, so user.name/institution/country/role are this
   // request's own read of the row — no extra query.
   //
@@ -3823,10 +3836,8 @@ async function handleUpdateProfile(request, env, cors) {
     if (typeof body[field] !== 'string') return jsonRes({ error: `${label} must be a string` }, 400, cors);
     const v = body[field].trim();
     if (v.length > (field === 'institution' ? 200 : 100)) return jsonRes({ error: `${label} too long` }, 400, cors);
-    const check = field === 'name' ? isSafeName : isLatinish;
-    if (!latinOkOrUnchanged(v, user[field], check)) {
-      return jsonRes({ error: field === 'name' ? 'Please enter your name.'
-        : `${label} must use English/Latin letters only.` }, 400, cors);
+    if (!charsetOkOrUnchanged(v, user[field])) {
+      return jsonRes({ error: `${label} contains characters that are not allowed.` }, 400, cors);
     }
     updates.push(`${field} = ?`); values.push(v);
   }
@@ -4875,9 +4886,8 @@ async function handleAdmin(path, request, env, cors, ip) {
         // Admin edits these to fix typos and unify naming. `name` takes the any-script rule —
         // otherwise admin could not correct a misspelling in a name the system itself stored
         // via Google or ORCID.
-        if (!(f === 'name' ? isSafeName(v) : isLatinish(v))) {
-          return jsonRes({ error: f === 'name' ? 'Name contains characters that are not allowed.'
-            : `${f} must use English/Latin letters only.` }, 400, cors);
+        if (!isSafeName(v)) {
+          return jsonRes({ error: `${f} contains characters that are not allowed.` }, 400, cors);
         }
         if (f === 'country') v = normalizeCountry(v) || v;
         updates.push(`${f} = ?`);
@@ -5715,7 +5725,7 @@ async function handleAuthorizePost(request, env, ip, ua) {
   if (origin !== IDP_ORIGIN || (sfs && sfs !== 'same-origin')) {
     return new Response('cross_site_blocked', { status: 403 });
   }
-  const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, false);
+  const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, true);
   if (!rl.ok) return new Response('rate_limited', { status: 429 });
 
   let body;
@@ -5770,7 +5780,7 @@ async function mintCodeAndRedirect(env, userId, clientOrigin, redirectExact, sta
 
 // ── POST /token/exchange — cookieless, no-store ──
 async function handleTokenExchange(request, env, ip, ua, cors) {
-  const rlIp = await rateLimit(env, 'exch_ip', ip, EXCH_IP_MAX, 60, false);
+  const rlIp = await rateLimit(env, 'exch_ip', ip, EXCH_IP_MAX, 60, true);
   if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   let body;
   try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
@@ -5797,7 +5807,7 @@ async function handleTokenExchange(request, env, ip, ua, cors) {
   const u = await env.DB.prepare("SELECT id,is_active FROM users WHERE id=?").bind(row.user_id).first();
   if (!u || !u.is_active) return jsonNoStore({ error: 'user_inactive' }, 401, cors);
 
-  const rlAcct = await rateLimit(env, 'exch_acct', String(row.user_id), EXCH_ACCT_MAX, 60, false);
+  const rlAcct = await rateLimit(env, 'exch_acct', String(row.user_id), EXCH_ACCT_MAX, 60, true);
   if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   const t = await mintFamilyTokens(env, row.user_id, client_origin, ip, ua, null);
   return jsonNoStore({ access_token: t.access_token, refresh_token: t.refresh_token, token_type: 'Bearer', expires_in: t.expires_in }, 200, cors);
@@ -5805,7 +5815,7 @@ async function handleTokenExchange(request, env, ip, ua, cors) {
 
 // ── POST /token/refresh — rotating single-use, reuse→chain revoke ──
 async function handleTokenRefresh(request, env, ip, ua, cors) {
-  const rlIp = await rateLimit(env, 'rt_ip', ip, RT_IP_MAX, 60, false);
+  const rlIp = await rateLimit(env, 'rt_ip', ip, RT_IP_MAX, 60, true);
   if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   let body;
   try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
@@ -5832,7 +5842,7 @@ async function handleTokenRefresh(request, env, ip, ua, cors) {
   ).bind(rtHash).run();
 
   if (claim.meta && claim.meta.changes === 1) {
-    const rlAcct = await rateLimit(env, 'rt_acct', String(rt.user_id), RT_ACCT_MAX, 60, false);
+    const rlAcct = await rateLimit(env, 'rt_acct', String(rt.user_id), RT_ACCT_MAX, 60, true);
     if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
     const t = await mintFamilyTokens(env, rt.user_id, client_origin, ip, ua, {
       chainId: rt.chain_id, generation: rt.generation, parentHash: rtHash, absoluteExpiresAt: rt.absolute_expires_at,
@@ -6124,17 +6134,17 @@ async function handleAccountUpdateProfile(request, env) {
   // emails print, so whatever is stored here is displayed to strangers and to the owner. Same
   // check as handleRegister and the api.* handleUpdateProfile twin.
   //
-  // Via latinOkOrUnchanged, for the same reason as that twin: renderAccountPage writes the
+  // Via charsetOkOrUnchanged, for the same reason as that twin: renderAccountPage writes the
   // stored row back into these four inputs, so every save re-posts values the user did not
   // touch — including a name that Google supplied in a non-Latin script and that no filter
   // ever saw. Checking those unconditionally made the Save button impossible to satisfy for
   // those users, and this handler is the only thing on accounts.* that sets
   // profile_complete = 1, so it took their downloads with it. A value identical to the one
   // in the column is not something the user is introducing; a changed one still has to pass.
-  // `name` stays optional — latinOkOrUnchanged treats blank as fine, and institution,
+  // `name` stays optional — charsetOkOrUnchanged treats blank as fine, and institution,
   // country and role are already required non-blank by the check above.
-  if (!latinOkOrUnchanged(name, user.name) || !latinOkOrUnchanged(institution, user.institution) ||
-      !latinOkOrUnchanged(country, user.country) || !latinOkOrUnchanged(role, user.role)) {
+  if (!charsetOkOrUnchanged(name, user.name) || !charsetOkOrUnchanged(institution, user.institution) ||
+      !charsetOkOrUnchanged(country, user.country) || !charsetOkOrUnchanged(role, user.role)) {
     return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must use English/Latin letters only.' }), { status: 200, headers: accountPageHeaders });
   }
   await env.DB.prepare('UPDATE users SET name = ?, institution = ?, country = ?, role = ?, profile_complete = 1 WHERE id = ?')
@@ -6776,13 +6786,13 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
       const rawInst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
       const rawRole = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
       const rawCtry = (profile && profile.country) || country || '';
-      const inst = isLatinish(rawInst) ? rawInst.trim().slice(0, 200) : '';
-      const role = isLatinish(rawRole) ? rawRole.trim().slice(0, 100) : '';
-      const ctry = isLatinish(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
+      const inst = isSafeName(rawInst) ? rawInst.trim().slice(0, 200) : '';
+      const role = isSafeName(rawRole) ? rawRole.trim().slice(0, 100) : '';
+      const ctry = isSafeName(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
       const emailLocal = profEmail.split('@')[0];
-      // isSafeName, not isLatinish: ORCID supplies the researcher's own name, and discarding a
-      // Hangul or Cyrillic one in favour of their email local-part renamed real people to a
-      // mail prefix. institution/role/country above stay Latin-only — those are rendered publicly.
+      // ORCID supplies the researcher's own name, and discarding a Hangul or Cyrillic one in
+      // favour of their email local-part renamed real people to a mail prefix. institution,
+      // role and country above now use the same rule — there is only one charset rule left.
       const safeName = isSafeName(name) ? name.trim().slice(0, 100)
         : (isSafeName(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
       const profileJson = profile ? JSON.stringify(profile) : null;
@@ -7214,7 +7224,7 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   // rendered fields stay Latin-only. Both registration doors must agree — this is the family
   // IdP, so a rule that differs here produces "it let me in on one site" bug reports.
   if (!isSafeName(name)) return rerr('Please enter your name.');
-  if (!isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) return rerr('Institution, country, and role must use English/Latin letters only.');
+  if (!isSafeName(institution) || !isSafeName(userCountry) || !isSafeName(role)) return rerr('Institution, country, and role contain characters that are not allowed.');
   const normalizedCountry = normalizeCountry(userCountry) || userCountry.trim();
   const pw = checkPasswordStrength(password);
   if (!pw.ok) return rerr(pw.error);
