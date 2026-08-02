@@ -219,6 +219,58 @@ Expect `303 https://example.com/auth/callback#error=login_required&state=…`.
 Then confirm an **unregistered** `client_id` and a **mismatched** `redirect_uri` both return
 `400` with no redirect. If either redirects, stop — you have an open redirect.
 
+### 7.7 Verify that SIGN-OUT ACTUALLY HOLDS
+
+Do not skip this because sign-out "obviously works". It shipped broken on 2026-08-02 and the
+symptom was invisible to the person who wrote it: sign out, the page flashes signed-out, and a
+moment later you are signed back in with your API key on screen. It also does NOT reproduce in a
+private window — a fresh profile has no IdP cookie and no refresh token to resume FROM, so the
+one place you are most likely to test is the one place the bug cannot appear.
+
+Run all three in the browser console **on the site under test**. No credentials are needed.
+
+**1. Sign-out must not depend on the network.** Plant a token the server cannot honour, so the
+revocation call fails, then read the token back in the SAME synchronous turn:
+
+```js
+localStorage.setItem('ekd_rt', 'bogus-token');
+window.EKD.logout();                       // deliberately NOT awaited
+localStorage.getItem('ekd_rt');            // MUST be null already
+window.EKD.isLoggedIn();                   // MUST be false already
+```
+
+If the token is still there, teardown is sitting after an `await` (§8.11).
+
+**2. Only a deliberate sign-in may retire the marker.** The SDK's `login` event fires for the
+automatic resume too:
+
+```js
+sessionStorage.setItem('ekd_signed_out','1');
+<yourLoginHandler>({ deliberate: false });  sessionStorage.getItem('ekd_signed_out'); // '1'
+sessionStorage.setItem('ekd_signed_out','1');
+<yourLoginHandler>({ deliberate: true  });  sessionStorage.getItem('ekd_signed_out'); // null
+sessionStorage.setItem('ekd_signed_out','1');
+<yourLoginHandler>();                       sessionStorage.getItem('ekd_signed_out'); // '1'
+```
+
+The third case matters: **no detail must fail CLOSED** (stay signed out). A handler written as
+`if (!detail.deliberate)` throws on it, and a handler that ignores the argument silently
+regresses to the original bug.
+
+**3. The state must survive a reload.** Prime the exact post-sign-out state and load the page:
+
+```js
+['edl_key','edl_family','ekd_rt','ekd_at'].forEach(k => localStorage.removeItem(k));
+sessionStorage.setItem('ekd_signed_out','1');
+sessionStorage.removeItem('ekd_silent_done');
+location.reload();
+// after load: still on YOUR origin (no bounce to accounts.), ekd_rt still null, nav says "Sign in"
+```
+
+A bounce to `accounts.elkassabgidata.com` here means the silent resume is not consulting the
+marker. Confirmed passing on econdatalibrary.com and hfdatalibrary.com on 2026-08-02, and
+confirmed working in normal use by Ahmed the same day.
+
 ---
 
 ## 8. Invariants — do not break these
