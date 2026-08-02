@@ -5234,3 +5234,36 @@ digest.
 
 Related: R246 (reported a config figure as if it were reality), R249 (confident claims from
 tools that could not support them).
+
+### R252 — "the indicator is available" is not "the series are available"
+
+Measuring whether the three WHO sources could leave the banned mirror, I probed all 60
+indicator codes against WHO GHO, found 59 of 60 serve rows, and reported: **who_rs 100%,
+who_hwf 100%, who_sdg 67.1%**. I said it to Ahmed in those words.
+
+Then I actually ran the fetcher. who_rs returns 1,558 of our 2,207 published keys — **70.6%**,
+not 100%. All nine indicators serve rows, but WHO's current release no longer carries some
+country x indicator cells we publish (RS_198.HKG, RS_198.MAC, RS_208.ALB, 649 in total).
+
+The error is granularity. I measured at INDICATOR level and reported at SERIES level, and the
+two differ by exactly the thing that matters: an indicator "having data" says nothing about
+WHICH cells it has. That is the third time today I have taken a number gathered at one grain
+and stated it at another (R246 scheduled-vs-attempted, R249 call-sites-vs-executions), and the
+tell was there — the first version of the coverage script printed "1228.7%" and "632.0%",
+which I fixed by recomputing on distinct keys without asking what ELSE the two grains might be
+hiding.
+
+No harm done: merge never shrinks, so the 649 unrefreshed keys stay in the store, and the
+migration is still correct and still the right move. The damage was to the CLAIM.
+
+**The rules.**
+1. Measure at the grain you intend to REPORT at. If the sentence will say "series", the
+   measurement has to count series — a proxy one level up is a different quantity wearing the
+   same units.
+2. An impossible intermediate number (>100%) is not just an arithmetic slip to patch; it is
+   evidence the two sides of the ratio are different KINDS of thing. Fix the arithmetic AND
+   re-ask what each side counts.
+3. The cheap probe is for FEASIBILITY, the real run is for COVERAGE. Do not let the first
+   stand in for the second, especially once it is being quoted to the user.
+
+Related: R246, R249 (same shape, same day), R105 (recall is not the gate).
