@@ -498,6 +498,43 @@ order.slice(0,20).forEach((i,n)=>console.log((D[i.institution]?'[icon] ':'[GAP ]
 `no icon in visible top 20: 0` is the pass condition. Run the same script against the other
 family sites and diff the output — the ordered lists must be byte-identical.
 
+### 13.2 Re-verifying the institution list
+
+Run this when the list has grown and looks untidy. It was last run 2026-08-02 over 249 entries
+(18 agents, 516 searches) and produced: 4 removals, 53 renames, 3 rescues.
+
+**The shape that matters is FIND then DEFEND.** One pass web-searches every entry and marks each
+REAL or UNVERIFIABLE. A second pass takes only the UNVERIFIABLE ones and tries to PROVE THEM REAL,
+searching differently — company registries (Companies House, GLEIF, ROR, OpenAlex, Wikidata),
+the string as a ticker, as a transliteration, as an abbreviation, with legal suffixes.
+
+That second pass is not ceremony. On the 2026-08-02 run it overturned three deletions:
+
+* `Maolei` — a registered UK company, *JINAN MAOLEI BEARING CO., LIMITED*;
+* `Rmuut` — Rajamangala University of Technology Thanyaburi, a real Thai university;
+* `Policand Institution`, `University of Sweden` — thin but non-empty registry evidence.
+
+Without it, four of the seven proposed deletions would have removed a real person's institution.
+
+**The asymmetry is the whole design.** A wrong REAL leaves one odd row on a page. A wrong
+UNVERIFIABLE deletes real data from a public page. Tell the agents that explicitly, and tell them
+that companies count — Amazon, NVIDIA, Nasdaq and one-person LLCs are legitimate institutions
+here, and an acronym that maps to several real universities is REAL (just not renamable).
+
+**Renames need a human.** The sweep proposed 107; only 53 were applied. Rename ONLY a defect —
+a misspelling, joined or missing words, broken casing, or an acronym a reader cannot resolve.
+REJECT renames that merely add `Inc.`, `The`, a legal long form, or a native-language
+parenthetical: `Amazon` is better than `Amazon.com, Inc.`, and `Virginia Tech` is better than
+`Virginia Polytechnic Institute and State University`. Two specific calls worth keeping:
+
+* `USA` is a genuine abbreviation of the University of South Alabama, and is NOT renamed —
+  someone typing it almost certainly means the country, and guessing invents an affiliation.
+* `Postech` is left alone: already recognisable, and renaming would orphan its rank and icon.
+
+**Every rename must be checked against §13.1's maps before it ships**, and adding the new keys is
+string surgery on an object literal — the file must be PARSED afterwards, not eyeballed. See
+ledger R227 for the `,,` that broke one of the two pages while the other was fine.
+
 **Casing is fixed in the worker, not the page.** `titleCaseInstitution()` only repairs names with
 **no** uppercase at all (`harvard university`). A name like `University of bath` already contains a
 capital, so it is left alone — repair that with an `INSTITUTION_ALIASES` entry instead, which
