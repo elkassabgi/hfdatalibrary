@@ -4402,6 +4402,29 @@ cure.
 5. Do not log a mistake as caught until the mistake is confirmed to have been real. A ledger of
    phantom bugs teaches phantom lessons.
 
+**Then I did it a THIRD time in the same hour, correcting the correction.** To measure what my
+change actually did, I ran the generator with and without it and got "0 files differ" -- so I
+declared the change 100% dead code and reverted it. The extraction of the "previous" generator had
+silently produced the CURRENT file (both 207,843 bytes), so I had compared my generator against
+itself. Byte-identical output was the tell, and I read it as a result instead of as an impossible
+measurement.
+
+The revert then removed 978 lines -- the entire SEO generator rewrite -- because my original commit
+had swept that uncommitted work in alongside my ~69-line guard (R230). Un-reverting aborted on the
+dirty tree, so the repair was: restore the file from the commit, surgically strip only my own two
+edits, regenerate, and diff again with a comparison that was actually valid.
+
+**The measured truth, finally.** The change alters exactly 2 of 224 pages, and both gain a true
+fact: scb `from 1749` (only 5 of its 2,550 series carry the impossible 0114) and stat_slovenia
+`from 1857` (23 of 4,134 carry 0001). maddison and ggdc keep their genuine year-1 starts. The
+`_MAX_PLAUSIBLE_END` half WAS dead -- `sane_date` caps at `year + 2`, tighter than my 2126 -- and
+was dropped. What shipped is the corroboration test alone, commented as recovering a hidden true
+value rather than as fixing a bug that never existed.
+
+**The rule this adds.** A comparison that returns "no difference at all" is more likely to be a
+broken comparison than a real finding. Verify the two inputs ARE different before believing their
+outputs are the same -- check the sizes, check a value you know differs.
+
 Related: R222 and R227 (same failure: trusting a reconstruction over the artifact), R230 (also
 corrected after the fact, also a premise I never tested).
 
