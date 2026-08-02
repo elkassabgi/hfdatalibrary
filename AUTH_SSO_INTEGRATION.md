@@ -270,6 +270,24 @@ Then confirm an **unregistered** `client_id` and a **mismatched** `redirect_uri`
 10. **Never put a literal control character in source.** Write `‪`, not the byte. An
     invisible character does not survive an editor round-trip or a re-encode (ledger R196), and
     a reviewer cannot see what they are approving.
+11. **Sign-out clears local state BEFORE it calls the server, never after.** `EKD.logout()` used
+    to `await postJson('/logout')` and only then `clearLocal()`, so a revocation that was slow,
+    offline, blocked by an extension or answered with a 5xx left `ekd_rt` in localStorage — and
+    the next page load refreshed from it and signed the visitor straight back in with their API
+    key on screen. Server revocation is best-effort and follows; whether a sign-out HOLDS must
+    never depend on reaching the network. (Ledger R228.)
+12. **`ekd_signed_out` may only be cleared by a DELIBERATE sign-in.** The SDK's `login` event
+    fires for BOTH the popup exchange and the automatic resume `init()` performs on every page
+    load, so a handler that clears the flag on any `login` is wiped by the exact path the flag
+    exists to suppress. The event now carries `deliberate: true|false` — gate on it:
+
+    ```js
+    window.EKD.on('login', function (detail) {
+      if (detail && detail.deliberate) sessionStorage.removeItem('ekd_signed_out');
+    });
+    ```
+
+    A new site copying the old snippet reintroduces "I signed out and it signed me back in".
 
 ---
 
