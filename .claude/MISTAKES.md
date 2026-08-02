@@ -4438,3 +4438,48 @@ What survives, because it was verified independently of that file:
 **The rule.** Before quoting a count off a state store, establish WHICH store the thing being
 measured writes to. A local file that opens, queries cleanly and returns plausible numbers gives
 no hint that it is the wrong copy — every symptom of the mistake looks like data.
+
+### R232 — I wired in a monitor that would have examined nothing, and passed
+
+Earlier today I added a "Relay staleness" step to updater-daily, because the DBnomics relay
+audit is the only check that can tell a frozen relay from a quiet publisher — 1,481,345 served
+series sit behind an index that has not moved in at least six months, and nothing in CI could
+see it. Good step. I wrote a careful comment explaining why it matters.
+
+I did not check that it could run.
+
+The audit derives its entire subject list from crawl checkpoints in
+`data/raw/dbnomics/_ckpt_datasets`. `data/` is gitignored, so those 91 files (7 MB) are not on a
+runner. And the loader is:
+
+    if not os.path.isdir(CKPT):
+        return out          # empty dict, no complaint
+
+So in CI it would have printed `checkpointed DBnomics datasets: 0`, found 0 relayed sources,
+reported 0 stale, and exited 0 — under a `|| true` I had added myself to stop a DBnomics probe
+outage reddening the run. A green tick, every day, over 1.48 million frozen series, produced by
+looking at nothing. It never got to run before I caught it only because I pushed it after the
+06:00 cron had already started.
+
+The bitter part: this is the SAME defect I spent the day fixing in other people's code. bls
+reported "no new rows" over 96.2% of a survey it never fetched. gleif reported partial forever
+for a check that did not apply to it. dst reported no_change while 472 tables moved. I wrote
+"a source should never be able to report green over data it does not look at" into three commit
+messages, and then shipped a monitor that does exactly that.
+
+**Fixed.** The tool now exits 2 for "could not audit" with a loud banner, and 0 for a probe
+outage — two different failures that must not share an exit code. The workflow swallows only the
+latter, and `|| rc=$?` guards the read because Actions runs the step under `bash -e`, where an
+unguarded non-zero exit aborts before rc can be inspected.
+
+**The rules.**
+1. A new check is not done when it is wired up. It is done when you have seen it produce a real
+   verdict IN THE ENVIRONMENT IT RUNS IN — and seen it FAIL when it should.
+2. "Cannot evaluate" and "evaluated, all clear" must never share an exit code, a log line, or a
+   colour. Silence about nothing looks exactly like silence about everything being fine.
+3. `|| true` on a monitor deserves the same scrutiny as a bare `except:`. Ask which failures it
+   is swallowing, and whether "the monitor is broken" is one of them.
+4. Check the INPUTS exist where the job runs, not where you wrote it. Gitignored paths are the
+   usual trap; the code is identical in both places and only the data is missing.
+
+Related: R230 (a sample that could not detect the thing it was sampling for), R51.
