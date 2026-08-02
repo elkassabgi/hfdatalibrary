@@ -4740,3 +4740,39 @@ hardcoded label as proof.
 
 Related: R230 and R232 — this is the same family, a conclusion resting on something that was
 never actually looked at.
+
+### R240 — I wrote a workaround for a missing key instead of asking why the key was invisible
+
+bea has refused every run since it was built: "BEA_API_KEY is not set, so nothing can be
+fetched". I diagnosed that earlier today, checked `gh secret list`, confirmed no BEA secret
+exists, and filed it as blocked on Ahmed registering at bea.gov. Twice, across #23 and #53.
+
+BEA_API_KEY is in the repo's `.env`. It has been there the whole time. What is missing is not
+the key — it is that NOTHING loads `.env` into the environment: not the orchestrator, not
+run_local_heavy.ps1, not any module in the package. A fetcher reading `os.environ` cannot see a
+credential sitting in a file three directories up.
+
+Worse: I hit the identical wall four hours earlier with census, discovered the Census API
+answers an unauthenticated request with HTTP 200 and an HTML "Missing Key" page (R235), and
+wrote census a PRIVATE `_api_key()` that reads `.env`. I solved the problem, locally, for one
+source, and did not ask the obvious next question — if a fetcher needs bespoke code to read the
+project's own key file, how do the other eighty-eight get their keys? The answer was "the ones
+whose keys are GitHub secrets are fine, and the rest are silently broken".
+
+Two identical failures four hours apart, and I treated the first as a census quirk.
+
+**Fixed** (88f91d6a): `_common.api_key(name)` — environment first, then `.env`, then
+`.env.local`. bea uses it, census's private helper is now a wrapper, and bea is routed
+`run_location: local` where `.env` lives. 240 published series that had never been refreshed
+become refreshable tonight, with nobody registering anything.
+
+**The rules.**
+1. The SECOND time you write the same workaround, stop and find the missing primitive. One is a
+   fix; two is a design gap you are papering over per-caller.
+2. "The credential is missing" and "the credential is unreadable from here" produce identical
+   error messages and have opposite fixes. Check whether the value EXISTS somewhere before
+   escalating to whoever would create it.
+3. Escalating to a human is an action with a cost, and it deserves the same standard of
+   evidence as a code change. I told Ahmed twice to go register for something he already had.
+
+Related: R235 (same fetcher family, same day, the 200-that-means-failure half of this).
