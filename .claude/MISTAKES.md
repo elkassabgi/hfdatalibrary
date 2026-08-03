@@ -7696,3 +7696,43 @@ READS is a class you have half-measured. Define it by what the code DOES, then c
 false positives by hand.
 
 Related: R303 (the half I shipped), R83/R190 (behaviour-derived vs grep-derived), R299.
+
+### R307 — the watchdog covered the jobs I inherited and none of the jobs I started
+
+A reboot on 2026-08-03 killed six background jobs. Three came back by themselves within minutes:
+cbs_nl, gus_dbw and istat_sliced, because they are in RELAUNCH_GUARD.ps1's tracked table and a
+Startup launcher restarts the watchdog loop. Three did not: a statcan derive, a noaa re-derive and
+the eurostat re-key measurement — all of which I had started by hand, all of which would have sat
+dead until someone happened to look.
+
+The guard was not broken and needed no fixing. It covered exactly the jobs someone had once taken
+the trouble to register, and I had spent the day launching long jobs with `nohup ... &` and then
+reporting them as "running". A job that has to be relaunched by a person is not running; it is
+waiting for that person to notice. The noaa pass had already reached ~31% and that work is simply
+gone.
+
+FIXED by registering all three, through a small runner that writes logs/<n>.DONE only on exit 0 —
+so the guard resumes anything killed and stops relaunching anything that genuinely finished.
+
+AND BY MAKING THE RE-DERIVE RESUMABLE, which is the part I would have skipped. --skip-existing
+cannot help a RE-derive: every key already exists from the original derive, so it skips everything
+and does nothing. The distinguishing fact was already on every R2 object — LastModified — so
+--skip-newer-than is one comparison inside the listing pass that already ran. Without it every
+reboot restarts a 14-hour job from zero, and the reboot rate is not something I control.
+
+TWO BUGS THAT ONLY APPEARED BECAUSE I TESTED THE RELAUNCH INSTEAD OF DECLARING IT DONE:
+
+    `-JobArgs -u tools/x.py --dry-run` never bound. PowerShell treats any array element beginning
+    with '-' as a PARAMETER NAME, so the runner died before executing a single line — while the
+    guard had already written "relaunched long job rekey_eurostat" to its log. The log said it
+    started and nothing had. I would have shipped that and told the user they were covered.
+
+    A [hashtable] cannot cross a `powershell -File` boundary; per-job env would have arrived as the
+    literal string "System.Collections.Hashtable" and AQUEDUCT_BACKEND would silently not be set —
+    the job would run happily against the local mirror instead of R2 (R296, again).
+
+Both were invisible in the code and obvious the moment I killed a job and watched. The test that
+mattered was not "does the guard skip live jobs" (it did, immediately) but "does it actually
+restart a dead one".
+
+Related: R296 (the wrong store, silently), R290 (a job whose progress nobody could see), R273.
