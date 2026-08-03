@@ -7695,7 +7695,17 @@ The rule I keep relearning in new costumes (R73, R83, R190, R299): a class defin
 READS is a class you have half-measured. Define it by what the code DOES, then check the tool's
 false positives by hand.
 
-Related: R303 (the half I shipped), R83/R190 (behaviour-derived vs grep-derived), R299.
+PROVEN ON A REAL FETCHER, after R311 showed that unit-testing the piece I edited is not enough.
+Forced ember's deadline (BUDGET_MIN patched to 0.02, local mirror) and read what it actually
+reported:
+
+    status: partial
+    error : 1 sub-unit(s) attempted, none failed; 49 deferred by budget and taken next tick [...]
+
+Before the change that same run would have read "49/50 sub-unit(s) transient-failed; will retry".
+The denominator is now what was attempted, and nothing claims to have failed.
+
+Related: R303 (the half I shipped), R83/R190 (behaviour-derived vs grep-derived), R299, R311.
 
 ### R307 — the watchdog covered the jobs I inherited and none of the jobs I started
 
