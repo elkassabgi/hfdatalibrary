@@ -6943,3 +6943,41 @@ And when I do not have a measurement, the honest report is "running, progress no
 not a number that sounds right.
 
 Related: R246 (scheduled is not attempted — same disease, different surface), R248, R231.
+
+### R291 — a queued run is not a reservation, and my own proof runs evicted the one I was waiting for
+
+updater-heavy run 30790451118 was created 06:30 on 2026-08-03, started ZERO jobs, and was cancelled
+at 08:19 — the exact minute the next updater-daily run was created. All nine heavy sources got no
+run that day. cepii_baci, which had been restored to that matrix on 2026-08-02 specifically to clear
+RED-UNRUN, stayed RED-UNRUN for a reason that has nothing to do with cepii_baci, and I was about to
+go debug its fetcher.
+
+TWO THINGS I HAD WRONG.
+
+`cancel-in-progress: false` does not mean "every run eventually runs". It means GitHub holds at
+most ONE pending run per concurrency group, and a newer arrival EVICTS the one already waiting. I
+had read that setting as a queue. It is a single slot. Both workflows share `aqueduct-updater` on
+purpose (R5 — the state store is single-writer), so this is not a misconfiguration to undo; it is a
+property of the setting that I did not know and that the config comment does not mention.
+
+And the cause was me. updater-daily fires on schedule + workflow_dispatch only — no push trigger,
+no loop. Of the eight daily runs that day, SEVEN were my own workflow_dispatch proof runs. One of
+them occupied the group 04:37-08:22; another, at 08:19, evicted the waiting heavy run. I spent the
+session dispatching runs to prove fixes, and the cost landed on a different workflow, a day later,
+looking exactly like a broken source.
+
+The structural part, which is not mine: the 03:00 cron was chosen to sit "well clear of the 06:00
+daily run", and that reasoning assumes cron fires on time. GitHub delays scheduled runs under load —
+this one fired at 06:30, into the contested window. A fixed offset cannot dodge a variable delay.
+
+FIXED by adding a second cron at 15:00 UTC. It cannot make eviction impossible; it makes a single
+eviction cost hours instead of a day. It is cheap for the reason the workflow's own comment already
+gives: the orchestrator's TTL due-check decides what actually runs, so an extra pass costs one
+no-op probe per not-due source. Verified the file still parses and both crons are present.
+
+The general rule: before debugging a source that "never runs", check whether it was ever GIVEN a
+turn. RED-UNRUN is a claim about outcomes, and an outcome requires an attempt (R246 again — but
+this time the missing attempt was upstream of the orchestrator entirely, in the CI scheduler, where
+none of our instruments look).
+
+Related: R246 (scheduled is not attempted), R5 (single-writer, why the group is shared), R273.
