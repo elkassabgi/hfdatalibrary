@@ -188,6 +188,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R280. BEFORE TAILING A STORE INCREMENTALLY, ASSERT distinct(dedup_keys) == rows. Key equality and membership are claims about the RELATION between fetched rows and the store; uniqueness is a claim about the STORE ALONE, so no comparison of the two can ever surface it. I proved mapping (55,233/1,622/2,808 distinct keys, 0 mismatches) and membership (R278), enabled 24 census intltrade flows, committed — then wrote the check and found 11 of 24 under-keyed: exports/statehs 3,356,888 rows under 4,400 distinct (series_key, obs_date), imports/usda 8,773 under 390. The first merge collapses the file; never-shrink refuses it, so it fails every run as a baffling 'refusing shrink' that reads as a fetcher bug. bds was the near-miss: 100% of its 5,910 returned rows matched a known key AND it holds them under 15 pairs. comtrade needed this same repair (#16) and I had the precedent. tools/audit_dedup_uniqueness.py, exits non-zero. [M-20260803-24]
 - R281. A CHECKER MUST READ THE PARAMETER IT JUDGES BY FROM THE CODE UNDER TEST, AND PRINT WHICH ONE IT USED. My dedup-uniqueness auditor hardcoded (series_key, obs_date) and reported 257 under-keyed files across 18 sources — 166 of treasury's 181, which are ALL false positives: treasury computes tuple(_identity_keys([...] + out_cols)) per file because its series_key is the endpoint path, constant within a file. The same assumption failed silently the other way: ofr keys on (series_id, obs_date) and worldbank_esg on (country, obs_date), so both were skipped as 'lacking key columns' and 71 files were never audited while the run read as a pass. It slipped through because it WORKED on census, whose DEDUP is the default — one correct answer is not validation of the method. 166 false positives would have sent someone re-keying a correct source (a published-id change, #46's class) and discredit the true findings in the same output. Also: never pipe a long diagnostic through `tail`; I lost 91 findings that way. [M-20260803-25]
 - R282. A TRUE AGGREGATE OVER THE WRONG FILE SET IS STILL THE WRONG ANSWER — before escalating one, ask which code path actually WRITES those files, and whether the damage would ALREADY BE VISIBLE if the hazard were real. 91 under-keyed bea files, 28 of them retaining >=97% so never-shrink (min_ratio=0.97) would pass them and silently drop 19,987 rows — all correct, and I was one step from calling it a live incident. bea's fetcher writes only to bea.parquet, which is NOT under-keyed; all 91 are in the served TREE that the first-pass ingester writes and the fetcher never touches. bea's own comment says so ('that file holds under 2% of the source's series') and I had read it as a remark about frontier reporting. The clincher was free: a completed collapsing merge leaves rows == pairs, and the tree still shows 3,017,142 vs 2,778,518, so nothing has landed. Finding survives, correctly scoped: prospective, for #65. [M-20260803-26]
+- R283. CLEARING THE BLOCKER YOU FOUND DOES NOT ESTABLISH THERE WAS ONLY ONE — before enabling anything, re-run the ORIGINAL claim through the REAL code path and require it to produce the thing you are enabling it for. census bds: under-keyed (5,910 rows / 15 pairs), solvable and solved — (series_key, obs_date, NAICS) unique at 5,910 = 5,910, measures excluded. Enabled it; tests passed; the tail returns ZERO. time=2023 gives 0 rows for the 21 columns the store holds and 5,516 for three required vars — all 21 are known to variables.json, the 2023 vintage just does not populate them, and Census answers empty. `from 2022` returns 2022 only. My evidence that bds was reachable came from a hand-picked 3-column probe days earlier, and the fetcher does not make that request. Reverted; the dimension finding kept in _EXTRA_DIMS. [M-20260803-27]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6626,3 +6627,44 @@ the 28-file / 19,987-row figure is exactly what they must pass `min_ratio=1.0` t
 
 Related: R241 (the store is what the RESOLVER opens, not what the fetcher writes — this is its
 mirror image), R281 (the same sweep, wrong for a different reason), R246.
+
+### R283 — I fixed the blocker I had found and shipped as if it were the only one
+
+**What happened.** bds was queued as the obvious next census family: measurably behind (stored
+2022, upstream publishing 2023), fetches cleanly, 100% of returned rows map to a key the store
+already holds. Its one known problem was under-keying — 5,910 rows under 15 distinct
+`(series_key, obs_date)` — and I solved that properly: one collapsed group of 394 rows differs
+only by NAICS, and `(series_key, obs_date, NAICS)` is unique at 5,910 = 5,910 with all 18
+measures excluded so revisions still overwrite. I added the dimension, enabled the family, and
+the tests passed.
+
+The tail returns nothing. Not because of the key:
+
+    time='from 2022' -> 5,910 rows, ALL 2022      time='2023' -> 0     (21 store columns)
+    time='2022'      -> 5,910                     time='2023' -> 5,516 (3 required vars)
+
+Every one of the 21 columns is known to `bds/variables.json`, so this is not an unknown-variable
+rejection — the 2023 vintage does not populate them all and Census answers empty rather than
+with nulls. And `from 2022` returns 2022 only, so the annual from-tail cannot reach 2023 either.
+bds needs a per-vintage column set, which is a different mechanism from a date tail.
+
+**Why the fix felt like completion.** The under-keying was real, the repair was correct, and it
+was verified on the full file. All true — and none of it touched the question the family was
+added to answer, which is "can this flow actually pull the period it is missing?" I had probed
+that days earlier with a hand-picked three-column request, got 5,516 rows, and carried the
+answer forward without noticing that the request the FETCHER makes is not the request I probed.
+Same shape as the `world` column earlier in this session: a hand-probe passes because of what it
+happened to leave out.
+
+**The rule.** Clearing the blocker you found does not establish there was only one. Before
+enabling anything, re-run the ORIGINAL claim end-to-end through the real code path — not the
+hand-probe that first suggested it — and require it to produce the thing you are enabling it
+for. Here that was one line: does the tail return a row dated after our frontier? It returned
+zero, and the whole enablement was wrong.
+
+The under-keying finding survives and is kept in `_EXTRA_DIMS`, because it is independently true
+and it documents that intltrade's period-suffix rule does NOT generalise: bds's measures carry
+no suffix, so that rule would sweep them into the key and make a revision duplicate.
+
+Related: R277 (a fix is finished when the source has been re-attempted), R280 (the check that
+found the under-keying), R281 (a hand-probe passing for the wrong reason).
