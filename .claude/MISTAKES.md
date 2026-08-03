@@ -174,6 +174,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R266. IN AN APPEND-ONLY STORE, BAD DATA DOES NOT MEAN THE PRODUCER IS STILL PRODUCING IT — RUN THE CURRENT CODE AGAINST THE SHAPE THAT FAILED. The impossible-date scan hit 7 sources and I wrote that the 4 PxWeb ones "likely" needed parser work. They did not: `core/pxweb.resolve_time_dim` has carried sane_lo=1500/sane_hi=2100 since 2026-07-21 and picks correctly on cubes shaped like every actual failure (date_parse_rate = 0.00 on the fabricating codes). The data was old and CANNOT age out, because merge never shrinks. I also reached for file mtimes to date the damage — mtime records the last MERGE, not when a row appeared, so a never-shrink store has no timestamp that answers the question. Code fix and data repair are different work with different blast radius; deciding which needs one cheap decisive test, not an inference from the symptom. cso genuinely WAS still producing them — it was the only ingester of eleven not routing through the shared resolver. One symptom, two causes. [M-20260803-10]
 - R267. A THRESHOLD FINDS CANDIDATES; ONLY READING A RECORD DECIDES — AND TWO SCANS OF THE SAME AGGREGATE ARE ONE MEASUREMENT, NOT CORROBORATION. Sweeping stores at 2102 (the tightest bound clear of UN WPP's real 2101) added exactly one source fleet-wide, `bfs` at 2150-12-31, which a scan of state cursors had also flagged. I was one step from filing it as a defect. Reading the rows: 49 of 5,337,621, dated 2102/2103/2104/2105 continuing smoothly from 2101-12-31 on keys with Beobachtungseinheit=Sx — Swiss demographic SCENARIO projections, real data. What separates fabrication from projection is invisible in a maximum and plain in a row: in every fake case the real time axis sits IN the series_key (timeperiod_m=2020M01, TLIST(A1)=2019) because it was not chosen as time, and the dates are a sequential CODE run; bfs has neither. This is also the empirical case for keeping merge_and_write's bound generous at 2200: the only thing a tighter automatic bound surfaces across 141 sources is legitimate data, and a guard that cries wolf gets switched off. [M-20260803-11]
 - R268. BEFORE CLOSING A TASK, RE-READ ITS TEXT AND ACCOUNT FOR EVERY CLAIM SEPARATELY — "DONE" ATTACHES TO THE WORK I REMEMBER DOING. Task #65 said "bea: 912,990 series are in the store and DARK ... AND the fetcher reads the wrong store". I fixed the second clause (a raw local glob that returned nothing under r2), proved it, and closed the task. The HEADLINE clause was untouched: bea still serves 240 series over a 913,230-series store, which tonight's log stated outright ("MIGRATED 240 legacy series", then done in 1 second). I caught it only by reading the run for an unrelated reason. Beware a task that mixes a BUG with a DECISION — here the dark half is gated on D1 capacity (#45) — because the bug is always the closable one. Where only part is done, say which part in the status line. [M-20260803-12]
+- R269. CORRECTS R266 — A SYNTHETIC TEST BUILT FROM MY HYPOTHESIS CAN ONLY CONFIRM IT; GET THE SHAPE FROM THE PUBLISHER. R266 said all four PxWeb sources with impossible dates had correct parsers and only stale data. `hagstofa` was NOT correct: a live re-parse of UMH11130.px gave 120 bad rows of 168. Its sentinels (3001-3004) sit ON the time axis itself — flagged time=True AND role.time, listed FIRST — so the right axis was always chosen and the codes on it merely are not all periods. My cube put real years first beside a separate classification dim, i.e. it encoded my guess, so it passed. `stat_slovenia` IS correct, now verified properly (05W0101S has no time axis at all; NASELJA parse rate 0.098 vs 0.6 threshold; its 6152-12-31 was settlement codes read as years). `statfin` and `cbs_nl` remain UNVERIFIED — unchecked, not correct. Also: bounding only `^\d{4}$` left `3001M03` -> 3001-03-01 while the live case looked clean, because that table uses bare years — enumerate the branches. [M-20260803-13]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5961,3 +5962,42 @@ tempt me to close it on the bug.
 
 Related: R246 (verify before believing a verdict), R263 (guard the post-state, not the
 selection — same shape: I checked what I did, not what remained).
+
+### R269 — CORRECTS R266: a synthetic test built from my hypothesis can only confirm it
+
+**What R266 claimed.** That all four PxWeb sources holding impossible dates (cbs_nl, statfin,
+stat_slovenia, hagstofa) had correct parsers and merely stale data, because
+`core/pxweb.resolve_time_dim` carries `sane_lo=1500, sane_hi=2100` and picked correctly on
+cubes shaped like each failure.
+
+**What is actually true.** Verified against the publishers this cycle:
+  * `hagstofa` — **WRONG, the parser was still broken.** Re-parsing UMH11130.px live gave 120
+    impossible rows out of 168, with the fix supposedly already in place.
+  * `stat_slovenia` — correct, and now properly verified: 05W0101S has NO time dimension at all
+    (`NASELJA` 6,152 settlement codes, `DRUŽINE`, both `time=None`), the resolver returns None
+    as designed, and NASELJA's parse rate is 0.098 against a 0.6 threshold. Its store's worst
+    date was 6152-12-31 — exactly NASELJA's cardinality, settlement codes read as years by the
+    OLD logic.
+  * `statfin`, `cbs_nl` — still UNVERIFIED. I could not reach statfin's table (my URL guess
+    returned 400) and have not checked cbs_nl. They are not "correct"; they are unchecked.
+
+**Why the synthetic test lied.** I built the cube from my HYPOTHESIS about the failure — a
+numeric classification dimension next to a clean time axis, real years listed first. hagstofa's
+real shape is different in the way that matters: the sentinels 3001–3004 live ON the time axis
+itself, which is flagged `time=True` AND carries `role.time`, and they are listed FIRST in the
+variable. The right axis was always being chosen; the codes on it simply are not all periods.
+My cube could not express that, so it passed. A test synthesised from a belief tests the belief,
+not the system.
+
+**The rule.** When checking whether production is still broken, get the shape from the
+PUBLISHER's metadata, not from my reconstruction of it. One live fetch of the failing table
+would have said this immediately — and did, the moment I ran it. Reserve synthetic cases for
+locking in behaviour AFTER the real shape is known.
+
+**Second-order.** Bounding only `^\d{4}$` made the live re-parse come back clean, because
+UMH11130 happens to use bare years — a unit test then caught `3001M03` still yielding
+3001-03-01. A partial fix that the reproducing case cannot distinguish from a complete one is
+the most dangerous kind, and only enumerating the branches found it.
+
+Related: R266 (the entry this corrects), R265 (the impossible-date thread), R134 (suspect the
+probe — here the probe was a test I wrote myself).
