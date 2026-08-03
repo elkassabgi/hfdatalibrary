@@ -170,6 +170,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R262. THE MEASURING INSTRUMENT IS A CLAIM TOO, AND IT DECAYS — RE-DERIVE "WHAT STARTS A RUN?" FROM THE SYSTEM, NOT FROM THE DEFINITION YOU WERE HANDED. My cycle figure came from `audit_schedule_coverage.py`, which counted `live:true` + updater-heavy matrix + sec-edgar-daily. A FOURTH scheduler exists: `run_local_heavy.ps1` runs everything with `run_location: local` REGARDLESS of `live`, so nine sources refreshed every ~20h read as unscheduled (bis, bls, census, eia, faostat, istat, oecd, statcan, vdem). Real number 120 of 217 / 9,496,558 series, not 112 / 9,479,138. Worst part: in ONE session I read the workstation log routing census, watched it merge +8,457 rows, and reported census as having no update path — two facts never compared. A definition describes the system as understood when written and does not grow when the system does. When a log contradicts a report in the same session, THAT is the finding. Keep the adapter caution when extending a counter — `cbs_nl`/`gus_dbw` are routed but fetcher-less, so STRANDED, not scheduled. [M-20260803-06]
 - R263. GUARD THE POST-STATE OF A DESTRUCTIVE OP, NOT JUST THE SELECTION — "DELETES EVERYTHING" IS NOT "DELETES THE STALE PART". Pruning ons_uk's 10,099,151 stale cursors (~3.93 GB of a 9.35 GB state object), I derived the keep-set from the source's own sidecar, added a length tripwire, refused while another writer held the state, and printed the delete-set first. All correct, all blind: the sidecar lists 40 current ds_ids and NOT ONE had a cursor row, because the source had not run since its grain was fixed — so the prune was really "delete 100% and leave it with no freshness data at all", and the post-condition would have PASSED because the intended keep-set was empty too. A check that asks "did I delete what I meant to" cannot see "what I meant to was everything". Ask what the world looks like afterwards. And note the real fix was ORDERING, not a guard: let the source run once so current cursors exist, then prune. A cleanup that appears to remove everything is usually running too EARLY, not too broadly. [M-20260803-07]
 - R264. A WRONG LISTING ALSO PUBLISHES FALSE NUMBERS ABOUT OUR OWN SYSTEM — AUDIT EVERY METRIC DERIVED FROM IT, AND COUNT THE STORE BEFORE CRYING DATA LOSS. dst reported obs falling 9,198,885 -> 231,035 (97.5%), which merge's never-shrink guard makes impossible; the store in fact held 9,220,012 rows across 707 files. `_total_rows()` read through blob but LISTED with os.listdir, and on an r2 runner that directory EXISTS as a scratch mirror holding only the files that run wrote — so the guard passed, the listing succeeded, and the sum was 40x low. Worse than R261's empty-listing case: a plausible non-empty number invites a hunt for a merge bug that does not exist, and gets recorded in the runs table and the daily digest where it outlives the defect. Fixed by c40bcd04. [M-20260803-08]
+- R265. FRESHNESS CHECKS ARE NOT CORRECTNESS CHECKS — ASK WHETHER A VALUE IS POSSIBLE, AND BOUND A HEURISTIC'S VALUE AS WELL AS ITS SHAPE. cso served 434,408 rows (0.887% of 48,960,271, across 11 files) dated beyond the year 2100 — 272,445 in Census 2016 at 9998-12-31. `is_time_dim` matched `^\d{4}...$` on a 5-value sample, CSO sentinels are 3001/9998/9999, and selection was FIRST-MATCH-WINS, so a classification axis earlier in the list beat the real TLIST one and its codes became years. Nothing caught it because every instrument we have measures RECENCY, and a fabricated FUTURE date makes a source look maximally fresh; the gate even filters forward-dated periods out by design (ABS 2046, UN WPP 2101 are real), which hides fabrication too. The state store could not show it either — only scanning the store did. `ingest_pxweb.py` had already required "a SANE year" for exactly this reason, one file away. Authoritative evidence must outrank a heuristic regardless of position. Fix is a parser SELECTION change, so the 11 files need a CLEAN RE-PULL, never a merge (R22). [M-20260803-09]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5813,3 +5814,47 @@ Fixed by the same commit that routed dst's listing (c40bcd04); the correction is
 
 Related: R261 (the listing bug), R36 (local vs CI), R241 (the store is what the resolver opens),
 R252 (the grain I measured was not the grain I reported).
+
+### R265 — a served source was publishing observations dated 9998, and only a store scan could see it
+
+**What happened.** Following R264's rule — when a listing is wrong, audit every NUMBER derived
+from it — I checked cso's frontier and found its maximum obs_date was **9999-12-31**. Scanning
+the live R2 store: **434,408 of 48,960,271 rows (0.887%), across 11 files**, carry an obs_date
+beyond the year 2100. 272,445 of them are in `10_Census_2016.parquet`, dated 9998-12-31. These
+are SERVED — anyone downloading those series gets them.
+
+The cause was legible in the keys once I looked: `is_time_dim` returns True when ≥60% of a
+FIVE-VALUE sample matches `^\d{4}[MQHSAW]?\d*$`, CSO classification dimensions are full of
+numeric sentinels (3001, 9998, 9999 = "not stated"/"all"), and selection was FIRST-MATCH-WINS.
+So a classification axis sitting earlier in the dimension list beat the real one and its codes
+became years. `CSO:VSA10:TLIST(A1)=2019:… -> 2452-12-31` is the proof: TLIST(A1)=2019 is in the
+KEY, which is where a dimension goes when it was NOT chosen as time. The right answer was
+present in the row and lost.
+
+**Why nothing caught it for so long.** Every instrument we have looks at RECENCY — is the newest
+observation old? A fabricated FUTURE date passes that trivially; it makes a source look maximally
+fresh. The health gate even filters forward-dated periods out of the recency signal by design
+(correctly — ABS projects to 2046, UN WPP to 2101), so the very mechanism that stops projections
+causing false alarms also hides fabricated dates. And the state store could not reveal it: a
+scan of every source's recorded frontier does not show cso at all, because cso's cursors never
+carried these values. Only reading the store found it.
+
+**The rules.**
+1. Freshness checks are not correctness checks. Something must also ask whether values are
+   POSSIBLE — a census table cannot report the year 9998 — and absurd-but-plausible-looking data
+   is invisible to every staleness instrument in the system.
+2. When a heuristic identifies a field by SHAPE (four digits = a year), bound the VALUE too.
+   The repo had already learned this: `ingest_pxweb.py`'s is_time_dim demands "a SANE year",
+   and its docstring describes this exact defect. The remedy sat one file away the entire time.
+3. First-match-wins over an unordered list is not a selection rule, it is an accident of
+   ordering. Authoritative evidence (a declared role, a known name) must outrank a heuristic
+   no matter where it appears.
+
+**And the fix is not finished.** This is a parser SELECTION change, so series_keys change and
+the 11 files need a CLEAN RE-PULL, not a merge — merging writes corrected keys alongside the
+wrong ones and never-shrink cannot see the duplication (R22). Fixing the parser without saying
+that would have left the bad rows in place while the tests went green.
+
+Related: R264 (audit every number a bad listing fed — this is where that led), R22 (a parser
+selection fix needs a re-pull), R256 (sweep the class: cso was the only first-match-wins
+ingester of eleven).
