@@ -7652,3 +7652,47 @@ date column _pick_date_field simply does not match. Filed as #87 rather than gue
 period column wrong is precisely how cso's axes got swapped (R288).
 
 Related: R288 (a swapped axis from a wrong period column), R281 (under-keyed stores), R231.
+
+### R306 — I derived a class from the label text and shipped half of it as "the fix"
+
+R303 found budget deferrals being tallied as transient FAILURES. I swept for the class with
+
+    grep -rn "transient_unit(.*defer" updater/strategies/fetchers/*.py
+
+got 11 fetchers, converted them, wrote a test that greps the same pattern, and shipped it saying
+the class was closed. It was exactly half.
+
+The other ten write the same bug with different words. insee_melodi:
+
+    if dl.spent():
+        print(f"[insee_melodi] budget {BUDGET_MIN} min spent — {code} not pulled this run ...")
+        tally.transient_unit(code)
+
+The label is a bare `code`; "deferred" lives in the print. Same for bis, cso, ember, fed_board,
+idb, ipea, stats_nz, wikidata, zillow. My grep asked what the call was CALLED, when the defining
+property is what it FOLLOWS: if control reaches `if dl.spent():` the budget is gone and nothing has
+failed. Re-derived that way, 41 deadline checks, 21 of them tallying — 11 already fixed, 10 not.
+
+WHAT IT COST, concretely. I had four items queued as "genuinely unexamined, needs investigation":
+insee_melodi 129/144, ipea 298/1491, idb 10/40, ember 4/48 — including the largest single failure
+count on the board. All four were deferrals. I had already probed INSEE and found it serving HTTP
+200 with 10,000 observations on page 1 of every flow, and was preparing to debug a source that was
+working perfectly.
+
+TWO THINGS THE SECOND PASS GOT RIGHT THAT THE FIRST WOULD NOT HAVE.
+
+A blanket text replace would have corrupted five files: bis, fed_board, ipea, stats_nz and zillow
+each contain `tally.transient_unit(<same arg>)` MORE THAN ONCE, and only one of them is the
+deferral. The script refused rather than guessing, and each was then edited by line.
+
+And _who_gho matched the behaviour sweep and is a FALSE positive: its deadline block `break`s with
+no tally call at all, while a genuine `except TransientError -> transient_unit(code)` sits ten lines
+below. A fixed 12-line window blamed the deadline for an unrelated handler. The guard test now ends
+a block at its `break`/`continue`, which is what "this block" means — and I checked it still bites
+by re-breaking ember in memory, because a guard that passes on a fixed tree proves nothing.
+
+The rule I keep relearning in new costumes (R73, R83, R190, R299): a class defined by how code
+READS is a class you have half-measured. Define it by what the code DOES, then check the tool's
+false positives by hand.
+
+Related: R303 (the half I shipped), R83/R190 (behaviour-derived vs grep-derived), R299.
