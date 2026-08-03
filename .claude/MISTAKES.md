@@ -7438,3 +7438,38 @@ split-period and need instrumenting through the FETCHER path, which is what repo
 
 Related: R299 (the find I over-generalised), R73/#73 (the positional class this actually belongs
 to), R288 (measuring the symptom got the scope wrong there too).
+
+### R301 — I wrote the rule this morning, then spent an investigation breaking it
+
+R297, written earlier today, ends: "a state row records the LAST attempt, not the current code — so
+on a list of failures, date every error against the fix history before treating any of them as
+work." Two of three errors in that very entry turned out to be already-fixed or artefacts.
+
+Hours later I took hagstofa's `26/1906 sub-unit(s) returned 200 but parsed 0 rows`, assumed it was
+cso's grammar gap, filed a task, probed the publisher, discovered it was actually POSITIONAL time
+codes, wrote a correction entry (R300) about over-generalising, and only then ran:
+
+    git log --since=2026-07-29 -- jobs/ingest_hagstofa.py
+    1188fb62 2026-08-02 hagstofa: positional time codes need their labels —
+                        26 "structural breaks" were parseable all along
+
+The same 26. Fixed on 2026-08-02, against a last attempt of 2026-07-30. The commit message names
+the exact count. Confirmed empirically too: parse_jsonstat2 on a live MAN07300 response returns
+81,655 rows today.
+
+So the entire investigation — several probes, a task, and a ledger entry about a wrong inference —
+rediscovered a bug that had been closed for two days. One `git log --since` at the start would have
+ended it, and I had written down that that is the first move.
+
+WHY THE RULE DID NOT FIRE. I was not treating hagstofa as "a failure to debug", which is the shape
+R297 describes. I was treating it as CORROBORATION for a pattern I had just found — evidence in
+support of an existing conclusion rather than a claim needing a check. Supporting evidence gets
+audited less than a primary claim, which is exactly backwards when the support is what widens the
+scope from one source to eight.
+
+Writing a rule is not installing it. The trigger has to be attached to the ARTEFACT — a stale-dated
+state row — and not to the mood of debugging, because the same artefact arrives disguised as
+corroboration at least as often as it arrives as a bug report.
+
+Related: R297 (the rule, and its own two instances), R300 (the over-generalisation this sits
+inside), R290 (a plausible number nobody was invited to check).
