@@ -7951,3 +7951,42 @@ that reasoning in the docstring, because the next person will meet `LIKE 'x%'` a
 non-obvious fact is that it does not use the index.
 
 Related: R308 (the missing index, same investigation), R290 (measuring the wrong thing).
+
+### R310 — a fix cleared two callers as safe in writing, and one of them was crashing in production
+
+a1c42881 fixed the "_max_by_key returns STRINGS" defect for boc, tcmb and riksbank, and recorded in
+_common.py:
+
+    "bcrp and scb work only because ISO strings sort and compare exactly like dates."
+
+That sentence is true where a string meets a string. It is false the moment one meets a real date,
+and both of those callers do exactly that:
+
+    bcrp   .isoformat() on the string, in the cursor-seed loop and again in last_db — 120 lines
+           downstream of the _max_by_key call. Its state row: attempt 2026-08-03 09:33Z,
+           UNEXPECTED:AttributeError("'str' object has no attribute 'isoformat'") — SIX HOURS
+           AFTER the fix that declared it safe. It had been in transient_fail every run since.
+    scb    _table_frontiers is annotated dict[str, dt.date] and passes the strings through, so
+           `stored_max.isoformat()` raises AND `_parse_date(c) > stored_max` raises TypeError —
+           and that comparison is the date-tail window that decides what gets fetched at all.
+           Latent only because scb has not run since 2026-07-23, before _max_by_key existed.
+
+WHY THE ORIGINAL SWEEP MISSED THEM, and it is not carelessness. It checked each fetcher's
+_max_by_key CALL SITE. At the call site both look fine — bcrp's even has a defensive
+`isinstance(d, dt.datetime)` branch. The damage is where the VALUE ends up: a dict that is
+returned, stored, and consumed by a different function a hundred lines away. A grep for the
+function name finds callers; it does not find consumers.
+
+TWO THINGS I DID DIFFERENTLY THAT MADE IT VISIBLE. I started from the STATE ROW (bcrp was
+transient_fail with the exact message the fix was about) rather than from the code, and I dated it
+against the fix, so "already fixed" was excluded before I read a line. And when the message matched
+a known bug I still checked WHERE it was raised instead of assuming the known site — bcrp's crash
+is not at the call site the previous fix had inspected.
+
+FIXED AT DIFFERENT LAYERS ON PURPOSE. bcrp accepts either type at both consumption points; scb is
+fixed inside _table_frontiers so its annotation becomes true, because its two consumers fail
+differently and patching one would only move the crash 90 lines. And the docstring sentence that
+caused this is now replaced with all five callers, their distinct failure modes, and the
+instruction to trace the value rather than the call.
+
+Related: R306 (a class derived from how code reads, not what it does), R300, R301.
