@@ -181,6 +181,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R273. STATE THAT MUST SURVIVE A RUN HAS TO BE WRITTEN WHERE AN INTERRUPTED RUN STILL REACHES IT — AND VERIFY PERSISTENCE BY LOOKING FOR THE ARTEFACT, NOT THE CALL. Only 2 of 14 rotating sources (boe, bcb) have ever persisted `_rotation.json`; the other twelve have none, so load_rotation() returns '' and every run restarts at the top — R190's remedy inert. All fifteen fetchers DO call save_rotation, correctly, near the END of the function; the orchestrator's 45-min cap KILLS the source rather than breaking its loop, so an overrunning fetcher never reaches its own bookmark. Exact correlation: the four confirmed hard-killed at 45.0 min (worldbank_wdi, stat_estonia, statfin, stat_slovenia) all lack bookmarks; the two that finish have them. Self-sustaining: killed -> no bookmark -> same prefix -> killed. Invisible in review because the code reads correctly. "The call is there" and "the file is there" are different claims. [M-20260803-17]
 - R274. NAME THE READER BEFORE CALLING AN INSTRUMENT DONE: WHO SEES THIS, FROM WHERE, WHEN? I fixed the watchdog-with-no-watchdog with a heartbeat file and wrote that "anyone can read" it — anyone ON THAT MACHINE, i.e. nobody, which is the premise of an unattended workstation. It was correct, current and unread for 10 hours. route_silence's docstring even said the instrument for a short outage "is the guard's own heartbeat on that machine"; I read that as both halves built, when the coarse net was in CI where it could fire and the fine one was on the box where it could not. A component's "the instrument for that is X" is a claim to VERIFY, not a citation. Now published to R2 per tick and read by updater-daily: own key (not the CAS state store, R5), age from the BODY not LastModified (a re-uploaded stale body would look fresh), and ABSENT exits 1 as UNINSTRUMENTED — passing on a missing object rebuilds the silence it exists to end. [M-20260803-18]
 - R275. BEFORE BELIEVING A STATUS, CONFIRM THE ID MEANS ONE THING. source_id `sec_edgar` denotes TWO products: the SERVED XBRL per-ticker set (17,276 catalog series, in util.ts, updated daily by sec-edgar-daily and parity-proven AAPL 25,135==25,135) and the UNSERVED 13f/insider giant (0 catalog, 0 util.ts) whose updater unit throws the ArrowInvalid. The registry entry `sec_edgar_xbrl` describes the served product while the catalog files it under `sec_edgar`. So the health gate calls a healthy served source broken, and the coverage audit calls it 'scheduled but not served' — both instruments wrong, opposite directions, one cause. Ruled out first, by measurement not inspection: both stores clean on a COMPLETE scan (0 out-of-ns rows, no timestamp[us] anywhere) and pandas coerces bad years to NaT. A registry comment saying a source was 'split out' is a re-pointing — go check what each name now denotes. [M-20260803-19]
+- R276. IF A LOOKUP ANSWERS "NOT FOUND" FOR EVERY KEY, SUSPECT THE ACCESSOR, NOT THE DATA — and copy the accessor from production code that already reads that structure. registry.load() returns {version, generated_from, sources:[...]}; health.py builds {e['source_id']: e for e in ...['sources']}. I called r.get('tcmb') on the 3-key dict, so it said None for every source that exists, and I reported cbs_nl/gus_dbw/zillow/ksh/cepii_baci as "NOT IN REGISTRY" and reasoned on it. All five are registered; zillow/ksh are live:False, correct for retired sources, so the gate never failed on them. Five agreeing probes are not corroboration when one broken accessor produces all five. Caught only because the gate printed RED-UNRUN zillow, which an absent source cannot produce — two instruments disagreeing is the signal. It also hid the real defect: `sec_edgar` (UNSERVED 13f/insider) is live:True while `sec_edgar_xbrl` (SERVED, 17,276 series) is not live at all. [M-20260803-20]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6294,3 +6295,44 @@ serving surface checked first. Recorded as a task rather than done blind.
 Related: R246 (measure what ran, not what is configured), R36 (I scanned the local copy first —
 the CI store is R2, and they differ), R35 (a green run that exercised nothing proves nothing —
 this one did exercise something, which is why the parity probe matters).
+
+### R276 — a lookup at the wrong level of a nested structure returns a uniform "no", and a uniform no reads as a finding
+
+**What happened.** `updater/registry.yaml` loads as `{version, generated_from, sources: [...]}` —
+a LIST of entries, each with a `source_id`. health.py knows this and does the right thing:
+`reg = {e["source_id"]: e for e in registry.load().get("sources", [])}`.
+
+I did `r = registry.load(); r.get("tcmb")`. That interrogates a three-key dict, so it answers
+None for every source_id in existence. On the strength of it I stated, as measured facts, that
+`cbs_nl`, `gus_dbw`, `zillow`, `ksh` and `cepii_baci` were "NOT IN REGISTRY" — and built on it,
+reasoning about cbs_nl and gus_dbw as unregistered crawlers scheduled only by the workstation
+route.
+
+The truth, once looked up correctly: all five ARE registered. cbs_nl and gus_dbw carry
+`run_location: local`; zillow and ksh are `live: False`, which is exactly correct for two
+retired sources and means the gate never failed on them at all (the RED-UNRUN rows I saw are the
+display table, which prints every source; `gate_failures` filters on `live`).
+
+**Why it was convincing.** A wrong lookup that raises gets fixed in seconds. This one returned a
+clean, plausible, CONSISTENT answer for every probe — and "absent from the registry" was a
+satisfying explanation for things I was already puzzled by, so each new None confirmed the story
+instead of testing it. Five sources agreeing is not corroboration when one broken accessor
+produces all five.
+
+**What saved it** was an inconsistency I could not explain away: the health gate printed
+`RED-UNRUN zillow`, which a source absent from the registry cannot produce, because the gate
+enumerates the registry. Two instruments disagreeing about the same object is the signal; the
+resolution was that mine was wrong.
+
+**The rule.** When a lookup answers "not found" for EVERY key you try, suspect the accessor
+before the data — check it against one key you are certain exists. And when you need to read a
+structure some production code already reads, copy that code's accessor rather than guessing the
+shape: health.py had the correct one-liner in view the whole time.
+
+**What it changed.** The sharpened form of R275: the registry entry `sec_edgar` — the UNSERVED
+13f/insider giant — is `live: True`, while `sec_edgar_xbrl`, which describes the SERVED product
+(17,276 catalog series, in util.ts), is not live at all. The served product stays fresh only
+because sec-edgar-daily.yml runs it on its own schedule, outside the registry entirely. That is
+a much sharper defect than "two products share a name", and I would have missed it.
+
+Related: R275 (the id collision this corrected), R249 (match the tool to the claim), R246.
