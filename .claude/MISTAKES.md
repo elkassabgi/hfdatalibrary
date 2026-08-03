@@ -190,6 +190,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R282. A TRUE AGGREGATE OVER THE WRONG FILE SET IS STILL THE WRONG ANSWER — before escalating one, ask which code path actually WRITES those files, and whether the damage would ALREADY BE VISIBLE if the hazard were real. 91 under-keyed bea files, 28 of them retaining >=97% so never-shrink (min_ratio=0.97) would pass them and silently drop 19,987 rows — all correct, and I was one step from calling it a live incident. bea's fetcher writes only to bea.parquet, which is NOT under-keyed; all 91 are in the served TREE that the first-pass ingester writes and the fetcher never touches. bea's own comment says so ('that file holds under 2% of the source's series') and I had read it as a remark about frontier reporting. The clincher was free: a completed collapsing merge leaves rows == pairs, and the tree still shows 3,017,142 vs 2,778,518, so nothing has landed. Finding survives, correctly scoped: prospective, for #65. [M-20260803-26]
 - R283. CLEARING THE BLOCKER YOU FOUND DOES NOT ESTABLISH THERE WAS ONLY ONE — before enabling anything, re-run the ORIGINAL claim through the REAL code path and require it to produce the thing you are enabling it for. census bds: under-keyed (5,910 rows / 15 pairs), solvable and solved — (series_key, obs_date, NAICS) unique at 5,910 = 5,910, measures excluded. Enabled it; tests passed; the tail returns ZERO. time=2023 gives 0 rows for the 21 columns the store holds and 5,516 for three required vars — all 21 are known to variables.json, the 2023 vintage just does not populate them, and Census answers empty. `from 2022` returns 2022 only. My evidence that bds was reachable came from a hand-picked 3-column probe days earlier, and the fetcher does not make that request. Reverted; the dimension finding kept in _EXTRA_DIMS. [M-20260803-27]
 - R284. AN EXCLUSION JUSTIFIES ITSELF — nothing ever tests the code you did not write, so check scope notes on a SCHEDULE, not on suspicion. census.py's header asserted the 60 non-EITS files "do not gain periods, they gain a whole new reference year"; Census's own catalogue lists every one as a timeseries dataset with c_vintage null, and 16 intltrade flows had been two months behind for as long as that sentence stood (exports/hs alone, 45,659 rows waiting). Nothing crashed: the 21 flows actually covered were current, so "census is up to date" was true of the measured part and false of the whole, and the coverage audit counted it SERVED+SCHEDULED without asking which of its 80 files the fetcher touches. Cheapest guard: for any source with more store files than the fetcher enumerates, probe ONE excluded file against the publisher. And write exclusions as dated MEASUREMENTS, never as properties — a measurement invites re-measurement. [M-20260803-28]
+- R285. WHEN AUDITING FOR A CAPABILITY, ENUMERATE ITS IMPLEMENTATIONS BEFORE COUNTING — and prefer evidence of BEHAVIOUR over evidence of the artefact. R273's mechanism was RIGHT and its prediction CONFIRMED: worldbank_wdi and hagstofa, bounded under the 45-min cap that used to kill them, have now written their first-ever _rotation.json (4 of 14, up from 2). But its count conflated a filename with a capability: stat_slovenia keeps _sweep_offset.json and ksh_stadat _bulk_vintages.json, so neither was ever bookmark-less. The behavioural test costs the same and cannot be fooled — a rotating source leaves SCATTERED write times (stat_slovenia: 50 blocks over 145 files), a stuck one leaves ONE contiguous stale tail (adb: 2 blocks, 44 of 54 flows frozen). That test found adb and cleared ilostat, owid, defillama, idb, insee_melodi and stat_slovenia — none distinguishable by filename. [M-20260803-29]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6704,3 +6705,38 @@ Corollary for writing them: state the exclusion as a MEASUREMENT with a date ("p
 
 Related: R275 (a registry comment saying "split out" is a re-pointing — verify what each name
 now denotes), R283 (re-run the original claim through the real code path), R246.
+
+### R285 — R273's prediction held, and its count was wrong: I searched for one filename, not for the mechanism
+
+**The prediction, confirmed.** R273 said twelve of fourteen rotating sources had never persisted
+a bookmark because the orchestrator's 45-minute cap kills a source before its end-of-function
+`save_rotation`, and it ended with a falsifiable claim: the four I had just bounded under the cap
+"should reach save_rotation and persist a bookmark on their next run. If the bookmarks are still
+absent afterwards, the cause is something else and this entry is wrong."
+
+Re-measured the same day: `_rotation.json` is now present for **worldbank_wdi and hagstofa** as
+well as boe and bcb — 4 of 14, up from 2. Two sources that had never in their lives written a
+bookmark wrote one once they stopped being killed. The mechanism was right.
+
+**The count was not.** R273 asked whether `_rotation.json` exists. That is one implementation of
+a bookmark, not the concept. stat_slovenia has never had that file and has never needed it — it
+keeps `_sweep_offset.json`, its own sweep bookmark, and its store proves it works: 50 alternating
+fresh/stale blocks over 145 files, which is what a rotating sweep looks like and the exact
+opposite of the contiguous tail a stuck one leaves. ksh_stadat likewise carries
+`_bulk_vintages.json`, the per-sub-unit freshness sidecar that `_common.load_rotation` names as
+the legitimate alternative. Neither was ever in the population R273 described, so "twelve without
+a bookmark" over-counted by conflating a filename with a capability.
+
+(The `_catalog.json` files under stat_estonia, ssb, stat_latvia and hagstofa are catalogues, not
+bookmarks, and correctly do not count.)
+
+**The rule.** When you audit for a capability, enumerate the ways it can be implemented before
+you count, and prefer evidence of the BEHAVIOUR over evidence of the artefact. The behavioural
+test costs no more than the filename test and cannot be fooled by a different filename: a source
+that rotates leaves scattered write times across its store, and a source stuck on a fixed prefix
+leaves one contiguous stale tail. That test found adb (2 blocks, no sidecar — genuinely stuck,
+44 of 54 flows) and cleared ilostat, owid, defillama, idb, insee_melodi and stat_slovenia, none
+of which a filename check could have told apart.
+
+Related: R273 (the entry this corrects and confirms), R281 (a checker that hardcoded its own
+parameter), R276 (a lookup at the wrong level answers "no" for everything).
