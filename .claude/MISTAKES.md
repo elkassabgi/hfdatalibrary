@@ -6863,3 +6863,44 @@ updater-daily — it refused, named run 30796923747, and exited 1.
 
 Related: R22 (selection fix -> re-pull), R5 (single-writer), R73/#73 (the PxWeb time-axis class this
 belongs to), R281 (an audit whose definition is a proxy reports the wrong set).
+
+### R289 — one source_id naming two products makes "is it scheduled?" unanswerable from the registry
+
+I recorded (#81) that "the UNSERVED 13f/insider giant is live:True; the SERVED xbrl product is not
+live at all", and planned to promote the served one. The second half is false, and I would have
+"fixed" a source that was already working.
+
+What is actually true, measured 2026-08-03:
+
+  SERVED + AUTO-UPDATING   sec_edgar = XBRL company facts, 17,276 catalogued series
+                           (sec_edgar:AIR, sec_edgar:CIK0000001961 ...). Refreshed by its OWN
+                           workflow, sec-edgar-daily.yml -> tools/refresh_sec_edgar.py, 08:00 UTC,
+                           five consecutive successes. Served body proven live: 1,519,760 bytes,
+                           us-gaap/dei concepts running to 2026-02-28.
+  REFRESHED, NOT SERVED    the registry entry ALSO named sec_edgar (strategy giant_changed_units)
+                           owns clean_full/edgar_13f/ and clean_full/edgar_insider/ — a different
+                           product, not catalogued, not in util.ts.
+  INERT STUBS              sec_edgar_xbrl and edgar_13f, live:None, empty prefixes.
+
+So one id, `sec_edgar`, means the XBRL product to the serving layer and the 13F/insider bulk trees
+to the updater. The coverage audit marks it SCHEDULED and is RIGHT — but by coincidence, because
+the id matches a live registry row that refreshes something else entirely. Had sec-edgar-daily not
+existed, the audit would still have said SCHEDULED while the served product went stale untouched,
+and no instrument would have contradicted it. That is the same class as the "scheduled on paper"
+adapter gap the audit already guards, except invisible, because the failure is a name collision
+rather than a missing file.
+
+Two process errors of mine, both avoidable:
+- I inferred "the store is empty, so the series are dark" from `clean_full/sec_edgar/` having zero
+  objects. The serving layer does not read that prefix. An authenticated GET returned 1.5 MB. The
+  cheap probe was available the whole time and I reached for a listing instead (R36's lesson, in a
+  new costume).
+- I then started a full-bucket scan to find where the data lived — millions of objects, timed out
+  at 600 s and told me nothing. The resolver, and then the live API, answered in seconds.
+
+No code change. sec_edgar is genuinely served, genuinely scheduled, and its workflow already ends
+with a real end-to-end gate: it compares parquet rows to the SERVED CSV for a probe series (AAPL
+25,135 == 25,135) and exits 1 if they disagree — a stronger check than most sources have.
+
+Related: R246 (scheduled is not attempted), R248 (did the gate assess anything), R36, R143/R157
+(the coverage number must come from one auditable place).
