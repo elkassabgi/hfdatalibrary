@@ -167,6 +167,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R259. SCOPE A SWEEP TO THE PROPERTY, NOT THE MODULE TYPE — AND SAY WHAT YOU SEARCHED. I reported "0 live sources routed through DBnomics" after an AST pass over `updater/strategies/fetchers/*.py`. The pass was correct; the SCOPE was the claim's undoing. Two automatic paths were still calling the banned host: `RELAUNCH_GUARD.ps1` relaunched `jobs/_dbnomics_pull.py ISTAT` EVERY FIVE MINUTES (a watchdog that resurrects the banned puller — the most durable form a violation can take), and `updater-daily.yml` ran `tools/audit_dbnomics_staleness.py`, which urlopen()s https://api.db.nomics.world/v22/ per dataset, on every daily run. "Nothing may contact host X" is a property of every EXECUTABLE surface — py, ps1, cmd, yml, sh — not of one directory; monitoring code is the easiest to miss because a probe feels exempt. Narrow to real calls, cross with what is SCHEDULED, parse instead of grepping at the last step, and qualify the claim with the scope actually searched. [M-20260803-03]
 - R260. LIVENESS IS A HEARTBEAT THE PROCESS EMITS, NOT AN INFERENCE THE OBSERVER DRAWS — AND A PROCESS PROBE MUST NOT MATCH ITSELF. The 5-minute guard loop died 2026-08-02 15:16; for ten hours the three crawlers stayed dead and the local heavy updater (the ONLY path for 17 cloud-infeasible sources, incl. DAILY `eia`) sat 7h past due. Nothing reported it: the cloud gate deliberately does not judge `run_location: local` sources, so "not judged here" plus "not judged anywhere else" = unjudged. Then my check `Where CommandLine -match 'RELAUNCH_GUARD_LOOP'` matched MY OWN command line and reported the dead loop alive. Exclude `$PID`, never embed the search pattern as a literal in the searching command, prefer a heartbeat FILE stamped after each completed tick, and bound any supervisor's inline call (a hang wedges the watchdog while its process still looks healthy). [M-20260803-04]
 - R261. A LISTING THAT RETURNS [] INSTEAD OF FAILING IS THE QUIETEST BUG THERE IS — ROUTE EVERY STORE LISTING THROUGH `blob.list_parquets`, WITH `recursive=True` FOR A NESTED STORE. `bea._tree_frontier` walked its 591-file tree with `glob.glob(out_dir/**)` + `pq.ParquetFile`; under AQUEDUCT_BACKEND=r2 the local dir is absent, so it iterated NOTHING, returned None, and silently reinstated the staleness it existed to remove (measured: raw 1 file, routed-recursive 591, frontier None -> 2026-04-01). Same shape found in `usda` (EMPTY key mapping) and `dst` x3. An empty listing is a LEGITIMATE value, so nothing downstream objects and the run goes green having examined nothing — strictly quieter than a raw read, which throws and gets fixed immediately. Local testing cannot catch it: for `dst` the local and blob paths resolve to the same files (707 vs 706), so they agree by construction. Ask what distinguishes 'nothing is there' from 'I could not look'; if nothing does, that is the bug. But check intent before sweeping (R249): noaa/fhfa/usda also list LOCALLY to `publish_file()` upward, where local is correct and routing would break the upload. [M-20260803-05]
+- R262. THE MEASURING INSTRUMENT IS A CLAIM TOO, AND IT DECAYS — RE-DERIVE "WHAT STARTS A RUN?" FROM THE SYSTEM, NOT FROM THE DEFINITION YOU WERE HANDED. My cycle figure came from `audit_schedule_coverage.py`, which counted `live:true` + updater-heavy matrix + sec-edgar-daily. A FOURTH scheduler exists: `run_local_heavy.ps1` runs everything with `run_location: local` REGARDLESS of `live`, so nine sources refreshed every ~20h read as unscheduled (bis, bls, census, eia, faostat, istat, oecd, statcan, vdem). Real number 120 of 217 / 9,496,558 series, not 112 / 9,479,138. Worst part: in ONE session I read the workstation log routing census, watched it merge +8,457 rows, and reported census as having no update path — two facts never compared. A definition describes the system as understood when written and does not grow when the system does. When a log contradicts a report in the same session, THAT is the finding. Keep the adapter caution when extending a counter — `cbs_nl`/`gus_dbw` are routed but fetcher-less, so STRANDED, not scheduled. [M-20260803-06]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5704,3 +5705,41 @@ did not.
 Related: R36 (the original local-vs-CI rule), R241 (the store is what the resolver opens),
 R249 (match the tool to the claim), R256/R259 (derive the class from the defect, then check
 each member actually IS one).
+
+### R262 — I reported a coverage number for weeks from a definition that was missing a whole scheduler
+
+**What happened.** `tools/audit_schedule_coverage.py` is the instrument behind the figure I
+report every cycle. It defined SCHEDULED as `registry live:true` UNION the updater-heavy matrix
+UNION sec-edgar-daily. There is a fourth mechanism: `tools/run_local_heavy.ps1` asks
+`tools/_list_local_sources.py` which sources to run, and that selects on
+`run_location == "local"` **regardless of `live`**. Nine sources are refreshed every ~20h on the
+workstation without ever setting `live:true`, and the audit called every one of them unscheduled:
+bis, bls, census, eia, faostat, istat, oecd, statcan, vdem.
+
+    120 of 217 sources / 9,496,558 series   (I had been reporting 112 / 9,479,138)
+
+The proof was in front of me the whole time. The same night I read the workstation log —
+"registry routes 17 source(s) to this machine: … census …" — and watched census merge +8,457
+rows, I also reported census as having no update path. Two facts, one session, never compared.
+
+**Why it lasted.** The definition came from the standing instruction, so it felt authoritative
+rather than like a claim to test. But an instruction that names three mechanisms is a
+description of the system as understood WHEN IT WAS WRITTEN, and the fourth mechanism was added
+later (the cloud-infeasible sources were routed to the workstation on 2026-07-31). A definition
+does not update itself when the system grows a new limb.
+
+**The rule.** The measurement instrument is itself a claim, and it decays. When a number comes
+from an enumeration of mechanisms, periodically re-derive the enumeration from the SYSTEM —
+every workflow, every scheduled script, every launcher — instead of from the definition you were
+handed. Concretely: what starts a run? Answer that from the repo, not from memory. And when a
+log contradicts a report in the same session, that contradiction is the finding.
+
+**One thing it got right, worth preserving.** The tool already refuses to count matrix members
+with no adapter — "membership in a schedule is not the ability to run" — after a measured 2026-07-30
+case where four matrix jobs ran green with "0 unit(s) processed". I applied the same caution to
+the new path, so `cbs_nl` and `gus_dbw` come back STRANDED rather than scheduled. Adding a
+mechanism to a counter is exactly where the temptation to inflate lives.
+
+Related: R246 ("scheduled" is not "attempted" — same disease, one layer up: here the SCHEDULED
+set itself was wrong), R249 (match the tool to the claim), R252 (the grain I measured was not
+the grain I reported).
