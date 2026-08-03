@@ -7048,3 +7048,44 @@ precisely the starvation R291 had just measured.
 
 Related: R246/R291 (an outcome requires an attempt — here the attempt was a function call nobody
 made), R248 (did the gate assess anything), R231.
+
+### R293 — a suite that had been green for its whole life failed the first time it ran anywhere else
+
+Having found that 120 tests existed and no workflow ran them (R292), I wired them into CI. The
+first runner execution FAILED — on a test that had passed locally every time anyone had ever run
+it.
+
+    assert backups[0].endswith("-local.db.zst")
+    AssertionError: '_aqueduct/backups/state-20260803-30806170232.db.zst'
+
+The state backup key is `state-{stamp}-{runid}` where runid is
+`os.environ.get("GITHUB_RUN_ID", "local")` (run.py:175). The test asserted the "local" branch —
+not as a choice, but because "local" is what the author's machine produced. It encoded the absence
+of an environment variable as a fact about the world rather than a property of one laptop. On a
+runner that variable is always set, so this test could only ever pass where it was written.
+
+That is the argument for running tests in CI, made by the suite about itself on day one, and it
+generalises past this one assertion: a test suite that has never run anywhere but one machine has
+not been shown to test the code — only to agree with that machine.
+
+FIXED by pinning the environment rather than assuming it: the fixture now
+`monkeypatch.delenv("GITHUB_RUN_ID", raising=False)`, and a new test covers the other branch
+explicitly, because the run-id tag is how a bad state push is traced back to the run that made it —
+forensics worth protecting, not incidental formatting. Verified 121 pass both bare and with
+GITHUB_RUN_ID/GITHUB_ACTIONS/CI set, and the next CI run went green.
+
+ONE ALARM I RAISED AND THEN DISPROVED, recorded because the disproof is the useful part. The
+failing CI log contained:
+
+    [push-state] seeding: r2://econ-data/_aqueduct/state.db.zst does not exist yet; this push creates it.
+    [push-state] ok: r2://econ-data/_aqueduct/state.db.zst (etag 909743...) + backup ...
+
+which reads exactly like a test suite overwriting the production state store with an 8 KB empty
+database — and I had just wired that onto every push. It did not. The fixture monkeypatches
+`core.r2_util.client` with an in-memory FakeS3 and relocates STATE_DIR/STATE_DB into tmp_path; the
+`r2://econ-data/...` text is the code's own log string, printed regardless of which client is
+behind it. Worth keeping in mind both ways: a log line naming a production bucket is not evidence
+that production was touched, and it is also not evidence that it wasn't — the fixture is. Check the
+boundary, not the message.
+
+Related: R292 (the tests nobody ran), R246/R291 (an outcome requires an attempt).
