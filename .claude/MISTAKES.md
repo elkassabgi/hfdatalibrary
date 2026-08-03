@@ -5392,3 +5392,33 @@ non-null still distinct.
 
 Related: R241 (measure what the reader reads), R249 (match the tool to the claim), R26 (the
 group_by crash this rewrite was for).
+
+### R255 — I broke R131 while the rule was sitting in the digest I read at the start of this cycle
+
+R131 says, verbatim: "`run_in_background` PLUS `&` ORPHANS THE JOB AND THE 'COMPLETED'
+NOTIFICATION IS ABOUT THE LAUNCHER." I opened this cycle by reading the Rules Digest, and then
+launched the eurostat dry-run as `nohup python … &` inside a `run_in_background: true` call —
+both mechanisms at once. The harness duly reported "completed (exit code 0)" seconds later,
+about the shell that had just exited.
+
+The job happened to survive (PID 51976, log flushing), so nothing was lost. What was worth
+losing is the belief that reading the ledger is the same as applying it. R132 recorded exactly
+this shape — a rule I had written, for the same host, that I violated anyway — and the remedy
+I wrote then was "read the ledger BEFORE the action, not after the failure". I read it before
+the CYCLE and still not before the ACTION.
+
+That is the difference that matters: a digest read at the top of a session is context, not a
+check. The rule has to fire at the moment the command is composed, and the trigger for this
+one is concrete and recognisable — I am about to type `&` or `nohup` into a Bash call.
+
+**The rules.**
+1. `run_in_background: true` OR a shell `&`. Never both. If the harness is tracking it, do not
+   also detach it.
+2. A completion notification proves the TRACKED PROCESS ended, nothing more. Before believing
+   any background job finished, read its own last line and check the process list.
+3. Reading the ledger at session start does not discharge it. Rules apply at the point of
+   action; the ones with a syntactic trigger (`&`, a glob in `git add`, `split(':')`) should be
+   checked as the command is written.
+
+Related: R131 (the original), R132 (the same "had the rule, violated it anyway" shape), R42
+(never let a shell one-liner decide whether something succeeded).
