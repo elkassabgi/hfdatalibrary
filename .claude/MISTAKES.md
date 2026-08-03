@@ -166,6 +166,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R258. PARSE A MACHINE-READ FILE WITH ITS OWN LOADER BEFORE COMMITTING, AND USE BLOCK SCALARS FOR PROSE. `at migration: 4,421 of...` inside a plain YAML scalar is a mapping key: one documentation edit to `updater/registry.yaml` made `registry.load()` raise ScannerError, taking out ALL 141 sources at once (one document = one blast radius) for the gate, the orchestrator and the coverage audit. The pytest suite passed throughout — nothing in it loads the registry — so 'tests are green' was never evidence here. Run the PRODUCTION loader in the same breath as the edit, and write free text as `>-`: prose grows colons, `#`, quotes and leading dashes by itself. Same shape as the eurostat `split(':')` hazard — when a format's separator can legally appear inside a value, the naive form is the bug and the escape hatch is the default. [M-20260803-02]
 - R259. SCOPE A SWEEP TO THE PROPERTY, NOT THE MODULE TYPE — AND SAY WHAT YOU SEARCHED. I reported "0 live sources routed through DBnomics" after an AST pass over `updater/strategies/fetchers/*.py`. The pass was correct; the SCOPE was the claim's undoing. Two automatic paths were still calling the banned host: `RELAUNCH_GUARD.ps1` relaunched `jobs/_dbnomics_pull.py ISTAT` EVERY FIVE MINUTES (a watchdog that resurrects the banned puller — the most durable form a violation can take), and `updater-daily.yml` ran `tools/audit_dbnomics_staleness.py`, which urlopen()s https://api.db.nomics.world/v22/ per dataset, on every daily run. "Nothing may contact host X" is a property of every EXECUTABLE surface — py, ps1, cmd, yml, sh — not of one directory; monitoring code is the easiest to miss because a probe feels exempt. Narrow to real calls, cross with what is SCHEDULED, parse instead of grepping at the last step, and qualify the claim with the scope actually searched. [M-20260803-03]
 - R260. LIVENESS IS A HEARTBEAT THE PROCESS EMITS, NOT AN INFERENCE THE OBSERVER DRAWS — AND A PROCESS PROBE MUST NOT MATCH ITSELF. The 5-minute guard loop died 2026-08-02 15:16; for ten hours the three crawlers stayed dead and the local heavy updater (the ONLY path for 17 cloud-infeasible sources, incl. DAILY `eia`) sat 7h past due. Nothing reported it: the cloud gate deliberately does not judge `run_location: local` sources, so "not judged here" plus "not judged anywhere else" = unjudged. Then my check `Where CommandLine -match 'RELAUNCH_GUARD_LOOP'` matched MY OWN command line and reported the dead loop alive. Exclude `$PID`, never embed the search pattern as a literal in the searching command, prefer a heartbeat FILE stamped after each completed tick, and bound any supervisor's inline call (a hang wedges the watchdog while its process still looks healthy). [M-20260803-04]
+- R261. A LISTING THAT RETURNS [] INSTEAD OF FAILING IS THE QUIETEST BUG THERE IS — ROUTE EVERY STORE LISTING THROUGH `blob.list_parquets`, WITH `recursive=True` FOR A NESTED STORE. `bea._tree_frontier` walked its 591-file tree with `glob.glob(out_dir/**)` + `pq.ParquetFile`; under AQUEDUCT_BACKEND=r2 the local dir is absent, so it iterated NOTHING, returned None, and silently reinstated the staleness it existed to remove (measured: raw 1 file, routed-recursive 591, frontier None -> 2026-04-01). Same shape found in `usda` (EMPTY key mapping) and `dst` x3. An empty listing is a LEGITIMATE value, so nothing downstream objects and the run goes green having examined nothing — strictly quieter than a raw read, which throws and gets fixed immediately. Local testing cannot catch it: for `dst` the local and blob paths resolve to the same files (707 vs 706), so they agree by construction. Ask what distinguishes 'nothing is there' from 'I could not look'; if nothing does, that is the bug. But check intent before sweeping (R249): noaa/fhfa/usda also list LOCALLY to `publish_file()` upward, where local is correct and routing would break the upload. [M-20260803-05]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5661,3 +5662,45 @@ workstation fleet dead while reporting it healthy.
 
 Related: "alive is not working" (the standing monitoring rule), R134 (suspect the probe before
 the system — here the probe was the whole error), R241 (the store is what the resolver opens).
+
+### R261 — a listing that returns [] instead of failing is the quietest bug there is
+
+**What happened.** `bea._tree_frontier` exists to read the newest observation across the whole
+591-file bea tree instead of the grouped `bea.parquet`, which holds under 2% of the series. Its
+docstring is careful and correct about WHY. Its implementation walked the tree with
+`glob.glob(out_dir/**)` and `pq.ParquetFile(path)` — both addressing the local disk. Under
+`AQUEDUCT_BACKEND=r2`, which is every CI run, that directory does not exist on the runner, so
+the loop had nothing to iterate, `best` stayed `None`, and the caller fell back to exactly the
+staleness the function was written to remove. Measured: raw listing 1 file, blob-routed
+recursive listing **591**, frontier `None` -> `2026-04-01`.
+
+An AST sweep of `updater/` for the same shape found 14 sites. Three more were real (`dst` x3
+deciding which subjects it holds, `usda` returning an EMPTY key mapping), and `usda`'s store is
+nested so even the routed listing had to be recursive.
+
+**Why this class survives.** The failure mode is an EMPTY ANSWER, not an exception. `[]` from a
+listing is a legitimate value — an empty store — so every guard downstream accepts it and the
+run goes green having examined nothing. Compare a raw READ, which throws FileNotFoundError and
+gets fixed the first time it runs. The listing bug is strictly quieter and therefore longer-lived.
+
+**Why local testing cannot find it.** `dst` is the demonstration: on this workstation the local
+listing returns 707 and the blob listing 706 (one `_`-prefixed sidecar, correctly excluded), so
+every local run agrees and the bug exists ONLY where it matters. R36 already says "works on my
+local run proves nothing about CI"; what this adds is that the two paths RESOLVE TO THE SAME
+FILE locally, so agreement is guaranteed and proves nothing at all.
+
+**The rule.** Any listing of a store directory goes through `blob.list_parquets`, and if the
+store is nested it must pass `recursive=True` — the basenames-only default returns `[]` for a
+nested store, which is the same answer as an empty one. When a function's result can be
+"nothing", ask what DISTINGUISHES "nothing is there" from "I could not look", and if nothing
+does, that is the bug.
+
+**And not every hit is the bug (R249).** Of the 14 sites, `noaa:214`, `fhfa:126` and
+`usda:243` enumerate files the run JUST WROTE LOCALLY in order to `blob.publish_file()` them
+upward. A local listing is correct there and routing it would break the upload. I left them
+alone and said so, rather than sweeping the pattern on sight — the shape matched, the intent
+did not.
+
+Related: R36 (the original local-vs-CI rule), R241 (the store is what the resolver opens),
+R249 (match the tool to the claim), R256/R259 (derive the class from the defect, then check
+each member actually IS one).
