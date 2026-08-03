@@ -7840,3 +7840,41 @@ hours — so the right move there is to let it run, not to read the message. Thi
 dating tool ended an investigation before it started.
 
 Related: R303/R306 (the deadline half, and the half I first missed), R301 (date it first).
+
+### R311 — "verified repo-wide" meant the two directories I happened to search
+
+#49 recorded the DBnomics ban as VERIFIED HELD REPO-WIDE, and #68 as "no live source reaches the
+relay at all". Both were written after grepping `updater/` and `jobs/`. Neither statement was true
+of the repository, because `connectors/` was never looked at.
+
+    connectors/dbnomics/connector.py   API = "https://api.db.nomics.world/v22"
+                                       a complete, working client — paging and all
+    jobs/ingest_all.py                 "dbnomics" listed among 23 connector names, and the loop
+                                       shells out to run_connector.py for EVERY entry
+
+So a single `python jobs/ingest_all.py` would have fetched from the banned host. ingest_all is not
+scheduled, and that is what made it dangerous rather than harmless: a dormant run-all that violates
+the ban the first time anyone runs it, sitting in a list where it reads as one name among
+twenty-three. Precisely the shape of the watchdog entry that resurrected the banned puller every
+five minutes — a violation that survives being forgotten, which is the only kind that matters for a
+standing ban.
+
+"Repo-wide" is a claim about a repository. I made it about `updater/**` and `jobs/**` because those
+are where fetching normally lives, and a ban is exactly the case where "where it normally lives" is
+the wrong search space — the whole risk is code somewhere unexpected. The correct search was for
+the HOST STRING across every file type, which takes one command and which I finally ran today only
+because I was closing the task rather than defending it.
+
+Fixed the same way the previous client was: removed from the run list, and the module now raises
+ImportError naming the ban. Better than deletion, which removes the explanation with the hazard.
+Verified the connector raises, three unaffected connectors still import, 159 tests pass.
+
+STILL OPEN, found in the same sweep and NOT fixed: 1,236 catalogued series carry `dbnomics_path`
+metadata, so clients/python/econdl/_proxy.py:upstream_url() returns
+`https://db.nomics.world/<path>` as their "best UPSTREAM URL to point a researcher at" — a mirror,
+for data now fetched from the publisher. Not a fetch and not a ban breach, but it cites the wrong
+origin to users. Recorded rather than mass-edited: it is catalog data, and #66's catalog refresh
+is the natural place to correct it.
+
+Related: R251 (the ban), R49/#68 (the claims this corrects), R300 (a class asserted wider than it
+was measured).
