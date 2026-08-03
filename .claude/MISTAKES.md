@@ -7571,3 +7571,45 @@ transient still reports as a failure when both occur — the fix must not launde
 Related: R231 (partial never sets last_success), R190/R273 (rotation, which makes deferral normal
 rather than exceptional), R300 (the same over-generalisation, caught later), R297/R301 (the state
 row is a snapshot of one attempt, not a description of the code).
+
+### R304 — the instrument showed one commit, and that turned a stale row into a false lead
+
+audit_stale_errors.py (built hours earlier, R302) reported for wid:
+
+    wid/_all  attempt 2026-08-02 02:50Z
+      says: 12/424 sub-unit(s) returned 200 but parsed 0 rows ...
+      fix 2026-08-03 14:52Z  664f7b82 tally: a budget deferral is not a transient failure
+
+I read that correctly — a deferral fix cannot explain a parse failure — and concluded wid was the
+one genuinely open item, then went and investigated it. The fetcher's own source answered in one
+read: a comment naming Al, ON, ON-MER, OO-MER, OP-MER, OQ-MER as "each exactly 47 BYTES ... the CSV
+header and nothing else", and a branch that files header-only bodies as empty rather than
+structural. Commit 691e6126, 2026-08-03 00:10Z — twenty-one hours after wid's last attempt, and
+TWO COMMITS OLDER than the one the tool printed.
+
+The tool showed `git log -1`. The newest change to a file is very often not the one that explains a
+given error, and by showing only that I had built something that could convert a stale row into a
+CONFIDENT false lead — worse than not having it, because the wrong answer arrived with a timestamp
+and a hash attached. The failure mode is the exact inverse of the one it was written for (R297,
+R301: treating stale rows as live), and I introduced it while fixing that.
+
+Now lists every commit since the attempt, newest first, capped at five. wid's row shows both, and
+the explanatory one is unmissable.
+
+WITH THAT, THE WHOLE "200 BUT PARSED 0 ROWS" GROUP RESOLVES AS STALE — every one, none needing work:
+
+    hagstofa       26/1906  -> 1188fb62  positional time codes need their labels
+    stat_slovenia   4/510   -> 83b50dc1  PxWeb: read the period from the time LABELS
+    wid            12/424   -> 691e6126  an empty upstream file is not a schema break
+
+Three sources, three fixes, all landed within about a day of each other and all before I looked.
+The shared symptom really was one class; it had simply already been worked.
+
+THE GENERAL POINT, since this is the second tool defect found by using it today: an instrument that
+summarises has to be judged on the cases where its summary is WRONG, not on the cases where it is
+right. Both defects here — the over-broad shared-file list, and now showing one commit — produced
+plausible output that a reader would act on. Neither was visible in the code; both were obvious in
+one full run.
+
+Related: R302 (the tool, and its first self-inflicted defect), R297/R301 (the rule it instruments),
+R290 (a summary read instead of the measurement).
