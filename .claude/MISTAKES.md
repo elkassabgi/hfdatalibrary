@@ -6942,7 +6942,21 @@ ad hoc gets `python -u`, or it is a job whose progress I have agreed in advance 
 And when I do not have a measurement, the honest report is "running, progress not instrumented",
 not a number that sounds right.
 
-Related: R246 (scheduled is not attempted — same disease, different surface), R248, R231.
+THIRD INSTANCE, SAME DAY, ON THE SAME JOB. Later I checked whether the derive was still running with
+`ps -W | grep -c derive_csv` and got 0. I said the process was gone. It was not: Get-CimInstance
+showed pid 50236 alive at 253,452s CPU, up from 154,371s — working hard the whole time. Git-Bash's
+`ps -W` does not expose full command lines, so grepping them finds nothing and a live process reads
+as a dead one. A zero from a grep is only evidence if the grep can see the thing it is looking for,
+and I had already used the CORRECT tool (Get-CimInstance, which prints CommandLine) twice today on
+this very process before reaching for the cheaper one.
+
+Three times in one day the instrument, not the system, was the defect — a buffered log, an
+object count that measured a namespace, and now a `ps` that cannot see command lines. All three
+produced confident, plausible, wrong statements about the same job. Before reporting a system
+state, name the instrument and ask what it can actually observe.
+
+Related: R246 (scheduled is not attempted — same disease, different surface), R248, R231, R296
+(the wrong store), R293 (the wrong environment).
 
 ### R291 — a queued run is not a reservation, and my own proof runs evicted the one I was waiting for
 
