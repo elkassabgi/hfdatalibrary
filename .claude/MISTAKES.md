@@ -6820,3 +6820,46 @@ by reading its call site rather than trusting the indent. No change made to usda
 
 Related: R273 (the class this closes), R190 (the truncation rotation exists to prevent), R284 (an
 exclusion justifies itself), R281 (an audit that hardcodes one grain reports the others as bugs).
+
+### R288 — I measured the symptom, so I got the scope wrong, the grain wrong, and nearly the fix wrong
+
+cso's ingester once picked its time axis by first-match, so on matrices where a classification axis
+precedes the real TLIST axis the two were SWAPPED: the classification code went into obs_date and
+the year got baked into the series_key. I filed this (#78) as "impossible dates" — 429,781 rows,
+11 files — and planned a re-pull of whole subject files, 67 runs. Three of those four numbers were
+wrong, and each error came from the same root: I measured what the defect LOOKED like instead of
+what it WAS.
+
+SCOPE. "obs_date outside 1800..2100" is a proxy. The defect is `TLIST(A1)=1991` appearing in a
+series_key — exact, thresholdless, and true whether or not the resulting date looks silly, because
+time varies per observation and therefore cannot be part of a series identity. Measured by the
+signature instead of the symptom: 290 matrices, 754,780 rows, 17 files. The rows my proxy missed
+are the DANGEROUS ones — a classification code that happens to read as a plausible year is corrupt
+and undetectable, where 9998-12-31 at least announces itself.
+
+GRAIN. The tool I had already built (cso_repull_subject.py) removes a whole subject. The defect is
+not subject-shaped: 60 of 742 matrices in 10_Census_2016 are swapped. Repairing it by subject would
+have deleted 3,274,801 rows to fix 304,165 — discarding 91% correct data — and taken the subject
+offline for ~14 runs. At matrix grain the same repair drops 754,780 rows of 49,204,621 (1.5%) and
+the other 48.4M stay downloadable throughout. Same ordering, same safety, one thirteenth the cost.
+A correct tool at the wrong grain is still the wrong tool, and "it works" hides it.
+
+THE FIX I ALMOST SHIPPED. The year is right there in the key, so recovering obs_date from it looks
+free. It destroys data: one key `...TLIST(A1)=1991` holds 12 rows whose obs_dates are 12 crop
+codes — 12 distinct series at ONE year. Setting obs_date := 1991 collapses all 12 onto a single
+(series_key, obs_date) pair and dedup keeps one. Eleven rows of twelve gone, every date now sane,
+every check green. What stopped it was a negative control on the rows I was NOT fixing: across the
+store 34,179 good rows whose key carries TLIST DISAGREE with their own obs_date year, against 1,217
+that agree. If the key's year were the row's year that ratio is impossible. The control cost one
+query and was the only thing between me and a silent 700k-row loss.
+
+The parser was already fixed (ingest_cso_ireland.py resolves a named time axis in a first pass), so
+a re-pull yields authoritative keys and R22 applies: a SELECTION fix changes series_keys, so
+re-pull, never merge. Reconstruction would have produced inferred keys dressed as real ones.
+
+Also caught in review: the new tool omitted runs_in_flight(), the R5 single-writer guard its own
+sibling has. Imported rather than copied, and verified by running --apply against a live
+updater-daily — it refused, named run 30796923747, and exited 1.
+
+Related: R22 (selection fix -> re-pull), R5 (single-writer), R73/#73 (the PxWeb time-axis class this
+belongs to), R281 (an audit whose definition is a proxy reports the wrong set).
