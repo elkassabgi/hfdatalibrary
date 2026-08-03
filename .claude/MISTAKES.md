@@ -7918,3 +7918,36 @@ instantly instead of scanning 8.5 GB. Not created here — it writes to a produc
 five jobs are reading, and refresh_r2_catalog would drop it again unless the generator adds it.
 
 Related: R290 (an empty log read as a hang), R296, R305 (the guard was telling me the answer).
+
+### R309 — the query was expensive because it answered a question nobody asked
+
+Chasing R308's missing index, I checked the plan of every filtered query against the catalogue and
+found this in the orchestrator's hot path:
+
+    SELECT count(*) FROM series WHERE series_id LIKE 'src:%'      -> SCAN, 116.35 s
+
+sqlite only optimises prefix-LIKE when `case_sensitive_like` is ON, and it is off by default, so
+the pattern cannot use the primary key. That is a full scan of an 8.5 GB, 10.8M-row catalogue PER
+SOURCE, on a run that touches about 120 of them.
+
+The obvious fix is a primary-key range, since a prefix range is exact (':' + 1 == ';'), and it does
+work: SCAN becomes SEARCH. But it still took 116 s for noaa, because SEARCH only fixes the SEEK —
+it still had to walk 3,135,873 index entries to COUNT them.
+
+The actual fix was in the docstring, which I had already read twice: "Used only to recognise
+vacuous CSV coherence: zero catalogued series". The single caller is
+`if res.obs and _catalog_series_count(unit.source_id) == 0:`. It tests zero-ness. The count was
+never used. `SELECT 1 ... LIMIT 1` answers the real question in 0.0001 s — six orders of magnitude,
+not by optimising the query but by deleting the part of it nobody wanted.
+
+THE HABIT THIS PUNISHES. I optimised the query as written twice (index, then range) before asking
+what the caller actually needed. "Make this query faster" is a narrower question than "what does
+this function have to return", and the narrower question had a much worse best answer. An exact
+count is a strictly harder problem than existence, and the code was paying for the harder one by
+default because count(*) is what one reaches for.
+
+Also worth keeping: the range form is still the right shape for any prefix query here, and I left
+that reasoning in the docstring, because the next person will meet `LIKE 'x%'` again and the
+non-obvious fact is that it does not use the index.
+
+Related: R308 (the missing index, same investigation), R290 (measuring the wrong thing).
