@@ -7356,3 +7356,49 @@ mechanics, so the next refactor is free to change how it is stored.
 Related: R273 (state must survive an interrupted run — its fix is confirmed here, and is also what
 made the naive repair dangerous), R190 (the truncation), R286 (a cooperative budget bounds when you
 next look at the clock).
+
+### R299 — "60/60 sub-units transient-failed" was a parser gap wearing an outage's clothes
+
+cso's state read `60/60 sub-unit(s) transient-failed; will retry`. A 100% failure across every
+sub-unit reads unambiguously as upstream being down, and it had been read that way for days.
+
+It was not. Probed live 2026-08-03, every one of the nine matrices the run NAMED returns HTTP 200
+with a real body — MTD05 is 557,685 bytes — and every one parsed to ZERO rows, because the period
+grammar stopped at monthly and these are daily (`2010M01D01`, PxWeb TLIST(D1)) or academic-year
+(`2003-2004`) axes.
+
+    EDA21     0 ->        22        MTH05     0 -> 1,734,965
+    MTD05     0 ->    72,284        MTH06     0 -> 1,734,921
+    MTD06     0 ->   213,368        MTH07     0 ->   620,934
+    MTD07     0 ->    40,408        MTH08     0 -> 1,445,657
+    MTD08     0 ->   120,467
+                                    9 of 9 now parse — 5,983,026 rows recovered
+
+WHAT MADE IT INVISIBLE is one sentence doing two jobs:
+
+    "fetch_table returned no rows (network failure after retries, or a 200 that parsed 0 obs)"
+
+Those are opposite conditions — one is the publisher's problem and self-heals, the other is ours
+and never will — and the fetcher emits the same text for both, then classifies both as
+`transient_unit`. A transient label is a promise that retrying helps. Retrying an unparseable body
+helps never, and the source dutifully reported `partial` with a reassuring reason indefinitely.
+Whenever one message covers a self-healing cause and a permanent one, the permanent one hides.
+
+WHAT MADE IT FINDABLE was the fix from a previous entry: cso only started NAMING its failing
+matrices this session (R284's "an exclusion justifies itself"). Before that the log said
+"23/26 sub-unit(s) transient-failed" with no identifiers, and there was nothing to probe. The
+naming change looked like log hygiene and was worth ~6M rows.
+
+CAUGHT MYSELF IMPORTING AN ASSUMPTION, in the test. I wrote `assert parse("0111") is None` — 0111
+being a CSO crop code — and it failed. The code is right: parse_period is a pure grammar and the
+sanity bound lives one layer up in date_parse_rate(sane_lo=1500, sane_hi=2100), deliberately, so a
+genuine 1703 historical axis still scores as time while 4-digit category codes are too sparse in
+that window to win. I changed the test to pin the REAL contract (parses, but out of sane range;
+detector scores a crop axis 0.0 and a year axis 1.0) instead of "fixing" working code to match me.
+
+Fixed in BOTH core/pxweb.parse_period (the shared PxWeb grammar, so the other eight sources gain
+it) and cso's own drifted private copy — which is the one that actually runs for cso, so patching
+only the shared one would have changed nothing here.
+
+Related: R284 (the naming that made this findable), R288 (the swapped axis — and why the split-year
+rule requires consecutive years), R231 (a status must not promise more than it knows).
