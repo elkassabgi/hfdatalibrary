@@ -7809,3 +7809,34 @@ A plausible mechanism plus confirming state measurements is not a diagnosis. It 
 that has not met the code yet.
 
 Related: R305 (the entry whose mechanism this corrects), R288 (measuring the symptom), R281.
+
+### R310 — the count-cap half of the deferral class was clean, and I checked instead of assuming
+
+R303/R306 fixed 21 fetchers that filed a wall-clock DEFERRAL as a transient FAILURE. Both sweeps
+keyed on the same signal: what follows `if dl.spent():`. That is one deferral mechanism. There is a
+second — COUNT caps: MAX_PER_RUN, MAX_TABLES, CURSOR_CAP — which defer work for exactly the same
+reason and would misreport it in exactly the same way, and I had not looked at any of them.
+
+Prompted by ons_uk's `1/12 sub-unit(s) transient-failed`, which reads like it could be its
+MAX_PER_RUN cap. Swept all count-cap blocks: three candidates, and on reading, all three are FALSE
+positives of the window —
+
+    bls.py:726/728   the transient_unit() sits in `except DefinitiveError`, a genuine failure;
+                     the CURSOR_CAP mention two lines up is unrelated
+    owid.py:152      `batch = todo[:MAX_PER_RUN]` slices, but the transient_unit() inside the
+                     loop is per-slug `status == "transient"`, also genuine
+
+So the class is clean and no code changed. Recording it because a sweep that finds nothing is
+still a result — the alternative is that six months from now the same suspicion costs the same
+hour, or worse, someone converts those three on the strength of a grep and launders two real
+failures into "deferred, nothing wrong".
+
+The pattern worth keeping: after fixing a class, ask what OTHER mechanism produces the same
+observable. Deadline and count caps both end in "this unit was not reached this run"; only one of
+them had been examined, and nothing in the fix said so.
+
+ons_uk itself then turned out to be superseded anyway — its message predates 315fc7b4 by fifteen
+hours — so the right move there is to let it run, not to read the message. Third time today the
+dating tool ended an investigation before it started.
+
+Related: R303/R306 (the deadline half, and the half I first missed), R301 (date it first).
