@@ -178,6 +178,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R270. ASK HOW MANY ACTUALLY COMPLETED, THEN READ THE NOTES OF THE ONES THAT DID NOT — AND FIX A MISUSED HELPER PER-CALLER, NEVER UNIFORMLY. Of 120 SERVED+SCHEDULED sources, 55 succeeded within 7d, 13 within 30d, and 52 NEVER (43 permanently `partial`, 7 `transient_fail`; a partial never sets last_success_utc, R231). The notes, not the counts, were actionable: `_max_by_key` returns ISO STRINGS but was annotated `-> dict`, so boc and tcmb called .isoformat() twice and CRASHED while riksbank filtered on isinstance(v, dt.date) and returned an EMPTY map every run — silently, which the §5.7 check turns into permanent partial. My first fix passed strings through in all three "for consistency"; riksbank's update() compares `cat_max <= smax` against a dt.date and calls revision_since(smax), so that would have swapped a silent empty for a TypeError. Read the CONSUMER, not the function. [M-20260803-14]
 - R271. WHEN A BLOCKED CHORE AND A RECURRING FAILURE COEXIST, TEST WHETHER THEY ARE THE SAME EVENT — AND FOR ANY "X NOT FOUND", NAME THE STORE THAT WAS SEARCHED. I carried #66 ("upload the refreshed R2 catalog") as hygiene while separately reporting 43 sources permanently `partial`. One fact, not two: the R2 coherence catalog holds 4,605,291 series vs the local 10,863,548 (57.6% missing), and the daily run maps keys against THAT catalog. imf_gfssoo_direct has 319,571 rows locally and 0 in R2, adb 53,458 vs 0, fhfa 89,706 vs 61 — so every changed key is unmappable, §5.7 demotes to partial, and a partial never sets last_success_utc (R231). imf_gfssoo_direct merged 5,557,444 rows last run and had them thrown away. I had verified the mapper and the key form several times and NEVER the catalog they were consulted against. Control: where R2 is complete (imf_fas_direct, eia) the same mapping resolves. Pricing the block at ~650,000 stuck series changes whether it is reasonable to carry it another day. [M-20260803-15]
 - R272. FOR A STORE-ROUTED SIDECAR, CHECK BOTH ENDS — ROUTING THE READ FIXES NOTHING IF NOTHING EVER WROTE TO THE STORE. cso's fetch set is `changed = [m for m,u in cur_upd if stored.get(m) != u]`, and that cursor was read/written on the LOCAL disk, so under r2 it was ephemeral: every run saw all ~13,000 matrices as changed, pulled the newest 60, and discarded the cursor — it could never converge on a 48.9M-row store ("60/60 sub-units transient-failed"). My reflex was to point the read at blob; measured, `_catalog.json` is 3,140,483 B locally and ABSENT from R2 because only the INGESTER wrote it, locally — so a routed read would have found an empty store FOR EVER and I would have called it fixed. It now builds the catalogue from CSO's Search API and caches it to the store. Also: read `_cursor_path()` instead of guessing the filename (`_collupd.json`, not `_cursor.json`) — the guess reported 'absent everywhere' and hid the asymmetry that IS the bug. And this is why the cso re-pull must not use repull_file.py: a change-driven fetcher does not rebuild a deleted file. [M-20260803-16]
+- R273. STATE THAT MUST SURVIVE A RUN HAS TO BE WRITTEN WHERE AN INTERRUPTED RUN STILL REACHES IT — AND VERIFY PERSISTENCE BY LOOKING FOR THE ARTEFACT, NOT THE CALL. Only 2 of 14 rotating sources (boe, bcb) have ever persisted `_rotation.json`; the other twelve have none, so load_rotation() returns '' and every run restarts at the top — R190's remedy inert. All fifteen fetchers DO call save_rotation, correctly, near the END of the function; the orchestrator's 45-min cap KILLS the source rather than breaking its loop, so an overrunning fetcher never reaches its own bookmark. Exact correlation: the four confirmed hard-killed at 45.0 min (worldbank_wdi, stat_estonia, statfin, stat_slovenia) all lack bookmarks; the two that finish have them. Self-sustaining: killed -> no bookmark -> same prefix -> killed. Invisible in review because the code reads correctly. "The call is there" and "the file is there" are different claims. [M-20260803-17]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6157,3 +6158,43 @@ tool said so.
 Related: R261/R264 (the same local-vs-store class, read side only), R36 (works locally, absent
 in CI), R263 (guard the post-state — here, the operation the tool enables was simply wrong for
 this source).
+
+### R273 — the rotation bookmark is written at the END, so the sources that need it never write it
+
+**What happened.** R190's remedy for "a bound over a fixed order re-walks the same prefix for
+ever" is a rotation bookmark: `load_rotation` to resume, `save_rotation` to record where you
+stopped. Fifteen fetchers import it and every one calls it exactly once — I checked, the calls
+are all there and all correct.
+
+Measured on the live store: **only 2 of 14 rotating sources have ever persisted a bookmark.**
+boe (`{"after": "YWQ.parquet"}`) and bcb. The other twelve — stat_slovenia, statfin,
+stat_estonia, hagstofa, ssb, worldbank_wdi, unhcr, usda, who_sdg, stat_latvia, ksh_stadat,
+_uis — have no `_rotation.json` in R2 at all, so `load_rotation()` returns `''` and every run
+starts at the top of the list.
+
+**Why.** Every call site sits near the END of the fetcher, after the work loop. The
+orchestrator's 45-minute cap does not break the loop, it KILLS the source — so a fetcher that
+overruns never reaches its own bookmark. The correlation is exact: the four sources I separately
+confirmed were hard-killed at exactly 45.0 min with 0 obs (worldbank_wdi, stat_estonia, statfin,
+stat_slovenia) are all in the no-bookmark set, and the two that finish are the two with
+bookmarks. R190's remedy is defeated by the very cap it was written to coexist with, and the
+failure is self-sustaining: killed -> no bookmark -> same prefix next run -> killed again.
+
+**Why it was invisible.** The code reads correctly. The import is there, the call is there, the
+comment above it is thoughtful ("bookmark after a complete pass too, so the wrap goes through
+this same path and no branch can quietly stop the rotation"). Nothing in the source says "this
+line is unreachable for the sources that need it most". Only asking the STORE whether the file
+exists showed it.
+
+**The rule.** State that is meant to survive a run must be written where an interrupted run
+still reaches it — incrementally, or in a finally, not once at the end. And verify persistence
+by looking for the artefact, not by reading the code that writes it: "the call is there" and
+"the file is there" are different claims, and only the second one matters.
+
+**Already mitigated, not yet proven.** Those four now bound themselves under the cap (35-40 min)
+from earlier this session, so they should reach `save_rotation` and persist a bookmark on their
+next run. That is a falsifiable prediction and it is now in the verification list — if the
+bookmarks are still absent afterwards, the cause is something else and this entry is wrong.
+
+Related: R190 (the rotation remedy), R67/#67 (the 45-min cap protection), R246 (measure what the
+run did, not what the code permits), R272 (check both ends of a store-routed sidecar).
