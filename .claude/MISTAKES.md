@@ -179,6 +179,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R271. WHEN A BLOCKED CHORE AND A RECURRING FAILURE COEXIST, TEST WHETHER THEY ARE THE SAME EVENT — AND FOR ANY "X NOT FOUND", NAME THE STORE THAT WAS SEARCHED. I carried #66 ("upload the refreshed R2 catalog") as hygiene while separately reporting 43 sources permanently `partial`. One fact, not two: the R2 coherence catalog holds 4,605,291 series vs the local 10,863,548 (57.6% missing), and the daily run maps keys against THAT catalog. imf_gfssoo_direct has 319,571 rows locally and 0 in R2, adb 53,458 vs 0, fhfa 89,706 vs 61 — so every changed key is unmappable, §5.7 demotes to partial, and a partial never sets last_success_utc (R231). imf_gfssoo_direct merged 5,557,444 rows last run and had them thrown away. I had verified the mapper and the key form several times and NEVER the catalog they were consulted against. Control: where R2 is complete (imf_fas_direct, eia) the same mapping resolves. Pricing the block at ~650,000 stuck series changes whether it is reasonable to carry it another day. [M-20260803-15]
 - R272. FOR A STORE-ROUTED SIDECAR, CHECK BOTH ENDS — ROUTING THE READ FIXES NOTHING IF NOTHING EVER WROTE TO THE STORE. cso's fetch set is `changed = [m for m,u in cur_upd if stored.get(m) != u]`, and that cursor was read/written on the LOCAL disk, so under r2 it was ephemeral: every run saw all ~13,000 matrices as changed, pulled the newest 60, and discarded the cursor — it could never converge on a 48.9M-row store ("60/60 sub-units transient-failed"). My reflex was to point the read at blob; measured, `_catalog.json` is 3,140,483 B locally and ABSENT from R2 because only the INGESTER wrote it, locally — so a routed read would have found an empty store FOR EVER and I would have called it fixed. It now builds the catalogue from CSO's Search API and caches it to the store. Also: read `_cursor_path()` instead of guessing the filename (`_collupd.json`, not `_cursor.json`) — the guess reported 'absent everywhere' and hid the asymmetry that IS the bug. And this is why the cso re-pull must not use repull_file.py: a change-driven fetcher does not rebuild a deleted file. [M-20260803-16]
 - R273. STATE THAT MUST SURVIVE A RUN HAS TO BE WRITTEN WHERE AN INTERRUPTED RUN STILL REACHES IT — AND VERIFY PERSISTENCE BY LOOKING FOR THE ARTEFACT, NOT THE CALL. Only 2 of 14 rotating sources (boe, bcb) have ever persisted `_rotation.json`; the other twelve have none, so load_rotation() returns '' and every run restarts at the top — R190's remedy inert. All fifteen fetchers DO call save_rotation, correctly, near the END of the function; the orchestrator's 45-min cap KILLS the source rather than breaking its loop, so an overrunning fetcher never reaches its own bookmark. Exact correlation: the four confirmed hard-killed at 45.0 min (worldbank_wdi, stat_estonia, statfin, stat_slovenia) all lack bookmarks; the two that finish have them. Self-sustaining: killed -> no bookmark -> same prefix -> killed. Invisible in review because the code reads correctly. "The call is there" and "the file is there" are different claims. [M-20260803-17]
+- R274. NAME THE READER BEFORE CALLING AN INSTRUMENT DONE: WHO SEES THIS, FROM WHERE, WHEN? I fixed the watchdog-with-no-watchdog with a heartbeat file and wrote that "anyone can read" it — anyone ON THAT MACHINE, i.e. nobody, which is the premise of an unattended workstation. It was correct, current and unread for 10 hours. route_silence's docstring even said the instrument for a short outage "is the guard's own heartbeat on that machine"; I read that as both halves built, when the coarse net was in CI where it could fire and the fine one was on the box where it could not. A component's "the instrument for that is X" is a claim to VERIFY, not a citation. Now published to R2 per tick and read by updater-daily: own key (not the CAS state store, R5), age from the BODY not LastModified (a re-uploaded stale body would look fresh), and ABSENT exits 1 as UNINSTRUMENTED — passing on a missing object rebuilds the silence it exists to end. [M-20260803-18]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6198,3 +6199,47 @@ bookmarks are still absent afterwards, the cause is something else and this entr
 
 Related: R190 (the rotation remedy), R67/#67 (the 45-min cap protection), R246 (measure what the
 run did, not what the code permits), R272 (check both ends of a store-routed sidecar).
+
+### R274 — an instrument only the unattended machine can read is not an instrument
+
+**What happened.** Earlier this same session I fixed the watchdog-with-no-watchdog problem by
+adding a heartbeat: every tick, `RELAUNCH_GUARD_LOOP.ps1` stamps `logs/guard_loop.heartbeat`
+with the UTC time. I wrote in the header that "liveness is now a file anyone can read", and
+moved on.
+
+Anyone who is ON THAT MACHINE. Which is nobody — that is the entire premise of a workstation
+that runs unattended, and 15:16 on 2026-08-02, when the loop died, is precisely a moment when
+no one was looking. The heartbeat was correct, current, and unread for ten hours.
+
+**Why it looked finished.** The companion gate, `health.route_silence`, is honest about its own
+limits: its docstring says a short outage "is INVISIBLE here by construction, and the instrument
+for it is the guard's own heartbeat on that machine, not this." I read that as a division of
+labour with both halves built. It was not. The coarse net existed in CI, where it could fire;
+the fine instrument existed on the workstation, where it could not.
+
+**The fix.** `tools/guard_heartbeat.py` publishes the same stamp to `_aqueduct/
+guard_heartbeat.json` each tick, and updater-daily reads it as its own step. Three details that
+are the whole value:
+  * **Its own key, not the state store.** That store is single-writer via ETag CAS (R5); a
+    5-minutely write from a second machine would contend with the updater for nothing.
+  * **Age from the BODY, not LastModified.** LastModified says when R2 accepted a PUT — a fact
+    about the upload. Re-uploading a stale body would look perfectly fresh.
+  * **ABSENT exits 1 and says UNINSTRUMENTED, not healthy.** A checker that passes on a missing
+    object rebuilds the exact silence the mechanism exists to end.
+
+**The rule.** When you add an instrument, name the reader before calling it done: WHO sees this,
+FROM WHERE, and WHEN? An observation that never reaches a place where someone can act on it is
+not monitoring, it is a log. And when a component's docstring says "the instrument for that is
+X", that is a claim to VERIFY, not a citation — go and check that X exists and reports somewhere
+a human or a gate will look.
+
+**Proven, not assumed.** Published and read back against live R2 (0.1 min old, 3/3 crawlers
+alive); threshold 0 -> exit 1 as the negative control; the restarted loop then published
+03:37:11 UTC unaided, past the 03:34:02 stamp I had written by hand. 11 tests, suite 101 -> 112.
+
+Caveat recorded rather than hidden: the producing half lives in the gitignored guard loop
+(workstation-absolute paths), so the CI check is committed and its producer is not. A fresh
+machine gets the gate before the beat — which fails in the honest direction, ABSENT reddens.
+
+Related: R260 (a probe that matched its own command line), R5 (single-writer CAS), R36 (works
+locally proves nothing about CI), R249 (match the tool to the claim).
