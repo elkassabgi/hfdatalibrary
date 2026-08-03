@@ -6904,3 +6904,30 @@ with a real end-to-end gate: it compares parquet rows to the SERVED CSV for a pr
 
 Related: R246 (scheduled is not attempted), R248 (did the gate assess anything), R36, R143/R157
 (the coverage number must come from one auditable place).
+
+### R290 — I reported a progress number from a log the job had stopped writing eight hours earlier
+
+I said the noaa re-derive was "22% of 3,135,873". There was no measurement behind that. The source
+was logs/_noaa_rederive.log, which is 4 lines long, ends at "derived+put 10,000", and was last
+written 2026-08-02 23:47 — five minutes after the job started and eight hours before I quoted it.
+
+Python buffers stdout when it is not a TTY. I launched the job ad hoc without `-u`, so every
+progress line after the first flush has been sitting in an unflushed buffer for the whole run. The
+file is not a slow log; it is a snapshot of the first five minutes that will not change until the
+process exits. Reading it and calling the result "progress" is reading a stopped clock.
+
+Two things made this worse than a stale number. It was PLAUSIBLE — 22% of a long job at that hour
+is exactly what one expects, so nothing about it invited a check. And the correct instrument was
+never the log: the job's product is objects under `series/noaa%3A` on R2, and the write path is
+what proves work happened (the standing "verify the WRITE PATH after a move" rule). That count is
+expensive — >10 min for ~3.1M keys — which is precisely why the cheap wrong number was attractive.
+
+SWEPT THE CLASS, and it is not systemic. Every scheduled launcher already sets PYTHONUNBUFFERED=1:
+updater-daily.yml:66, updater-heavy.yml:128, sec-edgar-daily.yml:55, run_local_heavy.ps1:166. The
+one blind job is the one I started by hand. The rule for me, not for the repo: a long job I launch
+ad hoc gets `python -u`, or it is a job whose progress I have agreed in advance not to know.
+
+And when I do not have a measurement, the honest report is "running, progress not instrumented",
+not a number that sounds right.
+
+Related: R246 (scheduled is not attempted — same disease, different surface), R248, R231.
