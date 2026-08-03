@@ -7768,3 +7768,44 @@ a guard test that passed on a fixed tree and only proved itself when I deliberat
 
 Related: R290 (the invisible job this was guarding against), R306 (a guard proven by breaking it on
 purpose), R302 (an instrument judged on the cases where it is wrong).
+
+### R309 — I shipped a fix built on a mechanism I never checked, and it broke two working endpoints
+
+R305 (this morning) explained treasury's `refusing shrink 185->1` like this: with no date field,
+_build_table stamps obs_date=None on every row and series_key is the endpoint, so all rows land on
+the single identity (endpoint, None) and dedup keeps ONE. It reads well. I swept for the class,
+found three dateless endpoints, and shipped a fix that SKIPS them.
+
+The mechanism is wrong. `_identity_keys` — twenty lines above the code I was editing — already
+appends every NON-VALUE column to the dedup key:
+
+    def _identity_keys(cols):
+        dims = [c for c in cols if c not in ("series_key","obs_date") and not _is_value_col(c)]
+        return ["series_key", "obs_date"] + dims
+
+So a dateless endpoint is still keyed by its dimensions, and fbp's `account_nbr` (185 distinct
+values) is one of them. Measured on the store afterwards, all three hold EXACTLY their upstream row
+count — 125,728, 35,936 and 185. Nothing had ever collapsed.
+
+WHAT THE FIX COST. Skipping every dateless endpoint stopped refreshing redemption_tables and
+sb_value — 161,664 rows that were updating correctly and had never been at risk. I broke two
+working endpoints to protect them from a collapse that was not happening, and the commit message
+stated the false mechanism as established fact, which is how it would have survived review.
+
+WHY IT SURVIVED MY OWN CHECKS. I verified the SYMPTOM thoroughly — read the guard message, counted
+rows, listed columns, confirmed 185 rows with 1 series_key and 0 dates, swept for others in the
+same state — and never once read the dedup function. Every measurement I took was consistent with
+my explanation and also consistent with the true one, because they were measurements of the state,
+not of the mechanism. The step I skipped was the cheapest available: read the function that
+computes the key before asserting what the key is.
+
+WHAT REMAINS TRUE AND IS STILL NOT DIAGNOSED: fbp really does report `refusing shrink 185->1` on
+every run, and the never-shrink guard really is what preserves those rows. But "obs_date is null"
+cannot be the reason, so I do not know the reason. Reverted to fetching all three; the guard keeps
+doing its job at the cost of a `partial`, which is the honest report for a fetch that cannot be
+applied; and #87 carries the measurements for whoever diagnoses it properly.
+
+A plausible mechanism plus confirming state measurements is not a diagnosis. It is a hypothesis
+that has not met the code yet.
+
+Related: R305 (the entry whose mechanism this corrects), R288 (measuring the symptom), R281.
