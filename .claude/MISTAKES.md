@@ -7282,6 +7282,33 @@ a green run here is not evidence sec_edgar is fixed. The temptation was to ship 
 story was good, the tests were green, and nobody would have checked. The negative control is the
 only thing that separated "I fixed it" from "I wrote something reasonable near it".
 
+RESOLVED, AN HOUR LATER, AND THE STORY WAS RIGHT AFTER ALL — I HAD TESTED THE WRONG STACK.
+
+I kept pulling the thread instead of settling for "cause open". Two measurements finished it:
+
+  1. Every stored insider timestamp column is ns — all 972 across 648 files — and edgar_13f has
+     NO timestamp columns at all. So the `us` side could only be the INCOMING table, which put
+     _coerce_insider back under suspicion and killed my own "next lead" (the 13f path).
+  2. The CI install log says `pandas-3.0.5-cp311`. My laptop runs 2.3.3.
+
+    local pandas 2.3.3 -> to_datetime("15-NOV-0006", errors="coerce") = NaT, ns, cast OK
+    CI    pandas 3.0.5 -> datetime64[us], year 6 KEPT, cast to the stored ns schema RAISES
+
+requirements-updater.txt pins `pandas>=2.2` with no upper cap, so the runner takes a MAJOR version
+the developer has never run. Reproduced byte-for-byte by constructing the datetime64[us] array
+pandas 3.0 produces — same message, same value -61950355200000000 — and the guard neutralises it.
+
+So the negative control was right that my EVIDENCE was worthless, and wrong as a verdict on the
+hypothesis. The lesson is sharper than "run a negative control": a control run on the wrong stack
+tells you nothing in EITHER direction, and I nearly filed a correct diagnosis as unexplained
+because of it. The fix is that the repro now builds the us input directly instead of going through
+to_datetime, so it fails on unguarded code on ANY pandas.
+
+STANDING RISK, larger than sec_edgar: dev and CI are on different MAJOR versions of pandas. Every
+fetcher is written and tested against 2.3.3 and executed against 3.0.5. This is one behaviour
+difference that happened to raise loudly; the ones that change results quietly would look like
+data.
+
 Also worth keeping: 2 of 3 "never succeeded" errors were stale rather than live. A state row records
 the LAST attempt, not the current code — so on a list of failures, date every error against the fix
 history before treating any of them as work.
