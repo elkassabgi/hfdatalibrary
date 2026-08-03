@@ -7089,3 +7089,40 @@ that production was touched, and it is also not evidence that it wasn't — the 
 boundary, not the message.
 
 Related: R292 (the tests nobody ran), R246/R291 (an outcome requires an attempt).
+
+### R294 — a selftest's fixture grew by 1.09M rows and I nearly reported that as a production hole
+
+Running the bls selftest (unrun by anything, R292) printed:
+
+    cu: rows 111,465 -> 1,204,362 (+1,092,897) | dups 0 -> 0 | schema_preserved=True
+
+I read that as "the fetcher, once unblocked, has 1.09M rows of CPI waiting" — a tidy causal story
+next to bls's RED-DATA, and I was one sentence from writing it down. Then I measured production:
+
+    cu.parquet   1,837,791 rows   newest 2026-06-01
+
+Production is LARGER than the number the selftest grew to. The selftest seeds an ISOLATED temp
+root with partial copies ("one per on-disk schema variant"), so +1,092,897 was it filling its own
+fixture back up, not a gap in anything served. The figure was real, the subject was wrong.
+
+The trap is that an isolated-fixture number and a production number are formatted identically —
+both are "rows before -> rows after" — and nothing in the output says which world it describes. A
+delta is only meaningful with its baseline, and a selftest's baseline is by construction not
+production's.
+
+AND THE RED IT WOULD HAVE "EXPLAINED" IS PROBABLY NOT A FAULT. bls's 63 surveys split cleanly:
+long-retired ones sit at their final period (bg 1994-12-31, hs 1988-12-31, gp 1998-12-31,
+bp 1995-12-31) and every ACTIVE one agrees at 2026-06-01 — ap, ce, cu, cw, ei, la, ln, pc, sm, su,
+wp, ws — with jt at 2026-05-01 and ci/le at 2026-04-01. Twelve independent surveys landing on the
+same period is what a correctly-updating source looks like, not a stall. obs_age 63d is measured
+from a period-start label on monthly data published in arrears, which is the cadence-vs-lateness
+confusion #58 already corrected for eight other sources; bls looks like the ninth. Recorded as a
+candidate, NOT as a verdict — I have not checked BLS's publication calendar, and saying "not stale"
+without it would be the same unbaselined claim in the other direction.
+
+What IS established: the probe regression (R292) landed 2026-08-02 13:40 UTC and bls's last success
+is 2026-08-01 17:47 UTC with status no_change — before the break. So bls has not run since the
+break, its staleness PREDATES the break, and the two are separate facts that the single word
+"stale" was hiding.
+
+Related: R292 (the probe nobody called), R290 (a plausible number from the wrong instrument), #58.
