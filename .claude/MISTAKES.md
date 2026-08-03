@@ -7315,3 +7315,44 @@ history before treating any of them as work.
 
 Related: R283 (fixed the blocker I found and shipped as if it were the only one), R292 (found by
 calling, not reading), R288 (the plausible repair that destroys data).
+
+### R298 — the escalation I predicted arrived, and the obvious form of it would have been worse
+
+#67 closed with a prediction, written down at the time: "If it is killed again the answer is NOT a
+smaller budget — one subject alone would then exceed the cap, and the fix is a deadline check
+inside the per-subject table loop." Run 30799503843 delivered exactly that. stat_estonia took
+2,700s — the orchestrator's 45-minute cap to the second — on an 18-minute budget, and printed no
+budget message at all, because the only deadline check sat at the top of the SUBJECT loop, where it
+bounds when the next subject STARTS and can say nothing about a subject already running.
+
+TWO THINGS WORTH SEPARATING, because they look the same from outside.
+
+R273's fix WORKED: the per-subject bookmark survived the kill — `_rotation.json` read
+{"after": "Lepetatud_tabelid"} — where before this source had never persisted one. Surviving a kill
+is not the same as not being killed, and a source that reliably resumes is still a source that
+burns 45 minutes of a shared runner every night.
+
+AND THE OBVIOUS FIX WOULD HAVE BEEN A QUIETER BUG. Adding the inner deadline check alone breaks out
+of the table loop with the SUBJECT bookmark already advanced — because R273 deliberately writes it
+BEFORE the subject is worked, since an end-of-function save is what a kill destroys. So the next
+visit starts at the following subject and this subject's unfinished tail is never fetched. That is
+R190's truncation one level down, wearing R273's fix as its cause, and it would report `partial`
+with a true and reassuring reason forever. The two fixes are individually correct and compose into
+a data gap.
+
+So it needed both halves: wind the subject bookmark BACK to the previous subject so the subject is
+re-entered, and add a second bookmark at table grain ("<subject>|<table path>") saying where inside
+to resume. Accumulated rows still merge, so a capped pass publishes what it fetched.
+
+One detail that is easy to get backwards: the table bookmark records the last table VISITED, not
+the last that SUCCEEDED. Every branch in that loop can `continue` — transient, empty, rejected
+query — and a success-only bookmark would re-walk a run of failing tables forever, which is the
+exact failure the bookmark exists to prevent.
+
+Tests pin the PROPERTY (across passes, every table is visited; a pathologically small budget still
+converges; an unknown bookmark starts at the top rather than skipping) rather than the storage
+mechanics, so the next refactor is free to change how it is stored.
+
+Related: R273 (state must survive an interrupted run — its fix is confirmed here, and is also what
+made the naive repair dangerous), R190 (the truncation), R286 (a cooperative budget bounds when you
+next look at the clock).
