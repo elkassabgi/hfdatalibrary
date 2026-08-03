@@ -7878,3 +7878,43 @@ is the natural place to correct it.
 
 Related: R251 (the ban), R49/#68 (the claims this corrects), R300 (a class asserted wider than it
 was measured).
+
+### R308 — three wrong root causes for one silent job, and the real one was in the query plan
+
+After the reboot, derive_noaa's log sat at 0 bytes while its process was demonstrably alive. I
+diagnosed it three times and was wrong three times, each diagnosis confident enough that I changed
+code on it:
+
+  1. PIPELINE BUFFERING. I had just switched the runner to `2>&1 | Out-File`, so I blamed it and
+     rewrote it to Start-Process -RedirectStandardOutput. The new log was ALSO 0 bytes.
+  2. DISK CONTENTION from five other jobs. Measured: E: was 94.5% idle, queue length 0.
+  3. A HOT SQLITE JOURNAL from the mid-write reboot. Measured: no -wal or -journal file, and the
+     database opened and answered sqlite_master in 0.0s.
+
+The actual cause was visible in one query the whole time:
+
+    EXPLAIN QUERY PLAN SELECT series_id, source_id FROM series WHERE source_id IN ('noaa')
+      -> SCAN series USING INDEX sqlite_autoindex_series_1
+
+The only index on `series` is the primary key. There is NO index on source_id, so every
+`--source X` derive full-scans an 8.5 GB catalog before it can print its first line. noaa was not
+hung, buffered, starved or corrupt. It was scanning, exactly as instructed, for minutes — and I
+killed it three times before it got there, each kill discarding the scan it had already done.
+
+WHAT I ACTUALLY DID WRONG. Each theory came from what I had touched most recently (I had just
+edited the redirect), or from what was most dramatic (a reboot, a corrupt DB), and each was
+plausible enough to act on. What I did not do until fourth was ask the cheapest question available:
+what is this process actually doing? The CPU sample said "idle, 26 MB RSS" — which I read as
+"stuck" when it means "waiting on I/O for a big sequential read", and the query plan settles it in
+one line.
+
+Two of the three "fixes" I shipped on the way are still good — the function-ordering bug and the
+guard-log lock race were real, and the Start-Process redirect matches the pattern the crawlers
+already use. But they were fixes for a problem that did not exist, found by accident while chasing
+one that did.
+
+FILED, NOT DONE: an index on series(source_id) would make every source-scoped derive start
+instantly instead of scanning 8.5 GB. Not created here — it writes to a production catalog that
+five jobs are reading, and refresh_r2_catalog would drop it again unless the generator adds it.
+
+Related: R290 (an empty log read as a hang), R296, R305 (the guard was telling me the answer).
