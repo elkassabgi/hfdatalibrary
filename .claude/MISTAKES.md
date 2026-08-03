@@ -7169,3 +7169,37 @@ history into one series rather than overwriting anything. Full 7,754-file measur
 --apply decision waits on it, not on the old number.
 
 Related: R292 (the unreachable documented fallback), R288 (a collapse that looks safe and is not).
+
+### R296 — I re-ran a migration's safety measurement against the wrong store, and the tool is what caught me
+
+Having fixed rekey_eurostat.py to report the conflicting-revision count (R295), I relaunched the
+full dry run as:
+
+    nohup python -u tools/rekey_eurostat.py --dry-run > ...
+
+and it printed:
+
+    eurostat store: 7,754 file(s) under E:\...\data\clean_full\eurostat  (backend=local)
+
+No AQUEDUCT_BACKEND=r2. The original run had it; my relaunch dropped it, so the measurement was
+reading the LOCAL SCRATCH MIRROR instead of the R2 store the migration actually targets — the
+distinction R36 exists for, and one #71 states outright ("apply must target R2").
+
+What made it dangerous is that it would have LOOKED right. The local mirror holds the same 7,754
+files, so the progress lines, the file count and the shape of every number would have been
+plausible. I would have produced a confident conflicting-revision count for a 2.4-billion-row
+migration and attributed it to a store I had not read. If the mirror is stale in either direction
+the count is wrong in either direction, and nothing downstream would have said so.
+
+WHAT SAVED IT was not vigilance, it was the tool: it prints its backend and its resolved path on
+line one, unasked. That is worth copying deliberately — a tool that announces which world it is
+operating on converts an invisible environment mistake into a visible one, and this is the second
+time today that the environment, not the logic, was the defect (R293: a test that encoded "my
+laptop" as a fact). Every audit/migration tool here that can address more than one store should say
+which one it chose, in its first line of output.
+
+Killed and relaunched with AQUEDUCT_BACKEND=r2; confirmed `(backend=r2)` before letting it run. The
+--apply decision waits on THAT number, not the local one.
+
+Related: R36 (the local store is a scratch mirror), R293 (environment as the defect), R295 (the
+same tool's unimplemented safety claim), R290 (a plausible number from the wrong instrument).
