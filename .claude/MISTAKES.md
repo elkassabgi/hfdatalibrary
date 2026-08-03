@@ -6980,4 +6980,18 @@ turn. RED-UNRUN is a claim about outcomes, and an outcome requires an attempt (R
 this time the missing attempt was upstream of the orchestrator entirely, in the CI scheduler, where
 none of our instruments look).
 
+BIGGER THAN HEAVY, found by applying that rule to the next RED. bcrp showed RED-SLA at 2d and I was
+ready to treat it as a broken daily fetcher. It was never attempted either. Every one of my seven
+dispatches was TARGETED — `--source` lists of three or four — so run 30784948551 gave a turn to
+exactly stat_estonia, stat_slovenia, statfin, worldbank_wdi and nothing else, while occupying the
+single concurrency slot for 3h45m. Across the session those targeted runs displaced the FULL daily
+pass over ~100 cloud sources. bcrp's RED-SLA is not a bcrp defect; it is the shadow of my own
+proof-run discipline, and the same is likely true of other REDs I have not yet checked.
+
+So the honest shape of the cost: a targeted proof run is not free and not local. It consumes the
+one slot that the full pass and the heavy matrix both need, and every source it does NOT name gets
+quietly older while the instruments report that ageing as source health. The fix is not only the
+second cron — it is to stop dispatching once a scheduled run is queued, and to read the scheduled
+run's results rather than manufacturing my own.
+
 Related: R246 (scheduled is not attempted), R5 (single-writer, why the group is shared), R273.
