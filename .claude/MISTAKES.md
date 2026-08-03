@@ -7126,3 +7126,46 @@ break, its staleness PREDATES the break, and the two are separate facts that the
 "stale" was hiding.
 
 Related: R292 (the probe nobody called), R290 (a plausible number from the wrong instrument), #58.
+
+### R295 — the second docstring in one day promising a safety property the code did not implement
+
+rekey_eurostat.py's header says, of the collision risk it correctly identifies:
+
+    "two rows can then share (key, obs_date) with DIFFERENT values (a revision). The dry run
+     REPORTS that count before anything is written"
+
+It did not. The dry run printed files, rows, collapsed rows and distinct keys — no revision count
+existed anywhere in the file. I read the header, believed the safety property, and was one step
+from treating "collapsed 2,457,810" as a vetted number.
+
+WHY THAT NUMBER IS UNACTIONABLE ALONE. A collapsed row is one of two utterly different things:
+
+    identical duplicate   same (key, obs_date), SAME value — the same observation republished
+                          under a new LAST UPDATE. Dropping one changes nothing.
+    real revision         same (key, obs_date), DIFFERENT value — eurostat restated the figure.
+                          "Keep LAST" then silently picks one of two real numbers.
+
+2,457,810 prints identically whether it is entirely the first or entirely the second. The only
+figure that distinguishes them — and therefore the only one the migration's safety rests on — was
+the one the header claimed to print and didn't.
+
+This is the SECOND instance today of the same shape. R292: bls.current_vintage's docstring promised
+"returns None ... so the strategy fetches anyway" and that path was unreachable, because the
+function raised before reaching it. Different file, different author-moment, identical failure — a
+docstring describing intended behaviour, written at the time the intent was formed, never revisited
+when the code went a different way. A docstring is a claim about code, and an unverified claim in a
+comment reads exactly like a verified one.
+
+The rule I am taking from having hit it twice in a day: when a comment states a SAFETY property —
+"this is checked", "this is reported", "this returns None instead of failing" — locate the line that
+implements it before relying on it. Both times the check took under a minute and both times the
+property was absent.
+
+FIXED: the count is now computed per file, before dedup destroys the evidence, with a group_by on
+(series_key, obs_date) and count_distinct(value), printed beside the collapse and called out
+explicitly when zero. Verified on the first 120 files: 2,311,712 -> 1,957,990 keys, 0 rows
+collapsed, 0 conflicts — the releases carry DISJOINT dates, so re-keying stitches a fragmented
+history into one series rather than overwriting anything. Full 7,754-file measurement running; the
+--apply decision waits on it, not on the old number.
+
+Related: R292 (the unreachable documented fallback), R288 (a collapse that looks safe and is not).
