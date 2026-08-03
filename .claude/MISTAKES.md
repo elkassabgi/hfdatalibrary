@@ -7024,9 +7024,27 @@ I found it only because I stopped reading bls and ran `bls.current_vintage("_all
 FIXED and proven: current_vintage('_all') -> 'bls:469c4edb521e2d20', a real token, which is exactly
 the standing order's bar for promoting anything ("prove current_vintage() returns a real token").
 
-SWEEPING THE CLASS, not the instance: every fetcher's current_vintage is being CALLED, not read,
-because a second one could be broken the same way and look identical from the outside. Result to be
-recorded here when the sweep finishes; at 20 of ~89 fetchers it is clean.
+SWEPT THE CLASS, not the instance: every fetcher's current_vintage was CALLED, not read, because a
+second one could be broken the same way and look identical from the outside. Result, all of them:
+
+    142 fetchers: 102 token, 6 None, 34 without current_vintage, 0 RAISE
+
+bls was the only one. Note 142, not the "~89" I guessed mid-sweep — I had not counted, and the
+class was 60% larger than the number I would have quoted if the sweep had not finished.
+
+Both non-failing outcomes are the documented contract (a token = vintage determinable, None =
+undeterminable so the strategy fetches anyway), so a zero-RAISE result is the real all-clear and
+not an absence of evidence. The sweep is now a permanent instrument,
+tools/audit_current_vintage.py, because the thing that was missing here was never knowledge — it
+was a caller.
+
+AND THE SAME DISEASE, ONE LEVEL UP, found while wiring that in: tests/ holds 11 files and 120
+tests, green in 8.66 s, and NO workflow ran them. `grep -rniE "pytest|unittest|tests/"` across all
+six workflows returned nothing. A test suite nobody runs and a selftest nobody calls are the same
+artefact — reassurance without evidence — and this repo had both. Added .github/workflows/tests.yml
+on push and PR, in its OWN concurrency group: putting a push-triggered workflow into
+`aqueduct-updater` would have made every push a chance to evict a scheduled updater run, which is
+precisely the starvation R291 had just measured.
 
 Related: R246/R291 (an outcome requires an attempt — here the attempt was a function call nobody
 made), R248 (did the gate assess anything), R231.
