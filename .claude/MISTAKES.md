@@ -185,6 +185,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R277. A FIX IS FINISHED WHEN THE SOURCE HAS BEEN RE-ATTEMPTED, NOT WHEN IT IS COMMITTED. `partial` never sets last_success (R231), so a source displays whatever its LAST ATTEMPT produced, and the daily run reaches only ~20 of ~106 cloud sources per budget — so a fetcher fixed today advertises yesterday's failure for days. Four of the first five "bugs" I worked from the digest were already fixed: worldbank 684/684 (all 3 named series now derive from R2 with real rows), treasury 185->1 (upstream still serves 185; _fetch_rows returns 185/185 distinct), boc + riksbank (now PROVEN ok in CI, succ_age 0d). Precise numbers read as current — 684/684, 185->1, 201/201 — but the digest carries no age. Before diagnosing a reported failure, compare the verdict's age to the last commit touching that fetcher; if the fix is newer, force-run first. And never call a decomposition of stored verdicts a bug list. [M-20260803-21]
 - R278. A DATE TAIL EXTENDS THE SERIES THE STORE HAS; IT DOES NOT MINT NEW ONES — the store can be a SUBSET of what the API serves. Key-equality proves the MAPPING (a rebuilt key means what the store means); it says NOTHING about MEMBERSHIP. Fetching a boundary period we already hold: intltrade/exports/hs api 44,997 / in store 44,997 (perfect), but imports/naics api 68,961 with only 757 of them in store, statehs 9,759 with 55. no-shape=0 — the keys are valid, the ingest just selected a subset. Merging that tail would have taken imports/naics from 1,514 series to ~69,000 as 'an update', and never-shrink cannot object because the file only grows. One flow matching perfectly is what makes a spot check lie. Merge only keys already in the store, and REPORT the skipped count. [M-20260803-22]
 - R279. A CLASS FIX MUST END IN A MECHANICAL ZERO-RESULT ASSERTION, NOT A CAREFUL READ. cso had four anonymous `tally.transient_unit()` calls; I read the fetch loop, fixed the three that sat together, and the block then looked uniformly correct. The grep-the-source test I wrote next failed with 1 remaining — ReadCollection, ~60 lines earlier under a different concern, and the most important of the four because it fails the WHOLE RUN (no vintage map -> no diff -> nothing fetched), not one table of 26. Local consistency reads as completeness. Also: the test greps the MODULE, not just Tally — a test that only calls transient_unit('x') passes forever while the fetcher goes back to passing nothing, because the fetcher is what forgets. [M-20260803-23]
+- R280. BEFORE TAILING A STORE INCREMENTALLY, ASSERT distinct(dedup_keys) == rows. Key equality and membership are claims about the RELATION between fetched rows and the store; uniqueness is a claim about the STORE ALONE, so no comparison of the two can ever surface it. I proved mapping (55,233/1,622/2,808 distinct keys, 0 mismatches) and membership (R278), enabled 24 census intltrade flows, committed — then wrote the check and found 11 of 24 under-keyed: exports/statehs 3,356,888 rows under 4,400 distinct (series_key, obs_date), imports/usda 8,773 under 390. The first merge collapses the file; never-shrink refuses it, so it fails every run as a baffling 'refusing shrink' that reads as a fetcher bug. bds was the near-miss: 100% of its 5,910 returned rows matched a known key AND it holds them under 15 pairs. comtrade needed this same repair (#16) and I had the precedent. tools/audit_dedup_uniqueness.py, exits non-zero. [M-20260803-24]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6503,3 +6504,43 @@ throttling a cloud IP) cannot be justified on evidence the fetcher refuses to re
 
 Related: the "example means class" rule, R249 (match the tool to the claim — reading is not a
 sweep), R248 (check the gate assessed anything before believing it).
+
+### R280 — "the keys map correctly" and "the key is a KEY" are different claims
+
+**What happened.** Extending census's date tail to the intltrade family, I checked the mapping
+hard and from both directions: every distinct stored key reproduced byte-identically (55,233 /
+1,622 / 2,808, zero mismatches), and a boundary period we already hold came back with every row
+resolving to a key the store recognised. R278 came out of that work — the store is a SUBSET of
+what the API serves, so merge only what you already publish. I enabled 24 flows and committed.
+
+Then I wrote a tool to check something I had not: whether `(series_key, obs_date)` — the pair
+merge_and_write dedups on — is UNIQUE in each store. **11 of the 24 are not.**
+
+    intltrade/exports/statehs   3,356,888 rows -> 4,400 distinct (series_key, obs_date)
+    intltrade/exports/sitc      3,265,447 -> 4,940
+    intltrade/imports/usda          8,773 -> 390          (95.6% would collapse)
+
+The first incremental merge on those does not add a tail, it collapses the file to the number of
+distinct pairs. never-shrink refuses the write, so no data would have been lost — but 11 flows
+would have failed every run with "refusing shrink 3,356,888->4,400", which reads as a fetcher
+bug and is nothing of the kind. comtrade needed exactly this repair before it could auto-update
+(#16); I had the precedent and still did not look.
+
+**Why the earlier evidence felt sufficient.** Key equality and membership are both statements
+about the RELATION between a fetched row and the store, and I had tested both directions of it.
+Uniqueness is a statement about the STORE ALONE — it does not involve the API at all, so no
+amount of comparing the two could surface it. Three careful checks in one family, none of which
+could see the fourth problem.
+
+**And the near-miss that would have taught it sooner.** bds looked like a free win: measurably
+behind, fetches cleanly, and every one of its 5,910 returned rows maps to a key the store holds.
+It holds those 5,910 rows under FIFTEEN distinct pairs. "100% of rows matched a known key" was
+true and reassuring and completely compatible with a 99.7% collapse.
+
+**The rule.** Before tailing any store incrementally, assert that its dedup key IDENTIFIES a row:
+`distinct(dedup_keys) == rows`. It is one group_by, it needs no network, and it is invisible to
+every mapping check you might otherwise run. tools/audit_dedup_uniqueness.py does it for any
+source and exits non-zero so it can gate the change instead of just informing it.
+
+Related: #16 (comtrade, the same defect found the same way and forgotten), R278 (membership —
+its sibling, and just as invisible from the other side), R254 (nulls in dedup keys).
