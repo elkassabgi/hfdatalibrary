@@ -6001,3 +6001,47 @@ the most dangerous kind, and only enumerating the branches found it.
 
 Related: R266 (the entry this corrects), R265 (the impossible-date thread), R134 (suspect the
 probe — here the probe was a test I wrote myself).
+
+## R234
+
+**My batch loop printed "DONE" while one of its 15 items had crashed and synced nothing.**
+
+Backfilling catalogue coverage, I drove 15 sources through a shell loop:
+
+```bash
+for s in riksbank unesco_dem insee_bdm boe ... ; do
+  echo "### $s"
+  python core/sync_catalog_d1.py --source "$s" 2>&1 | tail -2
+done
+echo "### SMALL+MEDIUM DONE"
+```
+
+`unesco_sdg` died on a `UnicodeEncodeError` — one of its series titles contains 🪵 (U+1FAB5)
+and the Windows console is cp1252, so PRINTING a sample row raised. Nothing was written to D1 for
+that source. The loop moved to the next item and finished with "SMALL+MEDIUM DONE", exactly as it
+would have on total success.
+
+Three things hid it. `| tail -2` discarded the traceback's first lines. The loop tested no exit
+code, so a crash and a success were indistinguishable to it. And the final banner asserted
+completion of the LOOP, which I read as completion of the WORK. I caught it only because I
+separately grepped the log for `Error`, and even then had to go back and confirm whether the crash
+happened before or after any write (before — so D1 was untouched, and a rerun with
+`PYTHONIOENCODING=utf-8` fixed it cleanly: 100,997 rows).
+
+The near-miss is that 100,997 series would have silently kept their missing dates while I reported
+the backfill complete, and the count I would have quoted — from the LOCAL catalogue, which the
+backfill had already fixed — would have looked perfect.
+
+**The rules.**
+1. A loop over N items must count SUCCESSES, not iterations. Check the exit code per item and
+   print `k/N succeeded` at the end; "DONE" after the last iteration means only that the loop ran.
+2. Never pipe a batch step through `tail -n` alone. A truncated traceback is a hidden failure —
+   keep the full log and grep it for errors as a separate, explicit step.
+3. Encoding is a runtime dependency of PRINTING, not just of writing. On Windows set
+   `PYTHONIOENCODING=utf-8` for any job that echoes third-party text; one emoji in one title
+   killed a 100k-row job.
+4. Verify the FINAL state at the destination, not the source. The local catalogue said the work
+   was done; only the serving API could say whether it had actually arrived.
+
+Related: R229 (claimed a class was swept without sweeping it), R227 (a check that measured the
+wrong thing and reported success).
