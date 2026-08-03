@@ -180,6 +180,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R272. FOR A STORE-ROUTED SIDECAR, CHECK BOTH ENDS — ROUTING THE READ FIXES NOTHING IF NOTHING EVER WROTE TO THE STORE. cso's fetch set is `changed = [m for m,u in cur_upd if stored.get(m) != u]`, and that cursor was read/written on the LOCAL disk, so under r2 it was ephemeral: every run saw all ~13,000 matrices as changed, pulled the newest 60, and discarded the cursor — it could never converge on a 48.9M-row store ("60/60 sub-units transient-failed"). My reflex was to point the read at blob; measured, `_catalog.json` is 3,140,483 B locally and ABSENT from R2 because only the INGESTER wrote it, locally — so a routed read would have found an empty store FOR EVER and I would have called it fixed. It now builds the catalogue from CSO's Search API and caches it to the store. Also: read `_cursor_path()` instead of guessing the filename (`_collupd.json`, not `_cursor.json`) — the guess reported 'absent everywhere' and hid the asymmetry that IS the bug. And this is why the cso re-pull must not use repull_file.py: a change-driven fetcher does not rebuild a deleted file. [M-20260803-16]
 - R273. STATE THAT MUST SURVIVE A RUN HAS TO BE WRITTEN WHERE AN INTERRUPTED RUN STILL REACHES IT — AND VERIFY PERSISTENCE BY LOOKING FOR THE ARTEFACT, NOT THE CALL. Only 2 of 14 rotating sources (boe, bcb) have ever persisted `_rotation.json`; the other twelve have none, so load_rotation() returns '' and every run restarts at the top — R190's remedy inert. All fifteen fetchers DO call save_rotation, correctly, near the END of the function; the orchestrator's 45-min cap KILLS the source rather than breaking its loop, so an overrunning fetcher never reaches its own bookmark. Exact correlation: the four confirmed hard-killed at 45.0 min (worldbank_wdi, stat_estonia, statfin, stat_slovenia) all lack bookmarks; the two that finish have them. Self-sustaining: killed -> no bookmark -> same prefix -> killed. Invisible in review because the code reads correctly. "The call is there" and "the file is there" are different claims. [M-20260803-17]
 - R274. NAME THE READER BEFORE CALLING AN INSTRUMENT DONE: WHO SEES THIS, FROM WHERE, WHEN? I fixed the watchdog-with-no-watchdog with a heartbeat file and wrote that "anyone can read" it — anyone ON THAT MACHINE, i.e. nobody, which is the premise of an unattended workstation. It was correct, current and unread for 10 hours. route_silence's docstring even said the instrument for a short outage "is the guard's own heartbeat on that machine"; I read that as both halves built, when the coarse net was in CI where it could fire and the fine one was on the box where it could not. A component's "the instrument for that is X" is a claim to VERIFY, not a citation. Now published to R2 per tick and read by updater-daily: own key (not the CAS state store, R5), age from the BODY not LastModified (a re-uploaded stale body would look fresh), and ABSENT exits 1 as UNINSTRUMENTED — passing on a missing object rebuilds the silence it exists to end. [M-20260803-18]
+- R275. BEFORE BELIEVING A STATUS, CONFIRM THE ID MEANS ONE THING. source_id `sec_edgar` denotes TWO products: the SERVED XBRL per-ticker set (17,276 catalog series, in util.ts, updated daily by sec-edgar-daily and parity-proven AAPL 25,135==25,135) and the UNSERVED 13f/insider giant (0 catalog, 0 util.ts) whose updater unit throws the ArrowInvalid. The registry entry `sec_edgar_xbrl` describes the served product while the catalog files it under `sec_edgar`. So the health gate calls a healthy served source broken, and the coverage audit calls it 'scheduled but not served' — both instruments wrong, opposite directions, one cause. Ruled out first, by measurement not inspection: both stores clean on a COMPLETE scan (0 out-of-ns rows, no timestamp[us] anywhere) and pandas coerces bad years to NaT. A registry comment saying a source was 'split out' is a re-pointing — go check what each name now denotes. [M-20260803-19]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6243,3 +6244,53 @@ machine gets the gate before the beat — which fails in the honest direction, A
 
 Related: R260 (a probe that matched its own command line), R5 (single-writer CAS), R36 (works
 locally proves nothing about CI), R249 (match the tool to the claim).
+
+### R275 — one source_id, two products: the served one is called broken, the broken one is called unserved
+
+**What I found.** Chasing `sec_edgar: UNEXPECTED:ArrowInvalid('Casting from timestamp[us] to
+timestamp[ns] would result in out of bounds timestamp')` I established, in order:
+
+  * both edgar stores are CLEAN — a complete scan (not a sample) of 371+648 local and 364+648
+    R2 parquets found **0** out-of-ns-range rows, and no `timestamp[us]` column exists anywhere
+    in stored data;
+  * the parse path is safe — pandas 2.3.3 with `format=` and `errors="coerce"` coerces year
+    9999 and year 0001 to NaT and yields `datetime64[ns]`, verified by running it;
+  * `sec-edgar-daily` has succeeded five days running, and its own step PROVES the refresh
+    reached the served object (AAPL: parquet rows=25,135 == csv data rows=25,135).
+
+So the failing thing and the healthy thing were never the same thing. The registry says so in
+its own words: *"Split out from source_id sec_edgar (now the relational 13f/insider giant) on
+2026-06-25 so both products stay managed."*
+
+**The collision.** Two products, two update paths, one id — and the id points the wrong way:
+  * SERVED: the XBRL per-ticker product, `clean_grouped/sec_edgar/<TICKER>.parquet` (~17,274
+    files). Its catalog rows are filed under source_id **`sec_edgar`** — 17,276 series, present
+    in util.ts. Updated by `tools/refresh_sec_edgar.py` via sec-edgar-daily. Healthy.
+  * NOT SERVED: the 13f/insider giant, `clean_full/edgar_13f` + `edgar_insider`. 0 catalog rows,
+    0 non-comment occurrences in util.ts. Updated by the updater unit whose registry id is also
+    **`sec_edgar`**. This is what throws the ArrowInvalid.
+  * The registry entry named **`sec_edgar_xbrl`** describes the SERVED product — but the catalog
+    files that product's rows under `sec_edgar`, so the audit sees `sec_edgar_xbrl` with 0
+    catalog rows.
+
+**Both instruments are wrong, in opposite directions, from this one cause.** The health gate
+reports a served, daily-updating, parity-proven source as failing, because an unserved sibling
+borrows its id. The coverage audit reports the served product as "SCHEDULED BUT NOT SERVED
+(catalog rows: 0)", because it looks up the other id. Neither is a bug in the instrument.
+
+**The rule.** Before believing a status, confirm the id means ONE thing. An id that has been
+re-pointed at a different product keeps every downstream reading syntactically valid and
+semantically false — and it fails silently in both directions, so a cross-check that compares
+two instruments will happily agree that something is wrong with "sec_edgar" while neither can
+say which sec_edgar. When a registry comment says a source was "split out", that is a
+re-pointing: go and check what each name now denotes.
+
+**Not fixed here, and why.** The clean repair is to align the names, but the catalog's 17,276
+rows carry PUBLIC series ids under `sec_edgar`; re-filing them is the same class of change as
+#46 (re-keying changes published ids) and is Ahmed's call. Renaming the registry's 13f/insider
+entry instead keeps public ids intact, but the registry id feeds /v1/sources, so it needs the
+serving surface checked first. Recorded as a task rather than done blind.
+
+Related: R246 (measure what ran, not what is configured), R36 (I scanned the local copy first —
+the CI store is R2, and they differ), R35 (a green run that exercised nothing proves nothing —
+this one did exercise something, which is why the parity probe matters).
