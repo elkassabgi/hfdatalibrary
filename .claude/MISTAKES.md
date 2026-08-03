@@ -189,6 +189,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R281. A CHECKER MUST READ THE PARAMETER IT JUDGES BY FROM THE CODE UNDER TEST, AND PRINT WHICH ONE IT USED. My dedup-uniqueness auditor hardcoded (series_key, obs_date) and reported 257 under-keyed files across 18 sources — 166 of treasury's 181, which are ALL false positives: treasury computes tuple(_identity_keys([...] + out_cols)) per file because its series_key is the endpoint path, constant within a file. The same assumption failed silently the other way: ofr keys on (series_id, obs_date) and worldbank_esg on (country, obs_date), so both were skipped as 'lacking key columns' and 71 files were never audited while the run read as a pass. It slipped through because it WORKED on census, whose DEDUP is the default — one correct answer is not validation of the method. 166 false positives would have sent someone re-keying a correct source (a published-id change, #46's class) and discredit the true findings in the same output. Also: never pipe a long diagnostic through `tail`; I lost 91 findings that way. [M-20260803-25]
 - R282. A TRUE AGGREGATE OVER THE WRONG FILE SET IS STILL THE WRONG ANSWER — before escalating one, ask which code path actually WRITES those files, and whether the damage would ALREADY BE VISIBLE if the hazard were real. 91 under-keyed bea files, 28 of them retaining >=97% so never-shrink (min_ratio=0.97) would pass them and silently drop 19,987 rows — all correct, and I was one step from calling it a live incident. bea's fetcher writes only to bea.parquet, which is NOT under-keyed; all 91 are in the served TREE that the first-pass ingester writes and the fetcher never touches. bea's own comment says so ('that file holds under 2% of the source's series') and I had read it as a remark about frontier reporting. The clincher was free: a completed collapsing merge leaves rows == pairs, and the tree still shows 3,017,142 vs 2,778,518, so nothing has landed. Finding survives, correctly scoped: prospective, for #65. [M-20260803-26]
 - R283. CLEARING THE BLOCKER YOU FOUND DOES NOT ESTABLISH THERE WAS ONLY ONE — before enabling anything, re-run the ORIGINAL claim through the REAL code path and require it to produce the thing you are enabling it for. census bds: under-keyed (5,910 rows / 15 pairs), solvable and solved — (series_key, obs_date, NAICS) unique at 5,910 = 5,910, measures excluded. Enabled it; tests passed; the tail returns ZERO. time=2023 gives 0 rows for the 21 columns the store holds and 5,516 for three required vars — all 21 are known to variables.json, the 2023 vintage just does not populate them, and Census answers empty. `from 2022` returns 2022 only. My evidence that bds was reachable came from a hand-picked 3-column probe days earlier, and the fetcher does not make that request. Reverted; the dimension finding kept in _EXTRA_DIMS. [M-20260803-27]
+- R284. AN EXCLUSION JUSTIFIES ITSELF — nothing ever tests the code you did not write, so check scope notes on a SCHEDULE, not on suspicion. census.py's header asserted the 60 non-EITS files "do not gain periods, they gain a whole new reference year"; Census's own catalogue lists every one as a timeseries dataset with c_vintage null, and 16 intltrade flows had been two months behind for as long as that sentence stood (exports/hs alone, 45,659 rows waiting). Nothing crashed: the 21 flows actually covered were current, so "census is up to date" was true of the measured part and false of the whole, and the coverage audit counted it SERVED+SCHEDULED without asking which of its 80 files the fetcher touches. Cheapest guard: for any source with more store files than the fetcher enumerates, probe ONE excluded file against the publisher. And write exclusions as dated MEASUREMENTS, never as properties — a measurement invites re-measurement. [M-20260803-28]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6668,3 +6669,38 @@ no suffix, so that rule would sweep them into the key and make a revision duplic
 
 Related: R277 (a fix is finished when the source has been re-attempted), R280 (the check that
 found the under-keying), R281 (a hand-probe passing for the wrong reason).
+
+### R284 — an exclusion justifies itself: nothing ever tests the code you did not write
+
+**What happened.** census.py's header said, of the 60 non-EITS files: "They are periodic
+snapshots ... A date tail is the wrong instrument: they do not gain periods, they gain a whole
+new reference year." Confident, specific, and wrong. Census's own catalogue
+(api.census.gov/data.json) lists every one of them as a `timeseries` dataset with `c_vintage`
+null. They gain PERIODS. When I finally probed, 16 intltrade flows were sitting two months
+behind — exports/hs alone with 45,659 rows waiting — and had been, silently, for as long as that
+sentence stood.
+
+**Why it survived so long, and this is the general point.** Every other claim in that file gets
+tested by the code running: a wrong URL 400s, a wrong key doubles a series, a wrong dedup
+collapses a file. An EXCLUSION is different. It describes work that is not done, so nothing
+exercises it, nothing fails, and no gate notices — the coverage audit counted census as SERVED
+and SCHEDULED, which it is, without ever asking which of its 80 files the fetcher actually
+touches. The justification and the silence reinforce each other: the reason sounds sufficient
+precisely because nothing has ever contradicted it.
+
+**What it cost.** Nothing crashed. The source reported healthy throughout, because the 21 flows
+it did cover were genuinely current. "census is up to date" was true of the part being measured
+and false of the whole.
+
+**The rule.** A scope note that says WHY something is out of scope is a claim like any other, and
+it is the one least likely to be checked — so check it on a schedule, not on suspicion. Cheapest
+version: for any source with more store files than the fetcher enumerates, probe ONE excluded
+file against the publisher and confirm the stated reason still holds. That is one request, and
+here it would have surfaced sixteen behind flows any day in the past months.
+
+Corollary for writing them: state the exclusion as a MEASUREMENT with a date ("probed
+2026-08-03: 2017 and 2018 both 204, so asm/industry at 2016 is current"), never as a property
+("these do not gain periods"). A measurement invites re-measurement; a property invites belief.
+
+Related: R275 (a registry comment saying "split out" is a re-pointing — verify what each name
+now denotes), R283 (re-run the original claim through the real code path), R246.
