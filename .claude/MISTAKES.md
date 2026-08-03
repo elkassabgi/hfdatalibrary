@@ -7201,5 +7201,27 @@ which one it chose, in its first line of output.
 Killed and relaunched with AQUEDUCT_BACKEND=r2; confirmed `(backend=r2)` before letting it run. The
 --apply decision waits on THAT number, not the local one.
 
+MEASURED, AND IT IS NOT A NEAR-MISS — THE TWO STORES GIVE OPPOSITE ANSWERS. Both runs print a
+checkpoint at the same point, so they can be compared directly:
+
+    [100/7754]  r2     rows 32,494,583 -> 32,246,869   (247,714 collapsed)
+    [100/7754]  local  rows 32,246,869 -> 32,246,869   (          0 collapsed)
+
+The local mirror holds 247,714 FEWER rows across those same 100 files, and consequently reports
+that the migration collapses nothing at all. Had I not caught the backend, the full local pass
+would have concluded "0 conflicting revisions, 0 rows collapsed" — not a slightly-off number but
+the flat opposite of the truth, and a very comfortable one: it says the migration is safe because
+it does nothing.
+
+I ALSO GOT THE MECHANISM WRONG ON THE FIRST GUESS, which is worth recording next to the fact.
+Seeing local's INPUT equal r2's OUTPUT exactly (32,246,869 both sides), I concluded the mirror must
+already hold re-keyed data. It does not: AACT_ALI01 has 3,945 rows in both stores and ALL 3,945
+keys contain `LAST UPDATE` in both. The stores differ in row content, not in keying, and the equal
+figure was a coincidence I read as a mechanism. Fact established, mechanism not — and the entry
+says so rather than shipping the tidy explanation.
+
+Related: R36 (the local store is a scratch mirror), R293 (environment as the defect), R295 (the
+same tool's unimplemented safety claim), R290 (a plausible number from the wrong instrument).
+
 Related: R36 (the local store is a scratch mirror), R293 (environment as the defect), R295 (the
 same tool's unimplemented safety claim), R290 (a plausible number from the wrong instrument).
