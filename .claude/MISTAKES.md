@@ -7613,3 +7613,42 @@ one full run.
 
 Related: R302 (the tool, and its first self-inflicted defect), R297/R301 (the rule it instruments),
 R290 (a summary read instead of the measurement).
+
+### R305 — the guard had been shouting the answer every run and it was filed as the source's fault
+
+treasury's live error read:
+
+    refusing shrink 185->1 at .../fbp-distribution-transaction-data__fbp_dpai_account_summary.parquet
+
+I have been reading that line for days as "treasury is partial again". It is not a fault report —
+it is merge's never-shrink guard REFUSING TO DESTROY 184 ROWS, on every single run, and being
+recorded as the source's failure for doing so.
+
+The endpoint is a static reference table: 185 rows, columns `account_nbr` and `account_desc`, no
+date column and no value column at all. _build_table stamps obs_date=None when no date field is
+found, series_key is the endpoint, so all 185 rows collapse onto the single identity
+(endpoint, None) and dedup keeps ONE. Verified on the store: 185 rows, `series_key` distinct = 1,
+`obs_date` distinct = 0.
+
+Swept it: three files are in that state — redemption_tables (125,728 rows), sb_value (35,936),
+fbp_dpai_account_summary (185). 161,849 rows whose entire protection is a guard firing every run.
+
+TWO THINGS I TOOK FROM THIS.
+
+A guard that fires repeatedly is EVIDENCE, not noise. This one names the file, the direction and
+the magnitude, and it had done so daily. It was legible the whole time and I skimmed it as a status
+line, because it arrived in the position where failures go. A recurring refusal means something
+upstream of the guard is wrong and has not been looked at — the guard is the only reason there is
+still data to look at.
+
+And "no date field" is not a small case to handle politely; it means THIS IS NOT A TIME SERIES.
+Date-tailing a dimension table is not a degraded fetch, it is a category error, and the honest
+response is to skip it and say why rather than to fetch and let a downstream invariant catch the
+wreckage.
+
+Fixed by skipping endpoints with no date field, rows untouched. NOT closed: redemption_tables
+carries `redemp_period` and sb_value similar, so 161k of those rows may be real time series whose
+date column _pick_date_field simply does not match. Filed as #87 rather than guessed at — picking a
+period column wrong is precisely how cso's axes got swapped (R288).
+
+Related: R288 (a swapped axis from a wrong period column), R281 (under-keyed stores), R231.
