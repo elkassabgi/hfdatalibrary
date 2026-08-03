@@ -6778,3 +6778,45 @@ per-unit loop.
 
 Related: R273 (state must be written where an interrupted run reaches it — this is its second
 occurrence, and the reason #67's claim was false), R190, R285.
+
+### R287 — two bookmarks with the same name mean different things, and "fixing" one would break it
+
+Closing R273's class, I swept all 15 fetchers that call `save_rotation` and asked one question:
+is the call inside a loop? Fourteen were (indent >= 8, inside `for`), so a kill mid-run keeps the
+bookmark. One, usda, matched the indentation test but is not in a loop at all — it sits under
+`if window:`, run once, just before the function returns.
+
+By the rule I was applying that is the exact defect R273 names, and the mechanical fix is obvious:
+move it into the per-table loop above it so a kill cannot lose it. That fix would have been a
+regression, because usda's bookmark does not mean what the other fourteen mean.
+
+  worldbank_esg, adb, census, statfin, stat_estonia, ... — the bookmark records WORK ALREADY
+  PERSISTED TO THE STORE. The merge happened; the rows are on R2 whether or not the run survives
+  to return. So the bookmark must be durable at the moment of the write, and a kill that loses it
+  causes the next run to redo work that was already done — or worse, per R190, to redo the SAME
+  head of the list forever.
+
+  usda — the bookmark records WHICH CURSOR WINDOW WAS REPORTED IN THE RESULT. `_table_cursors`
+  (L262) builds the window; it reaches the caller only through `series_cursors` in the Result
+  (L269). A run killed before that return reports NOTHING. Leaving the bookmark unadvanced is
+  then correct: the next run re-reports the same window because that window was never delivered.
+  Advancing it per-table would skip up to 50,000 cursor keys that no run ever emitted — silent,
+  and invisible to every instrument, since usda would keep reporting a plausible 50,000.
+
+The sweep classified by MECHANISM (where is the call?) when the property I actually cared about is
+SEMANTIC (what does the bookmark claim?). Mechanism is greppable and semantics are not, which is
+precisely why the cheap test is the one that gets run — and why its false positives point at the
+code most likely to be broken by a confident mechanical fix.
+
+The general shape: durable-state audits must ask what the state ASSERTS, not where it is written.
+"Persisted work" and "delivered output" both look like a resume bookmark and want opposite
+handling on a kill. Two more in this repo are worth not confusing with either: a freshness sidecar
+(ksh_stadat's `_toc_vintages.json`) asserts "I have seen this vintage", and vintage-ordering
+(ssb, ecb) asserts nothing at all — it re-derives priority from the data each run, which is why
+those two need no bookmark and adding one would be noise.
+
+Checked, not assumed: 15 sources call save_rotation, 14 in-loop, usda the sole exception, verified
+by reading its call site rather than trusting the indent. No change made to usda.
+
+Related: R273 (the class this closes), R190 (the truncation rotation exists to prevent), R284 (an
+exclusion justifies itself), R281 (an audit that hardcodes one grain reports the others as bugs).
