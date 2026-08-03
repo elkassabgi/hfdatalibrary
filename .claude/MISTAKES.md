@@ -7990,3 +7990,43 @@ caused this is now replaced with all five callers, their distinct failure modes,
 instruction to trace the value rather than the call.
 
 Related: R306 (a class derived from how code reads, not what it does), R300, R301.
+
+### R311 — my fix was undone three lines from where I wrote it, and the tests all passed
+
+I shipped stat_estonia's table-grain resume this morning with six property tests, and reported the
+45-minute kill as fixed. Tonight I forced the inner deadline with a 3-second budget and watched it
+run. Two defects, neither visible in the diff and neither caught by the tests:
+
+1. THE END-OF-FUNCTION SAVE OVERWROTE THE WIND-BACK. The inner deadline sets the subject bookmark
+   BACK to prev_subj, precisely so the next tick re-enters the unfinished subject. Then, after the
+   loop:
+
+       if last_subj: save_rotation(out_dir, last_subj)
+
+   which rewrites it to the interrupted subject — so the next run resumes AFTER it and its tail is
+   skipped, which is the exact failure the table bookmark was added to prevent. My change and the
+   pre-existing save are each correct read alone. Only their ORDER is wrong, and a diff shows one
+   of them.
+
+2. A CAPPED RUN REPORTED `no_change`. Neither deadline block tallied anything, so finalize() saw
+   nothing added and nothing failed and returned no_change — which stamps a vintage asserting a
+   coverage the tick never reached. Measured: 2,832 tables deferred, reported as "no new rows".
+   I had written R303 about exactly this class hours earlier and still shipped a new instance of
+   it, because I was thinking about bookmarks, not about what the run would CLAIM.
+
+WHY THE TESTS DID NOT CATCH EITHER. They are pure-logic tests of rotate_after — they pin that
+across passes every table is visited, which is a true and useful property of the ROTATION HELPER.
+Neither defect lives there. One lives in the interaction between two writes 200 lines apart, the
+other in what finalize() infers from an empty tally. Tests written against the piece I was editing
+could not see either, and I knew they were narrow when I wrote them; what I did not do was say so
+and go run the thing.
+
+The run cost about four minutes: set the budget env var, point it at the local mirror, read the
+output. That is the whole method, and it found two bugs in a fix I had already called proven.
+
+Verified afterwards: 0.05-min budget -> partial, deferral tallied, subject bookmark held, table
+bookmark written; 2-min budget -> 92 of 2,832 tables done, table bookmark ADVANCED, subject
+bookmark still held. Production R2 bookmarks confirmed untouched (the runs used the local mirror).
+
+Related: R303 (the deferral-as-no_change class I re-created), R273/R190 (the bookmark this is
+protecting), R308 (also only findable by running).
