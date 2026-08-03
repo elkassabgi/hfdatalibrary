@@ -7473,3 +7473,41 @@ corroboration at least as often as it arrives as a bug report.
 
 Related: R297 (the rule, and its own two instances), R300 (the over-generalisation this sits
 inside), R290 (a plausible number nobody was invited to check).
+
+### R302 — I put the warning in the docstring and then built exactly what it warned against
+
+Having broken the same rule twice in a day (R297, R301), I stopped relying on remembering it and
+built tools/audit_stale_errors.py: for every recorded failure, compare `last_attempt_utc` against
+the newest commit touching that source's code, so a message describing code that no longer exists
+is labelled before anyone debugs it.
+
+The first version compared against shared files too — core/pxweb.py, merge.py, blob.py, _common.py.
+Its own docstring said, in the paragraph defining that list:
+
+    "Kept short on purpose: a list that includes everything would make every row look superseded
+     on any commit, which is the same uselessness as an audit that is always red."
+
+Then I ran it. One commit to core/pxweb.py that afternoon — mine — made 112 of 140 rows
+"superseded", nearly all citing that same commit, including bcb, boe and bea, which are not PxWeb
+sources and never import it. The tool built to stop me trusting a stale signal was itself emitting
+one, and I would have shipped it had I not looked at the output.
+
+Narrowed to the source's OWN fetcher/ingester: 39 of 140, each citing a plausible commit. boc is
+the proof it now works — its `AttributeError('str' object has no attribute 'isoformat')` is
+superseded by a1c42881, "_max_by_key returns STRINGS: boc and tcmb crashed on it". The asymmetry
+justifies the narrowness: a false negative leaves a row marked CURRENT and costs one wasted look,
+while a false positive discredits every row at once.
+
+A SECOND BUG IN THE SAME TOOL, worth its own line. git's `%cI` carries the committer's local offset
+and state.db stores UTC, so bcrp printed "attempt 08:01Z -> fix 07:11Z" and was still filed
+superseded — correctly, since 07:11-05:00 is 12:11Z. The comparison was right and the DISPLAY was
+incoherent, which is arguably worse: a reader who spots one nonsensical line stops believing the
+other thirty-eight.
+
+The pattern across both: writing down why a thing is dangerous does not stop me doing it, and it
+did not here even when the warning was three lines above the code. What caught both was running the
+tool and reading its whole output rather than the summary count — the same move that has caught
+most of today's errors.
+
+Related: R297 and R301 (the rule this instruments, and the two times I broke it), R290 (reading a
+summary instead of the measurement).
