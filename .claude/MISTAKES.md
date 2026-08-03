@@ -7544,10 +7544,30 @@ remains the dominant cause exactly as measured earlier. R300 was about generalis
 from one source to seven; this is the same reflex caught one step earlier, by running the query
 before writing the sentence.
 
-THE FIX, when it happens, is a distinct `deferred_unit()` tally slot that finalize() does not treat
-as a fault — with the honest part preserved: a source that deferred work is still not COMPLETE, so
-it must not stamp a full-coverage vintage. Deferred and failed can both mean "come back", while
-only one of them means "something is wrong".
+THE FIX, now shipped: a distinct `deferred_unit()` tally slot that finalize() does not treat as a
+fault and that deliberately does NOT increment `attempted` — that word has to keep meaning
+attempted, or the denominator lies too. Status stays `partial`, because a tick that deferred work
+did not cover everything and must not stamp a full-coverage vintage. Deferred and failed both mean
+"come back"; only one means "something is wrong".
+
+AND THE SCOPE ABOVE IS WRONG IN THE OTHER DIRECTION — I measured the STATE, not the CODE. "Three"
+is how many sources happened to be carrying a deferral in their most recent state row. Grepping
+`transient_unit(.*defer` across the fetchers found ELEVEN doing it: abs, bea, boc, comtrade, ecb,
+eia, ilostat, snb, ssb, wid. The other eight simply had not deferred on the run that state.db
+remembers, since a state row keeps only the last one.
+
+So having just caught myself over-stating a class from two examples, I under-stated the same class
+by trusting a snapshot that records one run per source. The state store answers "what happened
+last time", never "what does this code do" — and a class question is always the second. The grep
+took seconds and should have come first, exactly as it did for R73 and R190.
+
+The most consequential of the eight: ilostat, whose call site carried the comment "deferral, not a
+verdict" while filing it as a verdict, and whose 1,281 "transient-failed" sub-units were the
+largest count in the live queue.
+
+A test now greps for the pattern so no fetcher regresses, and another asserts that a genuine
+transient still reports as a failure when both occur — the fix must not launder real failures.
 
 Related: R231 (partial never sets last_success), R190/R273 (rotation, which makes deferral normal
-rather than exceptional), R300 (the same over-generalisation, caught later).
+rather than exceptional), R300 (the same over-generalisation, caught later), R297/R301 (the state
+row is a snapshot of one attempt, not a description of the code).
