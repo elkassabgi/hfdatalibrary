@@ -171,6 +171,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R263. GUARD THE POST-STATE OF A DESTRUCTIVE OP, NOT JUST THE SELECTION — "DELETES EVERYTHING" IS NOT "DELETES THE STALE PART". Pruning ons_uk's 10,099,151 stale cursors (~3.93 GB of a 9.35 GB state object), I derived the keep-set from the source's own sidecar, added a length tripwire, refused while another writer held the state, and printed the delete-set first. All correct, all blind: the sidecar lists 40 current ds_ids and NOT ONE had a cursor row, because the source had not run since its grain was fixed — so the prune was really "delete 100% and leave it with no freshness data at all", and the post-condition would have PASSED because the intended keep-set was empty too. A check that asks "did I delete what I meant to" cannot see "what I meant to was everything". Ask what the world looks like afterwards. And note the real fix was ORDERING, not a guard: let the source run once so current cursors exist, then prune. A cleanup that appears to remove everything is usually running too EARLY, not too broadly. [M-20260803-07]
 - R264. A WRONG LISTING ALSO PUBLISHES FALSE NUMBERS ABOUT OUR OWN SYSTEM — AUDIT EVERY METRIC DERIVED FROM IT, AND COUNT THE STORE BEFORE CRYING DATA LOSS. dst reported obs falling 9,198,885 -> 231,035 (97.5%), which merge's never-shrink guard makes impossible; the store in fact held 9,220,012 rows across 707 files. `_total_rows()` read through blob but LISTED with os.listdir, and on an r2 runner that directory EXISTS as a scratch mirror holding only the files that run wrote — so the guard passed, the listing succeeded, and the sum was 40x low. Worse than R261's empty-listing case: a plausible non-empty number invites a hunt for a merge bug that does not exist, and gets recorded in the runs table and the daily digest where it outlives the defect. Fixed by c40bcd04. [M-20260803-08]
 - R265. FRESHNESS CHECKS ARE NOT CORRECTNESS CHECKS — ASK WHETHER A VALUE IS POSSIBLE, AND BOUND A HEURISTIC'S VALUE AS WELL AS ITS SHAPE. cso served 434,408 rows (0.887% of 48,960,271, across 11 files) dated beyond the year 2100 — 272,445 in Census 2016 at 9998-12-31. `is_time_dim` matched `^\d{4}...$` on a 5-value sample, CSO sentinels are 3001/9998/9999, and selection was FIRST-MATCH-WINS, so a classification axis earlier in the list beat the real TLIST one and its codes became years. Nothing caught it because every instrument we have measures RECENCY, and a fabricated FUTURE date makes a source look maximally fresh; the gate even filters forward-dated periods out by design (ABS 2046, UN WPP 2101 are real), which hides fabrication too. The state store could not show it either — only scanning the store did. `ingest_pxweb.py` had already required "a SANE year" for exactly this reason, one file away. Authoritative evidence must outrank a heuristic regardless of position. Fix is a parser SELECTION change, so the 11 files need a CLEAN RE-PULL, never a merge (R22). [M-20260803-09]
+- R266. IN AN APPEND-ONLY STORE, BAD DATA DOES NOT MEAN THE PRODUCER IS STILL PRODUCING IT — RUN THE CURRENT CODE AGAINST THE SHAPE THAT FAILED. The impossible-date scan hit 7 sources and I wrote that the 4 PxWeb ones "likely" needed parser work. They did not: `core/pxweb.resolve_time_dim` has carried sane_lo=1500/sane_hi=2100 since 2026-07-21 and picks correctly on cubes shaped like every actual failure (date_parse_rate = 0.00 on the fabricating codes). The data was old and CANNOT age out, because merge never shrinks. I also reached for file mtimes to date the damage — mtime records the last MERGE, not when a row appeared, so a never-shrink store has no timestamp that answers the question. Code fix and data repair are different work with different blast radius; deciding which needs one cheap decisive test, not an inference from the symptom. cso genuinely WAS still producing them — it was the only ingester of eleven not routing through the shared resolver. One symptom, two causes. [M-20260803-10]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5858,3 +5859,37 @@ that would have left the bad rows in place while the tests went green.
 Related: R264 (audit every number a bad listing fed — this is where that led), R22 (a parser
 selection fix needs a re-pull), R256 (sweep the class: cso was the only first-match-wins
 ingester of eleven).
+
+### R266 — the parsers were already fixed; what I found was old data that merge can never remove
+
+**What happened.** The impossible-date scan found seven sources, not just cso. I wrote in the
+commit that the four PxWeb ones "likely" had a permissive `parse_date` needing per-source parser
+work. Then I tested it: `core/pxweb.resolve_time_dim` already carries `sane_lo=1500,
+sane_hi=2100` (landed 2026-07-21), and against cubes shaped like each actual failure it picks
+correctly every time — statfin-shaped picks `timeperiod_m`, hagstofa-shaped picks `Ar`,
+slovenia-shaped picks `LETO`, and `date_parse_rate` scores the fabricating codes 0.00.
+
+The code was right. The DATA was old — and it cannot age out, because merge never shrinks: rows
+written under the previous logic survive every subsequent merge for ever.
+
+**The trap I nearly fell into, twice.** First, I almost shipped parser "fixes" for four sources
+whose parsers were correct, which would have been churn on a hot path plus a confident wrong
+entry in this ledger. Second, I reached for file mtimes to date the damage — and mtime records
+the last MERGE, not when a row was created, so every one of these files looks recent. A
+never-shrink store has no timestamp that answers "when did this row appear".
+
+**The rule.** In an append-only store, finding bad data does NOT imply the producer is still
+producing it. Separate the two questions and answer the second directly: run the CURRENT code
+against the shape that failed. That is a cheap, decisive test, and it changes the remedy
+completely — code fix versus data repair are different work, different risk, different blast
+radius.
+
+**Why cso really was different, which is the part that makes the whole picture consistent.** cso
+was the only one of eleven ingesters not routing through the shared resolver — an earlier sweep
+had already established that — so it alone was still generating fabricated dates. The other
+six's parsers had been repaired and their stores had not. One symptom, two causes, and the
+sweep that told them apart was worth more than either fix.
+
+Related: R246 (check whether the run predates the fix — same discipline, applied to data instead
+of runs), R261/R264 (the listing bugs this thread started from), R22 (a parser selection fix
+needs a re-pull, which is what the remaining data repair is).
