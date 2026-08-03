@@ -7239,3 +7239,52 @@ same tool's unimplemented safety claim), R290 (a plausible number from the wrong
 
 Related: R36 (the local store is a scratch mirror), R293 (environment as the defect), R295 (the
 same tool's unimplemented safety claim), R290 (a plausible number from the wrong instrument).
+
+### R297 — three sources "never succeeded"; two were already fixed and the third I could not reproduce
+
+Working the never-succeeded list, three live sources carried `UNEXPECTED:` errors — real exceptions,
+not the catalog staleness that explains 73% of the gate (#66). They looked like three bugs to fix.
+They were three different things, and only one is a bug I still have:
+
+  bea   TypeError("list_parquets() got an unexpected keyword argument 'recursive'"), 02:27 UTC.
+        NOT a code defect. `recursive=` and bea's call to it landed in the SAME commit (c40bcd04,
+        01:24 UTC), inside a workstation run that started at 00:58. The process had imported
+        `updater.blob` at startup — before the commit — while `bea.py` is imported lazily per
+        source and so was read fresh at 02:27, AFTER it. Old module, new caller, in one process.
+        Verified fixed by running the exact call: 592 parquets listed. I caused this by committing
+        while a long local run was executing from the same checkout.
+
+  boc   AttributeError("'str' object has no attribute 'isoformat'"), 2026-08-02 08:03 UTC.
+        Already fixed in a1c42881 at 2026-08-03 03:01 UTC — the failure PREDATES the fix and the
+        state row is simply stale, because boc has not run since.
+
+  sec_edgar  ArrowInvalid casting timestamp[us] -> timestamp[ns] on -61950355200000000, which as
+        microseconds is 0006-11-15. Real, unfixed, and NOT EXPLAINED.
+
+THE PART WORTH RECORDING IS THE THIRD. I had a clean causal story — pandas 2.x returns a
+non-nanosecond dtype, `errors="coerce"` only nulls unparseable strings, so a perfectly parseable
+year-6 date survives into us and then cannot be cast to the stored ns schema. It explains every
+symptom. I wrote the fix, wrote seven tests, and they passed.
+
+Then I ran the negative control, and it refuted the story:
+
+    pd.to_datetime(["15-NOV-0006"], format="%d-%b-%Y", errors="coerce")
+      -> dtype datetime64[ns], value NaT, arrow timestamp[ns], cast to ns SUCCEEDS
+
+On pandas 2.3.3 the bug does not occur, so my tests were passing with or without my fix — they
+proved nothing. CI installs pandas>=2.2 uncapped, i.e. the same 2.3.x, so "different version" does
+not rescue it either. And all 1,019 stored parquets under edgar_insider/ and edgar_13f/ hold no
+out-of-ns-range timestamp, so it is not the data on disk.
+
+I kept the guard, because making the ns contract explicit is correct regardless of origin, and
+relabelled BOTH the code comment and the test docstring to say plainly: not reproduced, cause open,
+a green run here is not evidence sec_edgar is fixed. The temptation was to ship it as a fix — the
+story was good, the tests were green, and nobody would have checked. The negative control is the
+only thing that separated "I fixed it" from "I wrote something reasonable near it".
+
+Also worth keeping: 2 of 3 "never succeeded" errors were stale rather than live. A state row records
+the LAST attempt, not the current code — so on a list of failures, date every error against the fix
+history before treating any of them as work.
+
+Related: R283 (fixed the blocker I found and shipped as if it were the only one), R292 (found by
+calling, not reading), R288 (the plausible repair that destroys data).
