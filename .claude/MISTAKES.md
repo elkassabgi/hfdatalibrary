@@ -163,6 +163,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R129. AN S3/R2 PREFIX IS NOT A SOURCE FILTER — ANCHOR ON THE DELIMITER. `Prefix="series/imf_fsi"` also matches every `imf_fsire` object, so my orphan check reported 18,620 healthy files as orphans; 50 source-id pairs in this catalog have that relationship. Keys are `series/<urlencoded source:id>.csv`, so the prefix must carry the encoded colon (`series/imf_fsi%3A`). Same unanchored-match class as R112, in a tool written hours after logging it. Whenever listing by a name that could be another name's stem, include the separator — and check which DIRECTION the error runs before reporting impact (here MISSING was provably unaffected). [M-20260729-32]
 - R256. DERIVE THE CLASS FROM THE DEFECT, MECHANICALLY, BEFORE PATCHING — AND RUN THE ZERO-RESULT CHECK FIRST, NOT LAST. Sweeping a positional-time-code parser bug found in `hagstofa`, I enumerated "the PxWeb sources" from memory, patched five, and felt done; the grep-based check then printed two MORE (`cso_ireland`, `dst`) — 40% more work, in files I would never have listed. A class defined by a DEFECT PATTERN must be enumerated by `grep -l '<the exact defective line>'`; a domain list is only as complete as my recall, and nothing about five successful patches hints that three files are missing. The zero-result check is not confirmation, it is what DEFINES the work. Corollary (R134, twice in one sitting): my proof failed 7/8 then 1/8 and BOTH were probe bugs — it asserted Jan-1 where these sources store annual as Dec-31, and fed a JSON-stat2 payload to `dst`, which parses v1 (`id`/`size`/`role` nested under `dimension`) and returned early on an empty dim list, looking exactly like a failed fix. A probe spanning N modules must speak each one's dialect before a red is believed. [M-20260802-08]
 - R257. MEASURE THE QUANTITY YOUR CAUSAL STORY PREDICTS BEFORE YOU FIX IT — NAME THE NUMBER THAT WOULD REFUTE IT. `cnb`/`frankfurter` went RED-SLA; I built a tidy account (a `partial` never sets `last_success_utc` per R231, so partial sources sit permanently at the head of a success-ordered queue and eat the budget) that fit every symptom and cited real rules. One query on the real state store: **3** units fleet-wide have success older than attempt, and both orderings sort nearly identically. FALSE. The real cause was COST, not order — 68 live sources cost 24.5 min COMBINED while 27 cost 1,031 min against a 240-min budget, so `cnb` (4.9 SECONDS per run) went unattempted for days. A hypothesis that explains the symptom and cites real mechanisms is exactly what a wrong diagnosis feels like from inside; the tell is an unmeasured quantity it depends on. Being right about the LAYER (ordering) and wrong about the WHY still ships the wrong patch — and hides the real cause behind a plausible one. [M-20260803-01]
+- R258. PARSE A MACHINE-READ FILE WITH ITS OWN LOADER BEFORE COMMITTING, AND USE BLOCK SCALARS FOR PROSE. `at migration: 4,421 of...` inside a plain YAML scalar is a mapping key: one documentation edit to `updater/registry.yaml` made `registry.load()` raise ScannerError, taking out ALL 141 sources at once (one document = one blast radius) for the gate, the orchestrator and the coverage audit. The pytest suite passed throughout — nothing in it loads the registry — so 'tests are green' was never evidence here. Run the PRODUCTION loader in the same breath as the edit, and write free text as `>-`: prose grows colons, `#`, quotes and leading dashes by itself. Same shape as the eurostat `split(':')` hazard — when a format's separator can legally appear inside a value, the naive form is the bug and the escape hatch is the default. [M-20260803-02]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5549,3 +5550,37 @@ still out there, because fixing it produces all the sensations of being finished
 
 Related: R225 (a rule living in three layers, only one of them changed), R232 (generated output
 carrying state that lives elsewhere).
+
+### R258 — a colon in prose broke the load for all 141 sources, and only a pre-commit parse caught it
+
+**What happened.** Rewriting three `strategy_reason` fields in `updater/registry.yaml` I wrote,
+inside a plain multi-line scalar:
+
+    strategy_reason: WHO's OWN ... Coverage measured against WHO
+      on the full indicator set at migration: 4,421 of 4,421 published series available.
+
+`migration: ` is a mapping key to YAML. `registry.load()` then raised ScannerError, which is not
+a "who_hwf is broken" failure — it is EVERY source gone, because the registry is one document.
+The health gate, the orchestrator and the coverage audit all start by loading it.
+
+**Why it nearly shipped.** The edits were textual and looked obviously safe: I was replacing
+prose with prose, in a file I had already edited successfully twice in the same session. Nothing
+about "change some documentation" suggests "you are about to disable the fleet". I only found it
+because I ran `registry.load()` as a validation step before committing, and it was the FIRST
+thing I ran after the edits.
+
+**The rule.** After editing a file that a program parses — YAML, JSON, TOML, a workflow, a
+schema — parse it before you commit it, in the same breath as the edit. Not the test suite (the
+suite passed the whole time, because nothing in it loads the registry), the actual loader the
+production code calls. And prefer a block scalar (`>-`) for any free text: prose acquires colons,
+`#`, quotes and leading dashes on its own, and the plain-scalar form silently reinterprets all of
+them.
+
+**The shape, again.** This is the eurostat re-key hazard in a different syntax: a value that
+contains the delimiter. There it was `split(':')` shredding `LAST UPDATE=13/05/26 11:00:00`;
+here it is YAML reading `migration:` as structure. Any time a format's separator can legally
+occur INSIDE a value, the naive form is wrong and the escape hatch (`>-`, a boundary-aware
+regex) is the correct default rather than the fallback.
+
+Related: R247 (verify what a shared file holds after writing it), R249 (match the tool to the
+claim — the test suite was never evidence about the registry).
