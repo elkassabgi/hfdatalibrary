@@ -6892,11 +6892,23 @@ rather than a missing file.
 
 Two process errors of mine, both avoidable:
 - I inferred "the store is empty, so the series are dark" from `clean_full/sec_edgar/` having zero
-  objects. The serving layer does not read that prefix. An authenticated GET returned 1.5 MB. The
-  cheap probe was available the whole time and I reached for a listing instead (R36's lesson, in a
-  new costume).
-- I then started a full-bucket scan to find where the data lived — millions of objects, timed out
-  at 600 s and told me nothing. The resolver, and then the live API, answered in seconds.
+  objects. The serving layer does not read that prefix — it reads `clean_grouped/`, which holds
+  17,296 objects under `clean_grouped/sec_edgar` against 17,276 catalogued series. An authenticated
+  GET returned 1.5 MB. The cheap probe was available the whole time and I reached for a listing
+  instead (R36's lesson, in a new costume). The `clean_full` vs `clean_grouped` split is the same
+  layout distinction that #20 migrated worldbank off, so "prefix empty" has ALREADY been a false
+  darkness signal in this repo once.
+- I then started a full-bucket scan to find where the data lived — millions of objects — and gave
+  up when it passed 600 s.
+
+  AMENDED, because the first version of this line said the scan "told me nothing", and that was
+  wrong: it ran to completion in the background and returned exactly the answer I wanted, naming
+  clean_grouped/sec_edgar (17,296), clean_full/edgar_insider (648), clean_full/edgar_13f (364) and
+  clean_full/edgar_pointers (256). The instrument was correct and I mis-stated its result to make
+  my abandonment of it sound better justified than it was. The real lesson is narrower and duller:
+  it was the SLOWEST correct instrument, and the resolver and live API answered the same question
+  in seconds, so the error was reaching for it FIRST — not the tool being useless. A ledger that
+  overstates a tool's failure teaches the next reader to skip a tool that works.
 
 No code change. sec_edgar is genuinely served, genuinely scheduled, and its workflow already ends
 with a real end-to-end gate: it compares parquet rows to the SERVED CSV for a probe series (AAPL
