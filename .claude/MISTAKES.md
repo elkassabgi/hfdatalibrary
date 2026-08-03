@@ -6995,3 +6995,38 @@ second cron — it is to stop dispatching once a scheduled run is queued, and to
 run's results rather than manufacturing my own.
 
 Related: R246 (scheduled is not attempted), R5 (single-writer, why the group is shared), R273.
+
+### R292 — "bls FIXED" was recorded twice while its change-probe raised on every single call
+
+bls.current_vintage() unpacked two values from _survey_vintage(), which returns four. Not a typing
+nit: a 2-way unpack of a 4-tuple is a ValueError at RUNTIME, raised on every call where any survey
+exists on disk — which is always. So the function never returned a token and never returned None
+either. It raised, through BulkSnapshotIfChanged.detect_change, which does not catch ValueError.
+
+Its own docstring says "Returns None if the probe cannot run ... so the strategy fetches anyway".
+That fallback could not execute. The documented safe path was unreachable code.
+
+HOW IT GOT THERE. Commit 8b34bf5a widened _survey_vintage's return to
+(vintage, tail, escalated, can_uc) and updated the caller inside update() — line 614, correct — but
+not the caller inside current_vintage(), line 569, which had unpacked two since the initial public
+release and was never revisited. One function grew a return; two callers existed; one was found.
+
+WHY NOTHING CAUGHT IT. Nothing ever called it. There is a _bls_selftest.py that calls
+current_vintage() and would have failed instantly, and it is not wired into CI. The health gate
+reports bls from STATE, not from probing, so it printed a tidy `RED-DATA bls weekly succ_age 2d
+obs_age 63d` — which reads as "runs fine, upstream is quiet", the single most dismissable line in
+the table. Two ledger entries in this repo already say bls was fixed (#53 corrected a wrong bls
+dismissal, #55 repaired 21,207 CES series). Both were true about what they measured. Neither
+touched the probe, because reading code is not calling it.
+
+I found it only because I stopped reading bls and ran `bls.current_vintage("_all")`. One line.
+
+FIXED and proven: current_vintage('_all') -> 'bls:469c4edb521e2d20', a real token, which is exactly
+the standing order's bar for promoting anything ("prove current_vintage() returns a real token").
+
+SWEEPING THE CLASS, not the instance: every fetcher's current_vintage is being CALLED, not read,
+because a second one could be broken the same way and look identical from the outside. Result to be
+recorded here when the sweep finishes; at 20 of ~89 fetchers it is clean.
+
+Related: R246/R291 (an outcome requires an attempt — here the attempt was a function call nobody
+made), R248 (did the gate assess anything), R231.
