@@ -175,6 +175,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R267. A THRESHOLD FINDS CANDIDATES; ONLY READING A RECORD DECIDES — AND TWO SCANS OF THE SAME AGGREGATE ARE ONE MEASUREMENT, NOT CORROBORATION. Sweeping stores at 2102 (the tightest bound clear of UN WPP's real 2101) added exactly one source fleet-wide, `bfs` at 2150-12-31, which a scan of state cursors had also flagged. I was one step from filing it as a defect. Reading the rows: 49 of 5,337,621, dated 2102/2103/2104/2105 continuing smoothly from 2101-12-31 on keys with Beobachtungseinheit=Sx — Swiss demographic SCENARIO projections, real data. What separates fabrication from projection is invisible in a maximum and plain in a row: in every fake case the real time axis sits IN the series_key (timeperiod_m=2020M01, TLIST(A1)=2019) because it was not chosen as time, and the dates are a sequential CODE run; bfs has neither. This is also the empirical case for keeping merge_and_write's bound generous at 2200: the only thing a tighter automatic bound surfaces across 141 sources is legitimate data, and a guard that cries wolf gets switched off. [M-20260803-11]
 - R268. BEFORE CLOSING A TASK, RE-READ ITS TEXT AND ACCOUNT FOR EVERY CLAIM SEPARATELY — "DONE" ATTACHES TO THE WORK I REMEMBER DOING. Task #65 said "bea: 912,990 series are in the store and DARK ... AND the fetcher reads the wrong store". I fixed the second clause (a raw local glob that returned nothing under r2), proved it, and closed the task. The HEADLINE clause was untouched: bea still serves 240 series over a 913,230-series store, which tonight's log stated outright ("MIGRATED 240 legacy series", then done in 1 second). I caught it only by reading the run for an unrelated reason. Beware a task that mixes a BUG with a DECISION — here the dark half is gated on D1 capacity (#45) — because the bug is always the closable one. Where only part is done, say which part in the status line. [M-20260803-12]
 - R269. CORRECTS R266 — A SYNTHETIC TEST BUILT FROM MY HYPOTHESIS CAN ONLY CONFIRM IT; GET THE SHAPE FROM THE PUBLISHER. R266 said all four PxWeb sources with impossible dates had correct parsers and only stale data. `hagstofa` was NOT correct: a live re-parse of UMH11130.px gave 120 bad rows of 168. Its sentinels (3001-3004) sit ON the time axis itself — flagged time=True AND role.time, listed FIRST — so the right axis was always chosen and the codes on it merely are not all periods. My cube put real years first beside a separate classification dim, i.e. it encoded my guess, so it passed. `stat_slovenia` IS correct, now verified properly (05W0101S has no time axis at all; NASELJA parse rate 0.098 vs 0.6 threshold; its 6152-12-31 was settlement codes read as years). `statfin` and `cbs_nl` remain UNVERIFIED — unchecked, not correct. Also: bounding only `^\d{4}$` left `3001M03` -> 3001-03-01 while the live case looked clean, because that table uses bare years — enumerate the branches. [M-20260803-13]
+- R270. ASK HOW MANY ACTUALLY COMPLETED, THEN READ THE NOTES OF THE ONES THAT DID NOT — AND FIX A MISUSED HELPER PER-CALLER, NEVER UNIFORMLY. Of 120 SERVED+SCHEDULED sources, 55 succeeded within 7d, 13 within 30d, and 52 NEVER (43 permanently `partial`, 7 `transient_fail`; a partial never sets last_success_utc, R231). The notes, not the counts, were actionable: `_max_by_key` returns ISO STRINGS but was annotated `-> dict`, so boc and tcmb called .isoformat() twice and CRASHED while riksbank filtered on isinstance(v, dt.date) and returned an EMPTY map every run — silently, which the §5.7 check turns into permanent partial. My first fix passed strings through in all three "for consistency"; riksbank's update() compares `cat_max <= smax` against a dt.date and calls revision_since(smax), so that would have swapped a silent empty for a TypeError. Read the CONSUMER, not the function. [M-20260803-14]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6045,3 +6046,41 @@ backfill had already fixed — would have looked perfect.
 
 Related: R229 (claimed a class was swept without sweeping it), R227 (a check that measured the
 wrong thing and reported success).
+
+### R270 — "how many have EVER succeeded?" was the question I had not asked, and it found three broken fetchers
+
+**The measurement.** I had been reporting "N of 217 scheduled" all session. Scheduled is not
+updating (R246), so I finally asked the next question: of the 120 SERVED+SCHEDULED sources, how
+many have EVER recorded a success? **55 within 7 days, 13 within 30, and 52 never.** Of those
+52, 43 sit at `partial` and 7 at `transient_fail` — and a `partial` never sets
+`last_success_utc` by design (R231), so "never succeeded" is the honest reading of a source that
+runs every day and never completes.
+
+**What it exposed.** Reading the run notes rather than the counts, one said
+`UNEXPECTED:AttributeError("'str' object has no attribute 'isoformat'")`. `_max_by_key` returns
+ISO STRINGS — its last line calls `.isoformat()` for you — and its signature said only
+`-> dict`. Three of five callers had the type wrong: boc and tcmb called `.isoformat()` a second
+time and crashed; riksbank filtered on `isinstance(v, dt.date)`, which no string can satisfy, so
+it returned an EMPTY map every run, silently, which the §5.7 check turns into permanent
+`partial`. bcrp and scb work only because ISO strings compare like dates.
+
+**Then I nearly made it worse.** My first fix passed the strings through in all three, for
+consistency. riksbank's `update()` does `cat_max <= smax` against a `dt.date` and hands `smax`
+to `revision_since()` — so that "fix" would have replaced a silent empty with a TypeError. The
+original annotation, `dict[str, dt.date]`, was right about the contract all along; the
+implementation had drifted from it. Reading the CONSUMER, not the function, is what caught it.
+
+**Two rules.**
+1. A metric that counts intent (scheduled, configured, registered) hides the metric that counts
+   outcome. Ask "how many ACTUALLY completed?" of any fleet, and then read the notes of the ones
+   that did not — the counts tell you how many, the notes tell you why, and only the second is
+   actionable.
+2. When one helper is misused by several callers, the fix is per-caller, not uniform. What each
+   caller owes ITS consumer differs, and a uniform change is how a crash becomes a worse crash.
+
+**And the silent failure is the expensive one.** boc's crash left a note someone could read.
+riksbank's empty dict is a legitimate value — "nothing changed" — so it produced a permanent
+`partial` with nothing anywhere explaining it, for as long as it has existed.
+
+Related: R246 (scheduled is not attempted), R231 (partial never sets last_success), R263 (guard
+the post-state), R261/R264 (an empty result that reads as a fact).
