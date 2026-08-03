@@ -6379,3 +6379,43 @@ age unknown, some already repaired".
 
 Related: R246 (scheduled is not attempted — this is its twin: attempted-long-ago is not
 attempted-now), R231 (partial never sets last_success), R241, R270, R275.
+
+## R235
+
+**A guard tuned for one kind of data silently censored another. It rejected 636,021 TRUE dates to block 40,132 false ones.**
+
+`sane_date()` in econ's site generator drops any year above `MAX_SANE_YEAR = date.today().year + 2`,
+so that sentinels like `9999-12-31` never reach a page. In R231 I confirmed that guard worked and
+was older than the bug I had imagined — and stopped there, without asking what ELSE it was
+throwing away.
+
+It was throwing away the projections. A large part of this catalogue is forecasts, and a forecast
+horizon is not a corrupt date. Measured across catalog.db, the two populations separate with a
+century of empty space between them:
+
+```
+real forecast horizons   26 sources, 636,021 series   un_wpp 2101, gapminder 2100, boc 2095,
+                                                      fao_* 2050, imf_weo 2031
+sentinels                 7 sources,  40,132 series   9999, 6152, 6016, 3005, 2150
+```
+
+At `year + 2` every one of those 636,021 series lost its real end year. gapminder rendered NO
+coverage row at all — 86,684 series spanning year 730 to 2100, and the page said nothing, because
+both bounds fell outside the window. The symptom was indistinguishable from missing data, which is
+why it survived a direct audit of that very function.
+
+Raising the ceiling to 2126 recovers all 636,021 and still rejects all seven sentinels, with 24
+years of margin below the lowest one.
+
+**The rules.**
+1. A validity window encodes an assumption about WHICH DATA it will see. When one store holds
+   observations and projections, a bound derived from "today" is wrong for half of it.
+2. Measure BOTH sides of a threshold before trusting it. I checked that the guard blocked what it
+   should; I never checked what it blocked that it shouldn't.
+3. A field rendering as absent is not evidence it is absent. gapminder looked like a source with
+   no coverage metadata and was a source whose real metadata was being filtered out.
+4. Confirming a guard "works" is not the same as confirming it is CORRECT. R231 ended at the first
+   and should have gone on to the second.
+
+Related: R231 (audited this same function and stopped one question too early), R234 (verify at the
+destination, not the source).
