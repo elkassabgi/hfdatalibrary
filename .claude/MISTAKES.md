@@ -7402,3 +7402,39 @@ only the shared one would have changed nothing here.
 
 Related: R284 (the naming that made this findable), R288 (the swapped axis — and why the split-year
 rule requires consecutive years), R231 (a status must not promise more than it knows).
+
+### R300 — I generalised one root cause to seven sources on shape alone, and it was wrong
+
+Having found that cso's "60/60 transient-failed" was a period-grammar gap worth ~6M rows (R299), I
+looked for the same thing elsewhere and found what looked like it immediately: hagstofa reporting
+`26/1906 sub-unit(s) returned 200 but parsed 0 rows`, stat_slovenia 4/510. Identical fingerprint —
+a real body that yields nothing. I filed a task saying the daily/split-year grammar was the likely
+cause for all of them.
+
+Then I probed hagstofa's actual tables, and the cause is different:
+
+    SJA01101.px  time dim "Year": values ['0','1','2',...]  valueTexts ['2010','2011',...]
+                 plus a SEPARATE "Month" dim — the period is split across two dimensions
+    MAN07300.px  time dim "Ár":   values ['0','1','2',...] — positional, single dim
+
+Positional codes with the period in the LABEL, not the daily/academic grammar at all. And
+decisively: ingest_hagstofa.parse_date("2010") returns 2010-12-31 and the module already carries
+the label fallback from the #73 positional class. The grammar I was about to "fix" was not the
+blocker, and adding daily codes to hagstofa would have changed nothing while looking like progress.
+
+WHAT MADE THE INFERENCE TEMPTING is that "200 with a real body, zero rows parsed" is a SYMPTOM
+shared by every possible parse failure. It is the fingerprint of a class, not of a cause. I had
+just written R299 saying exactly that about cso — that a single message covering two causes is what
+hides the permanent one — and then treated the same symptom as though it identified a cause.
+
+One real find does not license extrapolating its mechanism. The correct move after R299 was what I
+eventually did: take the named ids and look at what those specific tables publish. Two HTTP requests
+answered it, and they were available before I wrote the task.
+
+The task is corrected in place rather than deleted: (A) the seven parsers DO still lack both
+grammars — measured by calling them — but whether their publishers emit those codes is unmeasured,
+so that half stays an open question rather than a queued fix; (B) hagstofa's 26 are positional /
+split-period and need instrumenting through the FETCHER path, which is what reports the zero.
+
+Related: R299 (the find I over-generalised), R73/#73 (the positional class this actually belongs
+to), R288 (measuring the symptom got the scope wrong there too).
