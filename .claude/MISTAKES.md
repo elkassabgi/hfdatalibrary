@@ -7511,3 +7511,43 @@ most of today's errors.
 
 Related: R297 and R301 (the rule this instruments, and the two times I broke it), R290 (reading a
 summary instead of the measurement).
+
+### R303 — a deliberate deferral is filed as a transient FAILURE (3 sources), and I nearly called it 40
+
+ecb's state reads `252/540 sub-unit(s) transient-failed; will retry`. abs reads `805/1222`. Those
+look like an upstream catastrophe. The named units say what actually happened:
+
+    ECB__CSEC__M__SE__2022.parquet: budget 35 min spent, deferred
+    ABS_SEIFA2021_SA2 deferred (budget 35 min)
+
+Nothing failed. Those sub-units were never ATTEMPTED — the wall-clock budget stopped the sweep and
+rotation will take them next tick, which is the design working. They are counted through
+`tally.transient_unit()`, so the source reports `partial`, and by the honest-status contract
+(R231) `partial` never stamps last_success_utc. A healthy rotating source is therefore recorded as
+having failed hundreds of sub-units and as never having succeeded.
+
+"Transient failure" and "not reached this tick" are different facts. The first says something went
+wrong and retrying may fix it; the second says nothing went wrong at all. Collapsing them makes the
+count of real failures unreadable — 252 of 540 is alarming and 0 of 288 attempted is fine, and the
+log shows the first.
+
+AND THEN I ALMOST OVERSTATED IT, for the third time today. Having found it in two sources I was
+ready to write that this explains the whole `partial` population — the 43 live sources that never
+report success. Measured first:
+
+    live sources with status=partial          43
+      partial mentioning a budget deferral     3   (abs, ecb, ssb)
+      partial for other reasons               40   (dominated by "csv coherence unmet" = #66)
+
+Three. The mis-classification is real and worth fixing; it is not the structural crisis, and #66
+remains the dominant cause exactly as measured earlier. R300 was about generalising a mechanism
+from one source to seven; this is the same reflex caught one step earlier, by running the query
+before writing the sentence.
+
+THE FIX, when it happens, is a distinct `deferred_unit()` tally slot that finalize() does not treat
+as a fault — with the honest part preserved: a source that deferred work is still not COMPLETE, so
+it must not stamp a full-coverage vintage. Deferred and failed can both mean "come back", while
+only one of them means "something is wrong".
+
+Related: R231 (partial never sets last_success), R190/R273 (rotation, which makes deferral normal
+rather than exceptional), R300 (the same over-generalisation, caught later).
