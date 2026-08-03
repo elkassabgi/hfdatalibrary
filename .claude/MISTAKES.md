@@ -5508,3 +5508,44 @@ Being right about where and wrong about why still ships the wrong patch.
 
 Related: R249 (match the tool to the claim), R134 (suspect the probe), R246 (attempted vs
 scheduled), R231 (partial never sets last_success — true, just not the culprit here).
+
+## R233
+
+**Ahmed reported "?–?". My first grep for "?–?" returned 0, so I went looking for something else — and fixed a different bug while the reported one stayed live.**
+
+The search that mattered was the one I ran first and abandoned: `grep -rl '?–?'` over the site
+returned nothing, so instead of asking why, I reasoned that "?" must be an encoding artifact of
+something else, went hunting through the generated dataset pages, found `Temporal coverage: ? –
+2018-12-31` on ggdc and maddison, fixed that, and started deploying. It was a real defect. It was
+not the one Ahmed was looking at. He had to come back and say **"look for '?–?'"**.
+
+The zero was true and I read it as a dead end. It was a CLUE: the string exists on screen but not
+in any file, which means it is ASSEMBLED AT RUNTIME. The actual source was one line of client-side
+JavaScript in `download.html`:
+
+```js
+const cov=(x.start_date||'?').slice(0,4)+'–'+(x.end_date||'?').slice(0,4);
+```
+
+Two independent `||'?'` fallbacks, so a series with neither bound renders exactly `?–?`. And
+`download.html` is HAND-MAINTAINED, not generated — so it sat outside the whole regenerate-and-
+deploy path I had just spent an hour exercising, and no amount of regenerating would ever have
+touched it.
+
+**Why the near-miss was so easy.** The bug I found first was genuinely adjacent: same field, same
+glyph, same page family, one bound missing instead of two. It was similar enough to feel like the
+answer. A plausible nearby defect is the most dangerous thing to find while the reported one is
+still out there, because fixing it produces all the sensations of being finished.
+
+**The rules.**
+1. Grep the USER'S EXACT STRING first, across every surface — generated output, hand-maintained
+   files, and inline JS — and do not stop until it is found or proven absent from all of them.
+2. A string visible on screen but absent from every file is BUILT AT RUNTIME. That is a finding
+   about where to look, not a failed search.
+3. Hand-maintained files are invisible to a generator sweep. When a site mixes generated and
+   hand-written pages, "I regenerated everything" covers less than it sounds like.
+4. When a fix does not reproduce the user's exact symptom, it is a DIFFERENT bug. Fix it, keep
+   looking, and say plainly that the reported one is still open.
+
+Related: R225 (a rule living in three layers, only one of them changed), R232 (generated output
+carrying state that lives elsewhere).
