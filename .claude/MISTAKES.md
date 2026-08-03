@@ -8040,3 +8040,41 @@ bookmark still held. Production R2 bookmarks confirmed untouched (the runs used 
 
 Related: R303 (the deferral-as-no_change class I re-created), R273/R190 (the bookmark this is
 protecting), R308 (also only findable by running).
+
+### R312 — "verified locally" was worth less than I thought: dev and CI ran different majors of TWO libraries
+
+sec_edgar had never once reported a success, and 3d7f4e3e found why: `pandas>=2.2` uncapped
+resolved to 2.3.3 here and 3.0.5 on the runner, and
+
+    to_datetime("15-NOV-0006")   2.3.3 -> datetime64[ns], NaT      (bug invisible)
+                                 3.0.5 -> datetime64[us], year 6   (bug kills the run)
+
+That commit fixed the parse and its own message flagged the uncapped pin. The pin stayed. I picked
+it up as #85 expecting to add one upper bound, and checked the runner's actual pip output first:
+
+    pandas    local 2.3.3   CI 3.0.5    DIVERGED
+    pyarrow   local 23.0.0  CI 25.0.0   DIVERGED — two majors
+    numpy     local 2.3.4   CI 2.4.6    same
+
+pyarrow was the one nobody had looked at, and it is the larger exposure by far: every merge
+invariant, every never-shrink guard and every fetcher's table build runs through it. pandas was
+merely the library that happened to produce a legible failure.
+
+WHAT THIS COSTS RETROSPECTIVELY. I have spent this session proving fixes "against real data" on
+this machine — bcrp, scb, stat_estonia, ember. Those particular proofs exercise bookmark ordering,
+tally classification and string-vs-date handling, none of which depends on either library's
+version, so they stand. But the general claim I was implicitly making — that running it here tells
+me what CI will do — was not true, and I did not check the environment before relying on it. It is
+the same shape as R296 (a tool addressing the wrong store) one level up: the wrong INTERPRETER.
+
+Capped to the majors the runner already resolves, deliberately: production is on pandas 3 /
+pyarrow 25, so CI installs exactly what it did yesterday and no source's behaviour moves. The
+opposite choice — capping down to what is installed here — would have silently downgraded 120
+sources' runtime to make my local convenience the reference. numpy is capped too although it had
+NOT drifted, because the point is to stop the next major arriving unannounced on one side.
+
+STILL OPEN, and stated rather than quietly fixed: this machine remains on the old versions. Not
+upgrading now because five long jobs are running and swapping site-packages under a 14-hour derive
+is its own incident. Until then, "verified locally" still carries an asterisk.
+
+Related: R296 (right tool, wrong store), R308 (the environment as the defect), R311.
