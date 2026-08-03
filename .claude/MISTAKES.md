@@ -182,6 +182,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R274. NAME THE READER BEFORE CALLING AN INSTRUMENT DONE: WHO SEES THIS, FROM WHERE, WHEN? I fixed the watchdog-with-no-watchdog with a heartbeat file and wrote that "anyone can read" it — anyone ON THAT MACHINE, i.e. nobody, which is the premise of an unattended workstation. It was correct, current and unread for 10 hours. route_silence's docstring even said the instrument for a short outage "is the guard's own heartbeat on that machine"; I read that as both halves built, when the coarse net was in CI where it could fire and the fine one was on the box where it could not. A component's "the instrument for that is X" is a claim to VERIFY, not a citation. Now published to R2 per tick and read by updater-daily: own key (not the CAS state store, R5), age from the BODY not LastModified (a re-uploaded stale body would look fresh), and ABSENT exits 1 as UNINSTRUMENTED — passing on a missing object rebuilds the silence it exists to end. [M-20260803-18]
 - R275. BEFORE BELIEVING A STATUS, CONFIRM THE ID MEANS ONE THING. source_id `sec_edgar` denotes TWO products: the SERVED XBRL per-ticker set (17,276 catalog series, in util.ts, updated daily by sec-edgar-daily and parity-proven AAPL 25,135==25,135) and the UNSERVED 13f/insider giant (0 catalog, 0 util.ts) whose updater unit throws the ArrowInvalid. The registry entry `sec_edgar_xbrl` describes the served product while the catalog files it under `sec_edgar`. So the health gate calls a healthy served source broken, and the coverage audit calls it 'scheduled but not served' — both instruments wrong, opposite directions, one cause. Ruled out first, by measurement not inspection: both stores clean on a COMPLETE scan (0 out-of-ns rows, no timestamp[us] anywhere) and pandas coerces bad years to NaT. A registry comment saying a source was 'split out' is a re-pointing — go check what each name now denotes. [M-20260803-19]
 - R276. IF A LOOKUP ANSWERS "NOT FOUND" FOR EVERY KEY, SUSPECT THE ACCESSOR, NOT THE DATA — and copy the accessor from production code that already reads that structure. registry.load() returns {version, generated_from, sources:[...]}; health.py builds {e['source_id']: e for e in ...['sources']}. I called r.get('tcmb') on the 3-key dict, so it said None for every source that exists, and I reported cbs_nl/gus_dbw/zillow/ksh/cepii_baci as "NOT IN REGISTRY" and reasoned on it. All five are registered; zillow/ksh are live:False, correct for retired sources, so the gate never failed on them. Five agreeing probes are not corroboration when one broken accessor produces all five. Caught only because the gate printed RED-UNRUN zillow, which an absent source cannot produce — two instruments disagreeing is the signal. It also hid the real defect: `sec_edgar` (UNSERVED 13f/insider) is live:True while `sec_edgar_xbrl` (SERVED, 17,276 series) is not live at all. [M-20260803-20]
+- R277. A FIX IS FINISHED WHEN THE SOURCE HAS BEEN RE-ATTEMPTED, NOT WHEN IT IS COMMITTED. `partial` never sets last_success (R231), so a source displays whatever its LAST ATTEMPT produced, and the daily run reaches only ~20 of ~106 cloud sources per budget — so a fetcher fixed today advertises yesterday's failure for days. Four of the first five "bugs" I worked from the digest were already fixed: worldbank 684/684 (all 3 named series now derive from R2 with real rows), treasury 185->1 (upstream still serves 185; _fetch_rows returns 185/185 distinct), boc + riksbank (now PROVEN ok in CI, succ_age 0d). Precise numbers read as current — 684/684, 185->1, 201/201 — but the digest carries no age. Before diagnosing a reported failure, compare the verdict's age to the last commit touching that fetcher; if the fix is newer, force-run first. And never call a decomposition of stored verdicts a bug list. [M-20260803-21]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6336,3 +6337,45 @@ because sec-edgar-daily.yml runs it on its own schedule, outside the registry en
 a much sharper defect than "two products share a name", and I would have missed it.
 
 Related: R275 (the id collision this corrected), R249 (match the tool to the claim), R246.
+
+### R277 — a fixed source keeps reporting its pre-fix verdict until it is re-attempted, so the digest is a queue of ghosts
+
+**What happened.** I decomposed the 62 partial sources into 32 catalog-blocked, 3 missing-cursor
+and 27 "distinct bugs", and started working the 27. Four of the first five were already fixed:
+
+  * `worldbank: csv_derive failed 684/684` — fixed by 6b1f8650 (the resolver was not migrated
+    with the fetcher, R241). All three NAMED failing series now derive from R2 with real data:
+    `worldbank:FP.CPI.TOTL.ZG:ABW` -> 35 rows, `:NY.GDP.MKTP.CD:AFE` -> 65, `:SL.UEM.TOTL.ZS:USA`
+    -> 35.
+  * `treasury: refusing shrink 185->1` — upstream still serves 185 (`meta.total-count: 185`
+    live), and running the fetcher's own `_fetch_rows` for that endpoint returns 185 rows / 185
+    distinct account_nbr / structural_zero=False. Fixed by the #72 null-dedup work.
+  * `boc: 'str' object has no attribute 'isoformat'` and `riksbank` silently empty — both fixed
+    by the `_max_by_key` work (R270), now PROVEN ok in CI with succ_age 0d.
+  * `sec_edgar: ArrowInvalid` — not stale but not a bug either: a different, unserved product
+    borrowing a served source's id (R275).
+
+**The mechanism, and it is structural.** `partial` never sets `last_success_utc` (R231), so the
+verdict a source displays is whatever its LAST ATTEMPT produced. health.py already measured why
+that lingers: "the daily run reaches ~20 of ~106 cloud sources within its budget". So a fetcher
+fixed today keeps advertising yesterday's failure for days, and the digest reads as a list of
+live defects when much of it is a list of things already repaired but not yet re-run.
+
+**Why I fell for it four times.** The messages are specific, quantitative and alarming — `684/684`,
+`185->1`, `201/201`. Precision reads as currency. Nothing in the line says WHEN it was produced,
+and the age column exists in the health TABLE but not in the digest, which is the artefact I was
+working from.
+
+**The rule.** A fetcher fix is not finished when it is committed and the tests pass; it is
+finished when the source has been RE-ATTEMPTED and reports a fresh verdict. Force-run it
+(`gh workflow run updater-daily.yml -f source=<id> -f force=true`) and read the result — that is
+what turned boc and riksbank from claims into proof. And before spending an hour on any reported
+failure, check the verdict's AGE against the commit that touched that fetcher; if the fix is
+newer than the verdict, re-run first and diagnose second.
+
+**Corollary for reporting.** Do not present a decomposition of stored verdicts as a bug list.
+"27 distinct bugs" was wrong the moment I said it; the honest statement was "27 distinct verdicts,
+age unknown, some already repaired".
+
+Related: R246 (scheduled is not attempted — this is its twin: attempted-long-ago is not
+attempted-now), R231 (partial never sets last_success), R241, R270, R275.
