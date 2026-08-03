@@ -172,6 +172,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R264. A WRONG LISTING ALSO PUBLISHES FALSE NUMBERS ABOUT OUR OWN SYSTEM — AUDIT EVERY METRIC DERIVED FROM IT, AND COUNT THE STORE BEFORE CRYING DATA LOSS. dst reported obs falling 9,198,885 -> 231,035 (97.5%), which merge's never-shrink guard makes impossible; the store in fact held 9,220,012 rows across 707 files. `_total_rows()` read through blob but LISTED with os.listdir, and on an r2 runner that directory EXISTS as a scratch mirror holding only the files that run wrote — so the guard passed, the listing succeeded, and the sum was 40x low. Worse than R261's empty-listing case: a plausible non-empty number invites a hunt for a merge bug that does not exist, and gets recorded in the runs table and the daily digest where it outlives the defect. Fixed by c40bcd04. [M-20260803-08]
 - R265. FRESHNESS CHECKS ARE NOT CORRECTNESS CHECKS — ASK WHETHER A VALUE IS POSSIBLE, AND BOUND A HEURISTIC'S VALUE AS WELL AS ITS SHAPE. cso served 434,408 rows (0.887% of 48,960,271, across 11 files) dated beyond the year 2100 — 272,445 in Census 2016 at 9998-12-31. `is_time_dim` matched `^\d{4}...$` on a 5-value sample, CSO sentinels are 3001/9998/9999, and selection was FIRST-MATCH-WINS, so a classification axis earlier in the list beat the real TLIST one and its codes became years. Nothing caught it because every instrument we have measures RECENCY, and a fabricated FUTURE date makes a source look maximally fresh; the gate even filters forward-dated periods out by design (ABS 2046, UN WPP 2101 are real), which hides fabrication too. The state store could not show it either — only scanning the store did. `ingest_pxweb.py` had already required "a SANE year" for exactly this reason, one file away. Authoritative evidence must outrank a heuristic regardless of position. Fix is a parser SELECTION change, so the 11 files need a CLEAN RE-PULL, never a merge (R22). [M-20260803-09]
 - R266. IN AN APPEND-ONLY STORE, BAD DATA DOES NOT MEAN THE PRODUCER IS STILL PRODUCING IT — RUN THE CURRENT CODE AGAINST THE SHAPE THAT FAILED. The impossible-date scan hit 7 sources and I wrote that the 4 PxWeb ones "likely" needed parser work. They did not: `core/pxweb.resolve_time_dim` has carried sane_lo=1500/sane_hi=2100 since 2026-07-21 and picks correctly on cubes shaped like every actual failure (date_parse_rate = 0.00 on the fabricating codes). The data was old and CANNOT age out, because merge never shrinks. I also reached for file mtimes to date the damage — mtime records the last MERGE, not when a row appeared, so a never-shrink store has no timestamp that answers the question. Code fix and data repair are different work with different blast radius; deciding which needs one cheap decisive test, not an inference from the symptom. cso genuinely WAS still producing them — it was the only ingester of eleven not routing through the shared resolver. One symptom, two causes. [M-20260803-10]
+- R267. A THRESHOLD FINDS CANDIDATES; ONLY READING A RECORD DECIDES — AND TWO SCANS OF THE SAME AGGREGATE ARE ONE MEASUREMENT, NOT CORROBORATION. Sweeping stores at 2102 (the tightest bound clear of UN WPP's real 2101) added exactly one source fleet-wide, `bfs` at 2150-12-31, which a scan of state cursors had also flagged. I was one step from filing it as a defect. Reading the rows: 49 of 5,337,621, dated 2102/2103/2104/2105 continuing smoothly from 2101-12-31 on keys with Beobachtungseinheit=Sx — Swiss demographic SCENARIO projections, real data. What separates fabrication from projection is invisible in a maximum and plain in a row: in every fake case the real time axis sits IN the series_key (timeperiod_m=2020M01, TLIST(A1)=2019) because it was not chosen as time, and the dates are a sequential CODE run; bfs has neither. This is also the empirical case for keeping merge_and_write's bound generous at 2200: the only thing a tighter automatic bound surfaces across 141 sources is legitimate data, and a guard that cries wolf gets switched off. [M-20260803-11]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -5893,3 +5894,37 @@ sweep that told them apart was worth more than either fix.
 Related: R246 (check whether the run predates the fix — same discipline, applied to data instead
 of runs), R261/R264 (the listing bugs this thread started from), R22 (a parser selection fix
 needs a re-pull, which is what the remaining data repair is).
+
+### R267 — fabrication and projection look identical in a MAXIMUM and obvious in a ROW
+
+**The situation.** After finding cso serving observations dated 9998, I swept every store for
+dates past 2200, then swept again at 2102 — the tightest bound that does not hit UN WPP's real
+2101 — to see what the deliberately-generous bound was missing. The tighter sweep added exactly
+one source fleet-wide: `bfs`, at 2150-12-31, which an independent scan of the state store's
+cursors had also flagged. Two instruments, one suspect.
+
+It was real data. 49 rows of 5,337,621, dated 2102, 2103, 2104, 2105 … continuing smoothly from
+a highest-below-bound of 2101-12-31, on keys carrying `Beobachtungseinheit=Sx`. Swiss
+demographic scenario projections, exactly what BFS publishes.
+
+**What actually distinguishes them, and it is not the number.** Every fabricated case in this
+sweep shares two marks, and both are visible only in a ROW:
+  * the real time axis is sitting IN the series_key — `timeperiod_m=2020M01`, `TLIST(A1)=2019`,
+    `Mánuður=0` — which is where a dimension goes when it was NOT chosen as time;
+  * the dates are a sequential code run (3001, 3002, 3003 / 2200, 2201, 2202), not a period.
+`bfs` has neither: no time dimension in the key, and a continuous annual series. A maximum
+obs_date cannot tell these apart. One row can.
+
+**The rule.** A threshold finds CANDIDATES; only reading a record decides. I was one step from
+filing bfs as a defect on the strength of two agreeing instruments — and agreement between two
+scans of the same aggregate is not corroboration, it is the same measurement twice.
+
+**And this is the empirical case for keeping the automated bound generous.** merge_and_write
+checks at 2200 precisely so it is unarguable. The one thing a tighter automated bound would
+have surfaced, across 141 sources, is legitimate Swiss projection data — so a daily check at
+2102 would cry wolf forever and be switched off, which is how a guard stops guarding. The cost
+is real and stated: 3,680 fabricated cso rows sit between 2100 and 2200 and slip under it. A
+generous automatic guard plus an operator-tunable audit covers both, and neither alone does.
+
+Related: R265 (recency checks cannot see fabricated futures), R266 (bad data does not mean a
+live producer), R252 (the grain I measured was not the grain I reported).
