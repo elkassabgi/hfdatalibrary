@@ -7736,3 +7736,35 @@ mattered was not "does the guard skip live jobs" (it did, immediately) but "does
 restart a dead one".
 
 Related: R296 (the wrong store, silently), R290 (a job whose progress nobody could see), R273.
+
+### R308 — my probe PASSED, on output that was not the thing being probed
+
+Having switched the guarded-job runner from `*>` to `| Out-File -Encoding utf8` (so a 14-hour job's
+log is greppable instead of UTF-16), I checked the obvious risk: does Out-File BUFFER? If it does I
+had traded a readable log for an invisible one — R290's failure, self-inflicted, on the very jobs I
+had just spent an hour making restartable.
+
+The probe ran a 6-second Python loop printing one line a second, and reported "after ~4s, log has
+7 lines". Seven lines from a job that prints six, four seconds in. PASS.
+
+It was seven lines of SyntaxError. I had passed the loop to `python -c` as an inline multi-line
+string and it never compiled, so what I measured was Out-File streaming an ERROR promptly — which
+tells you nothing about whether it streams a long-running job's stdout. The count being IMPOSSIBLE
+(7 > 6, and 7 > the ~4 the timing allowed) is what made me look; a plausible number would have been
+accepted.
+
+Re-run against a probe script written to a file: 4 of 6 lines present mid-run, 6 at exit. Out-File
+does stream, the change is safe, and now I know it rather than believe it.
+
+WHAT GENERALISES. A test that passes tells you a condition held; it does not tell you the condition
+was the one you meant. Mine passed on the error path — the branch most likely to behave differently
+from the branch under test, and the one a hurried probe most often exercises, because a malformed
+probe fails fast and produces output that looks like output.
+
+Two cheap habits would each have caught it: read the actual bytes the probe produced rather than
+only its count, and make the assertion tight enough that a wrong path cannot satisfy it (`== 6`,
+not `> 0`). This is the second time today a green result needed a second look — the earlier one was
+a guard test that passed on a fixed tree and only proved itself when I deliberately re-broke ember.
+
+Related: R290 (the invisible job this was guarding against), R306 (a guard proven by breaking it on
+purpose), R302 (an instrument judged on the cases where it is wrong).
