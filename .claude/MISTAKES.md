@@ -191,6 +191,7 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 - R283. CLEARING THE BLOCKER YOU FOUND DOES NOT ESTABLISH THERE WAS ONLY ONE — before enabling anything, re-run the ORIGINAL claim through the REAL code path and require it to produce the thing you are enabling it for. census bds: under-keyed (5,910 rows / 15 pairs), solvable and solved — (series_key, obs_date, NAICS) unique at 5,910 = 5,910, measures excluded. Enabled it; tests passed; the tail returns ZERO. time=2023 gives 0 rows for the 21 columns the store holds and 5,516 for three required vars — all 21 are known to variables.json, the 2023 vintage just does not populate them, and Census answers empty. `from 2022` returns 2022 only. My evidence that bds was reachable came from a hand-picked 3-column probe days earlier, and the fetcher does not make that request. Reverted; the dimension finding kept in _EXTRA_DIMS. [M-20260803-27]
 - R284. AN EXCLUSION JUSTIFIES ITSELF — nothing ever tests the code you did not write, so check scope notes on a SCHEDULE, not on suspicion. census.py's header asserted the 60 non-EITS files "do not gain periods, they gain a whole new reference year"; Census's own catalogue lists every one as a timeseries dataset with c_vintage null, and 16 intltrade flows had been two months behind for as long as that sentence stood (exports/hs alone, 45,659 rows waiting). Nothing crashed: the 21 flows actually covered were current, so "census is up to date" was true of the measured part and false of the whole, and the coverage audit counted it SERVED+SCHEDULED without asking which of its 80 files the fetcher touches. Cheapest guard: for any source with more store files than the fetcher enumerates, probe ONE excluded file against the publisher. And write exclusions as dated MEASUREMENTS, never as properties — a measurement invites re-measurement. [M-20260803-28]
 - R285. WHEN AUDITING FOR A CAPABILITY, ENUMERATE ITS IMPLEMENTATIONS BEFORE COUNTING — and prefer evidence of BEHAVIOUR over evidence of the artefact. R273's mechanism was RIGHT and its prediction CONFIRMED: worldbank_wdi and hagstofa, bounded under the 45-min cap that used to kill them, have now written their first-ever _rotation.json (4 of 14, up from 2). But its count conflated a filename with a capability: stat_slovenia keeps _sweep_offset.json and ksh_stadat _bulk_vintages.json, so neither was ever bookmark-less. The behavioural test costs the same and cannot be fooled — a rotating source leaves SCATTERED write times (stat_slovenia: 50 blocks over 145 files), a stuck one leaves ONE contiguous stale tail (adb: 2 blocks, 44 of 54 flows frozen). That test found adb and cleared ilostat, owid, defillama, idb, insee_melodi and stat_slovenia — none distinguishable by filename. [M-20260803-29]
+- R286. A COOPERATIVE BUDGET BOUNDS WHEN YOU NEXT LOOK AT THE CLOCK, NOT WALL-CLOCK — state the HEADROOM (cap - budget) and require it to exceed the LONGEST single unit. #67 said "16 of 16 protected"; stat_estonia was killed by the 45-min cap again, printing no budget message because dl.spent() is only checked between subjects, so the true ceiling is budget + longest subject (30+? vs 45). census the same day: a 20-min budget "spent after 35.6 min". Siblings are thinner — statfin 15 min headroom, worldbank_wdi 10, stat_slovenia 5. Worse, all three saved their rotation bookmark ONCE at the end of update(), the exact path a kill prevents — so stat_estonia has never written one in its life while worldbank_wdi and hagstofa wrote theirs the moment they stopped being killed. Now saved per sub-unit. Check the TIGHTEST source, not the one that prompted the fix. [M-20260803-30]
 - R250. THE R2 COHERENCE-CATALOG REFRESH IS CLASSIFIER-BLOCKED FOR ME — ASK AHMED, DO NOT RETRY. `python tools/refresh_r2_catalog.py <stamp> --allow-shrink zillow,ksh` is denied by the Bash permission classifier, and so is editing `.claude/settings.local.json` to allow it (self-granting is exactly what the gate prevents). Four denials on 2026-08-02. Ahmed must run it or add the rule himself. Everything else is pre-done: streaming tool, superset guard, dry-run clean, licence checked, `updater-heavy.yml` already switched to `copy_stream` so the bigger catalogue does not OOM its 7 GB runner. [M-20260802-06]
 - R249. MATCH THE TOOL TO THE CLAIM, NOT THE KEYWORD. Sweeping for accumulate-then-merge fetchers I counted `merge_and_write` with grep (counted a DOCSTRING) then with an AST call-site count (cannot tell a merge INSIDE the loop from one AFTER it), and put "all five are DISCARD-on-kill" in a pushed commit message covering four modules I never opened. Only unhcr and bcb merge after the loop. A claim about RUNTIME behaviour needs control flow, not an occurrence count — and when a cheap check and an expensive one disagree, the cheap one is wrong, not "close enough". [M-20260802-05]
 - R248. A GATE THAT CRASHES READS AS A VERDICT ABOUT THE DATA. `updater.health` died on one registry entry holding `upstream_verified` as free text, so `assess()` covered ZERO of 217 sources — for three days, while the daily run went red and looked like it was working. A failing check has two possible subjects, the thing checked or the checker; read the ERROR, not the colour. One malformed input must never end a sweep over many subjects. [M-20260802-04]
@@ -6740,3 +6741,40 @@ of which a filename check could have told apart.
 
 Related: R273 (the entry this corrects and confirms), R281 (a checker that hardcoded its own
 parameter), R276 (a lookup at the wrong level answers "no" for everything).
+
+### R286 — a cooperative budget bounds when you next look at the clock, not wall-clock
+
+**What happened.** #67 recorded "every source that overruns the 45-minute cap is now protected —
+16 of 16". On 2026-08-03 stat_estonia was killed by that cap again: "exceeded its 45-minute hard
+limit and was interrupted", and it printed no budget message at all, so its own deadline never
+fired.
+
+It is bounded and it does rotate. The bound is just not tight enough, and the arithmetic is the
+whole lesson: `dl.spent()` is consulted BETWEEN subjects, so the real ceiling is
+`budget + longest single subject`. A 30-minute budget left 15 minutes of headroom for a subject
+that evidently needs more. census showed the identical shape from the other side the same day —
+a 20-minute budget reported "spent after 35.6 min".
+
+So "has a Deadline" was the thing I verified when I closed #67, and "the headroom exceeds the
+largest unit" is the thing that mattered. Measured afterwards, the siblings are thinner still:
+statfin 30/45 (15 min headroom), worldbank_wdi 35/45 (10), stat_slovenia 40/45 (5). All three
+happened to survive this run; none of them has margin for a slow day.
+
+**The compounding half.** stat_estonia, statfin and worldbank_wdi each saved their rotation
+bookmark ONCE, at the end of `update()`. A kill is precisely the event that stops you reaching
+the end. So the state whose entire purpose is surviving an interruption was written only on the
+path where no interruption occurred — and the evidence is exact: stat_estonia, killed every run,
+has never written a `_rotation.json` in its life, while worldbank_wdi and hagstofa each wrote
+their first one the moment they stopped being killed. All three now save per sub-unit.
+
+**The rule.** For any cooperative bound, state the headroom, not the budget: `cap - budget` must
+exceed the LONGEST single unit, or the bound does nothing on the run that matters. And when the
+same fix is applied to several sources, check the tightest one rather than the one that prompted
+it — I lowered stat_estonia to 18 and only then noticed stat_slovenia sitting at 40 of 45.
+
+If a source is killed again after this, the answer is not a smaller budget: at that point one
+unit alone exceeds the cap and no budget can help. The fix is a deadline check inside the
+per-unit loop.
+
+Related: R273 (state must be written where an interrupted run reaches it — this is its second
+occurrence, and the reason #67's claim was false), R190, R285.
