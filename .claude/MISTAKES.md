@@ -45,9 +45,22 @@ trusting ANY number I produced, check these five things — each one cost real t
    the moment it reports absence. **Never regex a language whose comments can contain the
    delimiter** — a quoted phrase inside a `//` comment flips quote-pairing parity and silently
    drops real entries. Strip comments first, or ask the system for its own answer.
+   **R338 is R316 again, with this rule already written here.** Checking whether ksh/zillow were
+   still served before dropping 25,109 catalogue rows, I keyed `/v1/sources` on `id` when the
+   payload uses `source` — so every source read as absent, including `penn_world_table`, verified
+   live the day before. The rule held only because I happened to pad the probe with a known-live
+   control; with just the two ids I was hoping were absent, I would have deleted on a clean-looking
+   confirmation. Knowing this rule is not the same as instrumenting it: **put the control IN the
+   probe list, every time, and make it one you would bet on.**
 5. **A one-sided test on a two-sided failure gives a number that LOOKS like a measurement.**
    R322: "273,980 fabricated rows" was under half — the audit only tested the future, and a
    counter-as-year starts at 1. The real figure was ~637,000 across seven sources.
+6. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
+   stat_estonia's 18-minute deadline "is NOT working" and cited three 45-minute kills — all of
+   them produced by code committed BEFORE the two commits that fixed it. The current cap had never
+   run once. "Still broken" and "never tried" look identical in a table of past runs, and only one
+   is a reason to write code. Compare the newest run timestamp to `git log` on the file under
+   test, and state both.
 
 **WRITING IT DOWN IS THE EASY HALF — three failures of the READ path in one night.** R328: sixteen
 ledger entries, zero digest lines, so the lessons were invisible the same evening. R330: the
@@ -9164,3 +9177,65 @@ it is the same measurement. And "I could not reproduce it" justifies re-measurin
 indefinite inaction: holding is a decision with its own running cost.
 
 Related: R327 (projection vs staleness — mine, ignored), R325 (the hold this corrects), R330.
+
+### R338 — my absence check said "absent" for every source, including the ones I knew were live
+
+I was about to drop 25,109 catalogue rows (ksh 25,057, zillow 52) from the R2 coherence
+reference. The guard I ran first was the right guard: is either source still in the live serving
+surface? I fetched `/v1/sources` and printed:
+
+    ksh                served? False
+    zillow             served? False
+    penn_world_table   served? False
+    stat_estonia       served? False
+    hagstofa           served? False
+
+The two answers I wanted were there, and they were the answers I expected. The check had in fact
+failed completely: the payload keys each source under `source`, and I was reading `id`/`source_id`,
+so EVERY membership test returned False. "Absent" was not a finding, it was the shape of my bug.
+
+**What caught it** was only that I had padded the probe with `penn_world_table` — served and
+verified live the day before. Its False was impossible, so the whole result was impossible. With a
+probe list of just `ksh` and `zillow` I would have read a clean confirmation and deleted on it.
+Re-run with the right key: ksh False, zillow False, penn_world_table True, stat_estonia True. Same
+verdict for the two, arrived at honestly.
+
+**Why this class is nastier than a wrong number.** A miscount is visible — it disagrees with
+something. An absence check that is broken agrees with exactly the hypothesis you are trying to
+confirm, because a broken lookup and a genuine absence produce the identical output. There is no
+disagreement to notice. It is the same shape as R329 (a control I ran, watched fail, and published
+past) except here the control was the only thing standing between me and a deletion.
+
+**Rule.** An absence/negative check MUST carry a known-PRESENT control in the same call, and the
+control must be one you would bet on. If the control does not come back present, the negative
+result is void — it has told you about your query, not about the world. Never let the probe list
+contain only the items whose absence you are hoping for.
+
+Related: R329 (ran the control, ignored it), R330 (no denominator, no result), R296.
+
+### R339 — I judged a fix by runs that were produced before the fix existed
+
+I opened the turn asserting that stat_estonia's self-imposed 18-minute deadline "is NOT working",
+citing three consecutive 45-minute kills with obs=0, and moved to write a stronger cap. The
+citation was real. The inference was not:
+
+    fix c50a382a (budget 30 -> 18)          2026-08-03T03:26
+    fix 272faee5 (deadline INSIDE the loop) 2026-08-03T09:16
+    fix ad6360b0 (two defects in that fix)  2026-08-03T18:26
+    newest stat_estonia run                 2026-08-03T11:45   <- predates the last two
+
+The three kills I cited were generated by code that no longer exists. The newest cap logic had
+never executed even once. I was about to fix, on the strength of that evidence, a mechanism whose
+current version I had never watched run — and `ad6360b0`'s own message says its defects were found
+by RUNNING it, which is exactly what I had not done.
+
+Running it took one command and answered the question directly: the table-grain bookmark resumed
+mid-subject at `EH014.PX` with 2,832 tables to go, i.e. the resume half demonstrably works.
+
+**Rule.** Before concluding a fix failed, check that the evidence POSTDATES the fix. Compare the
+newest run timestamp against the commit timestamp of the code under test, and say both out loud.
+"It is still broken" and "it has not been tried" produce identical symptoms in a store of past
+runs, and only one of them is a reason to write code.
+
+Related: R318 (do not fix a defect that does not exist), R296 (verify against the thing you serve),
+R303.
