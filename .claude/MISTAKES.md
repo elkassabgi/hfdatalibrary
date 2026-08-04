@@ -8427,3 +8427,45 @@ load-bearing rather than decorative.
 
 Related: R310 (the sweep that missed it), R306 (grep the label, miss the behaviour), R246,
 R317 (also a false premise, also corrected by looking at what I was about to edit).
+
+### R322 — my "273,980 fabricated rows" was less than half the real number, because the audit only tested one direction
+
+Twelve hours after writing R320 ("the impossible-date class was never confined to PxWeb"), I
+reported 273,980 served rows with impossible dates across six sources and treated that as the
+measurement. It was a floor, and a bad one.
+
+tools/audit_impossible_dates.py reads the parquet footer's MAX and compares it to 2200. But the
+defect it hunts is a POSITIONAL COUNTER read as a year, and a counter starts at 1. So it emits
+year-0001 rows long before it emits year-6152 ones, and every one of those is invisible to a
+future-only test. The min sits in the same footer, beside the max, and costs nothing to read.
+
+stat_slovenia 05W.parquet, which I had confidently reported as "214,775 of 506,605 bad":
+
+    one key holds 5,863 observations dated year 1, 2, 3, ... 6152, every one at 12-31
+    year <= 1900   250,876 rows   never examined
+    year >  2200   214,638 rows   all I had found
+    1900..2200      41,091 rows   fabricated and INDISTINGUISHABLE from real data
+
+The whole file is a counter. And 41,091 of its rows sit in a range no bound can ever separate
+from real data — the only way to know they are wrong is that the rows around them are.
+
+WORSE, a whole SOURCE was invisible: scb has no future-dated rows at all, so the old test could
+never see it. BE.parquet spans years 114..2070 with 21,409 rows below 1500; HE.parquet 114..2026
+with 49,959. Its key says what happened — `DodaVeckaRegionCKM`, "Döda Vecka Region", deaths by
+WEEK. A week axis being read as a year.
+
+THE LESSON, which is not "add a lower bound": a one-sided test on a two-sided failure mode
+reports a number that LOOKS like a measurement. I quoted 273,980 to the user as though it were
+the extent of the damage. The real figure is around 637,000 across seven sources, and I only
+found that because I stopped to ask why the "good" rows in the same file read 0001-12-31,
+0002-12-31, 0003-12-31 for a single key. The sample I printed to illustrate the bug contained
+the evidence that my count was wrong, and I nearly scrolled past it.
+
+AND THEN I NEARLY BROKE THE FIX. My first lower bound was 1850, which flagged 25 sources —
+treasury's US debt from 1790, vdem 1789, wid 1800, ssb 1769, noaa 1840, owid 1840, all real.
+That is precisely what the tool's own upper-bound comment warns about: "a bound that flagged UN
+WPP would be switched off and protect nothing". Calibrated to 1500 against the data, with each
+deep-history source allowlisted BY NAME AND REASON so widening it later is a decision somebody
+makes rather than a net that quietly grows.
+
+Related: R320 (same class, twelve hours earlier), R288 (do not patch dates — re-pull), R265.
