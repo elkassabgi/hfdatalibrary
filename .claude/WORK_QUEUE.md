@@ -606,3 +606,38 @@ entry about loosening a working gate.
   Select on the structure that is definitionally impossible — a time value inside a series
   identity (`Tid=`, `TLIST(A1)=1991`, `calendar-years=`). R334.
 - **A flag that names a store must SET it**, and print what it RESOLVED. R335.
+
+## PWT 11.0 fully served — 60 -> 7,163 series live (2026-08-04)
+
+7,103 series of the CURRENT Penn World Table went from invisible to live. Not new data — data
+already in R2 that nothing pointed at.
+
+**The gap.** The store held 7,163 series (newest obs 2023-12-31); the catalogue held 60, because
+`connectors/penn_world_table/connector.py` hard-codes VARIABLES(6) x ECONOMIES(10). The ingester
+outgrew that years ago — its own docstring says it publishes "the 42 NUMERIC variables". Meanwhile
+the SUPERSEDED id `pwt` was fully catalogued at 7,159 series ending 2019-12-31, with 7,159 CSVs in
+R2. Both ids served. So a browsing user found the four-year-stale vintage in full and the current
+one at 0.8%.
+
+**Verified at every layer, each gating the next:**
+
+    catalog.db   60 -> 7,163      tools/catalog_penn_world_table.py (259f7593)
+    derive dry   7,163 derived, 0 unresolvable
+    R2           7,163 objects; MISSING 0 / ORPHANED 0; byte-compare 40/40 identical
+    D1           60 -> 7,163      core/sync_catalog_d1.py, replay-verified before wrangler
+    LIVE API     penn_world_table:avh:AGO    -> "Average annual hours worked … Angola"  2005..2023
+                 penn_world_table:rtfpna:ZWE -> "TFP at constant national prices … Zimbabwe" 1958..2023
+
+**Nothing invented.** VAR_DEFS (42, "verbatim from the workbook's Legend sheet"), 185
+countrycode/country pairs from pwt110.xlsx, per-series dates measured from the parquet, licence
+matching the existing rows. Zero series skipped for a missing definition or country.
+
+**Two endpoint facts, so nobody later reads them as breakage:** `/v1/series/{id}` needs a suffix
+(`.metadata.json` / `.csv`) — the bare path 404s for every series including long-served ones. And
+`.csv` returns 401 for new and pre-existing alike; downloads are auth-gated by design. Both probes
+carried a known-present control, which is the only reason those were read correctly.
+
+**Reserved — Ahmed's call:** what becomes of `pwt` (10.0). Both vintages are now fully derived and
+catalogued under different ids, so 2019 and 2023 sit side by side. Retiring or re-labelling
+existing series ids breaks saved links, notebooks and MCP configs (§2). Leave-and-label, retire,
+or alias.
