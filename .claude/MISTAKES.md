@@ -61,14 +61,22 @@ trusting ANY number I produced, check these five things — each one cost real t
    later runs local has never seen. `--push-state` would have "fixed" it by discarding CI's runs,
    causing the lost update I was hunting. Diff BOTH directions with counts before reconciling, and
    always name WHICH database you are holding.
-7. **To measure completeness, enumerate from the side that can be OVER-complete.** R341: I closed
+7. **Re-running the same query is REPRODUCTION, not verification — check with a different
+   instrument.** R342: I called an audit's `abs: 376,332,763` impossible on a bytes-per-key
+   estimate, then "confirmed" my doubt by re-running the audit's own DuckDB query and printing
+   "matches: True". That proves determinism and nothing else. The real check was a different
+   method — parquet footer metadata, no scan — which matched the row count exactly (976,632,535,
+   ratio 1.0x) and showed my plausibility argument was wrong. Say which of the two you actually
+   established: I verified the ROWS, never the distinct count. A plausibility argument is a reason
+   to measure, never a result.
+8. **To measure completeness, enumerate from the side that can be OVER-complete.** R341: I closed
    noaa's re-derive on "400/400 present" — a sample drawn from the catalogue, which cannot see the
    1,998 series the store had gained since. The sampling frame WAS the thing with the hole in it.
    The reported "missing 1,943" was the NET of 1,998 uncatalogued and 55 sidecar-omitted: two
    defects with opposite fixes, cancelled into one figure matching neither. Split every difference
    into both directions before acting, and note the obvious remedy here (re-run the cataloguer)
    would have created 1,998 listed-but-404 rows.
-8. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
+9. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
    stat_estonia's 18-minute deadline "is NOT working" and cited three 45-minute kills — all of
    them produced by code committed BEFORE the two commits that fixed it. The current cap had never
    run once. "Still broken" and "never tried" look identical in a table of past runs, and only one
@@ -9327,3 +9335,40 @@ ever confirm the catalogue. And before acting on a difference, split it: report 
 with their own counts, because a net figure is not a defect, it is two defects that cancelled.
 
 Related: R322 (one-sided test), R330 (no denominator, no result), R338 (control in the probe).
+
+### R342 — I "verified" a number by re-running the query that produced it
+
+The store audit reported `abs: store 376,332,763, catalogue 18`. I disbelieved it, for a reason
+that felt like arithmetic: the store is 1.79 GB, so 376M distinct string keys is ~4.7 bytes per
+key, and the dictionary alone would exceed the file. I wrote that it was "arithmetically
+impossible" before checking anything.
+
+Then I checked — badly. I ran
+
+    select count(*), count(distinct series_key) from read_parquet([...1222 files...])
+
+which is the audit's OWN query, got 376,332,763 back, and printed `matches DISTINCT: True`. That
+proved the query is deterministic. It could not have detected a wrong query, a wrong file list, or
+a DuckDB bug, because every one of those would reproduce identically. **Reproduction is not
+verification. A second run of the same method is one measurement, not two.**
+
+The real check used a DIFFERENT method — parquet footer metadata, no scan at all:
+
+    sum of per-file num_rows = 976,632,535   ==   DuckDB's row count, ratio 1.0x
+    largest single file       = 30,339,240 rows (BA_SA2_2016-21 — ABS census by SA2)
+
+That is independent, and it says the corpus really is ~976M rows. My plausibility argument was
+simply wrong: I reasoned about bytes-per-key without accounting for dictionary and RLE encoding
+over highly repetitive structured keys, and nearly threw away a correct measurement because it
+offended an estimate I had made in my head.
+
+**And I still have not verified the distinct count** — only the rows. The honest record says so
+rather than letting the independent row check launder the whole line.
+
+**Rule.** When a number looks wrong, check it with a DIFFERENT INSTRUMENT, not the same one
+again; and say which of the two you actually established. A plausibility argument is a reason to
+go and measure, never a result — "this cannot be right" is a hypothesis with exactly the same
+standing as the number it doubts.
+
+Related: R338 (a control belongs IN the probe), R341 (enumerate from the side that can be
+over-complete), R330.
