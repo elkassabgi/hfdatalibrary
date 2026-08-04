@@ -24,9 +24,14 @@ trusting ANY number I produced, check these five things — each one cost real t
    `observed` from `frontier` — in a file I had read twice that night.
 2. **Read a long job's ARGV, not its progress.** R323: I watched `rekey_eurostat.py --dry-run`
    for six hours and reported it as the repair. A dry run prints the same numbers as a real one.
-3. **A sweep reports TWO numbers — what it found and what it could not reach.** R315: a
-   337-request census on a URL I had already watched 404; then a rerun where 192 of 337 were
-   429s, making its table a lower bound, not a census. Read the failure count first.
+3. **A sweep reports TWO numbers — what it found and what it could not reach. No denominator, no
+   result.** R315: a 337-request census on a URL I had already watched 404; then a rerun where 192
+   of 337 were 429s, making its table a lower bound, not a census. Read the failure count first.
+   R330: all three re-pull tools pointed at `D:/research/econfindatalibrary`, a drive letter the
+   store left in the cutover; `os.path.isdir` False reads as "this source has no data", so the
+   authoritative repair tool printed `0 corrupt` across nine sources while the store held 637,178
+   bad rows. **"0 defects in 0 files examined" is not a result** — and a hardcoded path is the
+   most common way to get one.
 4. **When a probe reports ABSENCE, run it against something known PRESENT — and a FAILED control
    VOIDS the run.** R316: I said a source was missing from a list I had parsed with the wrong
    field name — every element was `None`, so EVERY source would have read as missing. R329: three
@@ -8797,3 +8802,49 @@ first, or ask the system for its own answer.
 Related: R316 (asserted a source missing from a list parsed with the wrong field name — same bug,
 same night, thirteen entries earlier), R322 (a one-sided audit that halved the same damage figure),
 R0.
+
+
+### R330 — the entire re-pull toolchain pointed at a dead drive letter, and reported "0 corrupt"
+
+**What happened.** To repair the 637,178 out-of-range rows I ran the project's own categoriser,
+`tools/repull_worklist.py`, which is the authoritative work-list for a clean re-pull. It printed:
+
+    hagstofa       (no on-disk data — skipped)
+    statfin        (no on-disk data — skipped)
+    ... 9 of 9 ...
+    GRAND: clean=0 corrupt=0 two_axis=0 false_alarm=0
+    RE-PULL WORKLIST: 0 corrupt + 0 two_axis tables across 0 subject parquets in 0 source(s)
+
+and exited 0. Read at face value: nine national statistics offices, every table clean, nothing to
+repair. Minutes earlier I had read several of those exact files and measured 637,178 bad rows.
+
+**Cause.** `tools/pxweb_regression_live.py` held `DATA = r"D:/research/econfindatalibrary/..."`.
+The store moved to `E:` in the workstation cutover; `D:/research/econfindatalibrary` does not
+exist at all. Consumers test `os.path.isdir(DATA)` and treat False as *this source has no data*,
+so a wrong ROOT is indistinguishable from a clean store. **All three re-pull tools had the same
+constant** — `repull_worklist` (via the shared import), `repull_surgical:32`,
+`repull_reconstruct:28`. The entire repair path for #91 was aimed at a drive letter.
+
+**Why this is worse than a crash.** A crash asks a question. This answered one, confidently, in
+the direction that ends the investigation: "0 corrupt" is the exact string that says stop looking.
+Same family as R326 (`obs_count` changing denominator) and R231 (`partial` never setting
+`last_success_utc`) — an instrument that fails toward a reassuring number. Note also that this
+tool's whole selling point is being NETWORK-FREE, which is what let it be confidently wrong
+without ever touching a publisher to notice its own emptiness.
+
+**Fixed.** All three roots are now `os.environ.get("ECONDL_CLEAN_FULL") or ROOT/data/clean_full`,
+derived from the file's own location. `repull_worklist` prints the DATA root and the count of
+skipped sources, and **exits 2 with an explicit ABORT when every source is skipped** — the zero is
+named as the absence of a denominator, not the absence of defects. The two mutating tools refuse
+to start against an absent tree.
+
+**The class is bigger than these three.** 50 module-level `X = "D:/research/econfindatalibrary/..."`
+constants survive across the repo, including live ingesters (`jobs/ingest_edgar_13f.py` OUT_DIR
+and RAW_DIR). None can silently corrupt today because the D: tree is absent — but any of them that
+calls `makedirs(..., exist_ok=True)` would CREATE a ghost tree and write a real run into it. Queued
+as its own sweep; not folded into this fix, because a 50-file path migration is not a change to
+make while chasing a data-repair.
+
+**Rule.** A path constant that can go stale must be derived from the code's own location, or must
+fail loudly. And an audit tool must report its DENOMINATOR: "0 defects found in 0 files examined"
+is not a result. Related: R326, R231, R0 check #4.
