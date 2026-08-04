@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"ECON-UPDATER MANDATE (standing, set by Ahmed 2026-08-04 after 5 weeks of regressions): before ANY work on econdatalibrary (E:/research/econfindatalibrary) you MUST invoke the econ-updater skill and follow its per-source procedure. Never touch a source before reading docs/runbook/<source>.md and grepping .claude/MISTAKES.md for its id. One source at a time, end-to-end. db.nomics.world is BANNED (econ CLAUDE.md, ledger R251) and a PreToolUse hook will deny any command that reaches it.\"}}'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if grep -qiE 'db\\.nomics\\.world|api\\.db\\.nomics'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"DBnomics is BANNED for econdatalibrary (econ CLAUDE.md §0, ledger R251). No fetching, probing, relays, or mirrors — use the original publisher API. This hook exists because the ban was violated repeatedly from memory alone.\"}}'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
