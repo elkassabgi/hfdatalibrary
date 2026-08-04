@@ -55,7 +55,13 @@ trusting ANY number I produced, check these five things — each one cost real t
 5. **A one-sided test on a two-sided failure gives a number that LOOKS like a measurement.**
    R322: "273,980 fabricated rows" was under half — the audit only tested the future, and a
    counter-as-year starts at 1. The real figure was ~637,000 across seven sources.
-6. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
+6. **Two writers, one data store: state is a MERGE, not a freshness comparison.** R340: CI state
+   and workstation state are separate LINEAGES, not a stale copy of each other — local was ahead
+   on ofr (proved by the R2 row count matching local's obs_count exactly), CI was ahead on three
+   later runs local has never seen. `--push-state` would have "fixed" it by discarding CI's runs,
+   causing the lost update I was hunting. Diff BOTH directions with counts before reconciling, and
+   always name WHICH database you are holding.
+7. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
    stat_estonia's 18-minute deadline "is NOT working" and cited three 45-minute kills — all of
    them produced by code committed BEFORE the two commits that fixed it. The current cap had never
    run once. "Still broken" and "never tried" look identical in a table of past runs, and only one
@@ -9239,3 +9245,41 @@ runs, and only one of them is a reason to write code.
 
 Related: R318 (do not fix a defect that does not exist), R296 (verify against the thing you serve),
 R303.
+
+### R340 — "local is a stale mirror of the cloud" is only half true; it is a separate LINEAGE
+
+R296 says verify against the store you SERVE, because the local copy is a scratch mirror of the
+last run. I have been reading that as "local is CI's state, possibly older" — a total order, where
+the only question is which is fresher. Chasing ofr's RED-DATA showed the relation is not an order
+at all.
+
+CI state and workstation state are two independent databases writing ONE shared R2 DATA store:
+
+    ofr    CI last_obs 2026-07-29  obs 433,040   (CI last ran it 2026-08-03T05:32)
+    ofr    LOCAL       2026-07-31  obs 433,301   (local ran it 2026-08-04T00:48, +261 rows)
+    R2 store, summed over the four datasets       433,301   <- the LOCAL number, exactly
+
+The row count is what settles it: the shared store holds what the LOCAL run produced, so the local
+run did real work against production and its bookkeeping never left this machine. Diffing all 141
+units: LOCAL ahead of CI on 2, CI ahead of LOCAL on 0, none missing either side.
+
+Two things follow that I had backwards.
+
+**A "stale" local copy can be AHEAD.** Early in the same session I checked whether stat_estonia had
+run since a fix by reading local state, saw a newest row of 02:11, and concluded "the mirror IS
+current". That happened to be right and was not justified — CI had runs at 05:48, 07:17 and 08:05
+that local has never seen, while local had an ofr run CI has never seen. Neither is a prefix of
+the other.
+
+**So the repair is not "push the fresher one".** `--push-state` would have replaced CI's state with
+local's, silently discarding three later stat_slovenia runs — I would have CAUSED the lost update I
+had spent the previous twenty minutes hunting. The safe move was to change nothing: ofr's next CI
+run re-reads the store and heals its own cursor.
+
+**Rule.** When two writers share one data store, state is a MERGE problem, never a freshness
+comparison. Before reconciling, diff BOTH directions and print both counts; if each side is ahead
+somewhere, no wholesale copy is correct in either direction. And name which database you are
+holding — "the state" is two files here, and a sentence that does not say which one is not a
+measurement.
+
+Related: R296 (the half of this I already had), R330 (both directions, with counts), R339.
