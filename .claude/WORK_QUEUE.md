@@ -288,3 +288,143 @@ reached ons_uk because the is_due fix stopped it repeating yesterday's work.
 WHAT THE CRON RUN PROVED, positively: with the is_due fix it reached insee_melodi, ipea,
 maddison, nyfed and ofr — sources it had NEVER processed, because it was no longer repeating
 work already done. It died further down the alphabet than any previous run.
+
+---
+
+# 2026-08-03 → 08-04 UPDATE (Opus 5)
+
+**Run the tool, do not trust the number above.** `python tools/audit_schedule_coverage.py`.
+Measured 2026-08-04: **120 of 217 sources / 9,496,558 of 10,863,548 series scheduled**
+(55.3% / 87.4%). The 2026-07-30 headline near the top of this file (106 of 202 / 4,375,807 of
+5,050,206) is superseded — both the numerator and the DENOMINATOR moved, which is exactly why
+that warning is there.
+
+Cloud: 106 live — 64 clean inside their SLA, 36 ingesting but reporting `partial`, 3 past SLA,
+3 stalled. Local: 6 live + 3 crawlers backfilling.
+
+## The 21 sources that cannot be fully fetched — ROOT-CAUSED, not guessed
+
+14-target investigation, 29 agents, every finding adversarially challenged (9 upheld, 4 refuted
+and corrected). **Not one source fails on a credential or a dead endpoint.** The recurring guess
+— "the API key expired" — was wrong for all 21.
+
+| root cause | sources | meaning |
+|---|---|---|
+| budget_deferral | abs, ecb, ssb, ilostat, insee_melodi, ipea | **NOT BROKEN** — ran out of their 35-min slice |
+| code_bug | bcrp, cso, hagstofa, stat_estonia, stat_slovenia, wid | ours |
+| rate_limited | insee_bdm | INSEE refusing us; its "201/201" is a circuit breaker, not 201 attempts |
+| gated_by_design | eurostat | deliberately refusing to update on corrupt keys |
+
+**abs "805/1222 transient-failed", ecb "290/540", ssb "135/1515" are ZERO real failures.** Every
+named unit reads "deferred (budget 35 min)". Stale strings predating the R303 fix; they overwrite
+on the next successful tick. Do not re-fix that mislabel — it is already fixed and guarded.
+
+## Fixed this session
+
+- [x] **ons_uk — FIRST SUCCESS IN ITS HISTORY** (`last_success_utc` had been NULL forever). Four
+      defects: time grammars that killed 10 of 12 datasets (0 rows from 0.5–22 MB bodies); wrong
+      key grain (225,368 keys → 8,668 for the same rows); an R190 fixed-prefix truncation; and
+      **287 of its 337 "datasets" were never time series** (ONS labels them `cantabular_*` —
+      Census cross-tabulations with no time dimension, downloaded and discarded every run, and
+      since `empty` holds a source at `partial` they alone guaranteed it could never succeed).
+      Also found the fetcher had been UNDOING the approved 2026-07-29 re-key.
+      d142c978, 0404baa2, 9f3af5a3, a5bdf4e1.
+- [x] **cso — 222 unroutable matrices recovered**, proven live: cached map 13,364 → forced
+      rebuild 13,586, ADDS 222 REMOVES 0, 5.8s. The subject cache could never be refreshed
+      (`_matrix_subject_map` wrote it only when ABSENT; `build_catalog()` short-circuited on the
+      file existing), so a stale cache froze permanently while those matrices ate ~45% of every
+      run's 60-table budget without publishing. 9a228a1f.
+- [x] **wid — the next run would have RAISED.** Its 12 header-only entities (47 bytes of CSV
+      header) were never stamped, so once every real country was stamped they became the entire
+      work list and the empty-window guard would read 12-of-12-empty as "the source went dark".
+      ce08652c.
+- [x] **bcrp — a THIRD string-vs-date site** my own R310 sweep stepped over, because it fixed the
+      lines either side and this one raises `TypeError` where those raise `AttributeError`. Root
+      enabler was a type hint promising `dict[str, dt.date]` while returning strings. ac3fcfa1.
+- [x] **pxweb `resolve_time_dim` — stopped NEW date fabrication for four sources at once.** Step
+      3 fell back to a name match with no value check; step 2 already refused those axes. 02944c86.
+- [x] **eurostat re-key guard could be disarmed by a PARTIAL re-key** — it sampled
+      `list_parquets()[:5]`, the first five of a SORTED list the migration walks in the same
+      order, so a partial `--apply` released the guard at 0.06% of 7,754 files. The interrupt is
+      observed (a pass died at file 4,403/7,754 after ~4h). Now a completion marker + an
+      evenly-spaced content sample. 1ed5b4bb.
+- [x] **Offender lists were being deleted by a 300-char clip** — `finalize()` names the failing
+      sub-units precisely so a finding is actionable, and the orchestrator cut the list mid-token
+      at 4 of 7 with nothing saying the rest were dropped. Now 1400 chars, ends on a whole
+      element, announces truncation; `_named` cap 6 → 20. ac1f86f9, 12c62faa, c7e7f3fe.
+- [x] **Impossible dates now AGGREGATE** into the orchestrator's per-source line instead of one
+      print per file into a log nobody diffs. aab2f441.
+- [x] **`audit_impossible_dates.py` made two-sided** — it read only the footer MAX, and a counter
+      read as a year starts at 1. Lower bound calibrated against the data (1850 flagged 25
+      sources, nearly all genuine); deep-history sources allowlisted by name AND reason. 19d4d201.
+- [x] **requirements-updater.txt** — pandas AND pyarrow both diverged dev-vs-CI; all three majors
+      capped to what the runner already resolves. 84ee688a.
+- [x] Health gate: ofr proven healthy (upstream's newest was exactly what we held); four `static`
+      sources declared complete on PROBED publisher evidence; worldbank given
+      `data_cadence: annual`.
+
+## Open — data damage, NOT yet repaired
+
+- [ ] **~637,000 SERVED rows carry fabricated dates across 7 sources.** New fabrication is
+      stopped; the existing rows are not repaired.
+      stat_slovenia 05W **506,605 — the whole file** (one key holds 5,863 obs dated year
+      1,2,3…6152, all at 12-31) | scb HE+BE 71,368 | statfin tyonv 32,013 (77%) |
+      oecd 25,160 | hagstofa 1,120 | eurostat 912 (different cause — see below) | cbs_nl local.
+      Every key names its own cause once translated: `DodaVeckaRegionCKM` deaths by WEEK,
+      `DRUŽINE` families, `Alue`/`Ikäryhmitys` region/age, `Mælistöð`/`Mánuður` station/month.
+      **Repair is a clean RE-PULL per table, never a date patch** — 41,091 of stat_slovenia's
+      fake dates land in 1900..2200 and are indistinguishable from real data (R288: a naive date
+      fix on cso would have destroyed 11 of 12 rows; only a negative control caught it).
+      Template: `tools/cso_repull_matrix.py`.
+- [ ] **ons_uk's 4 ashe files hold BOTH key grains** at 1.8 rows/key, summing to exactly the
+      20,198,302 on the old state row. They cannot self-heal: repair means writing FEWER rows
+      than are on disk and never-shrink refuses it by design. The #42 prune tool's precondition
+      (ons_uk completes one run) is NOW MET.
+- [ ] **The catalogue serves 7,159 rows of the SUPERSEDED PWT 10.0 against 60 of current 11.0.**
+      PWT 11.0 has been ingested since July as `penn_world_table` — a browsing user mostly finds
+      the old vintage. Product decision, not a bug.
+
+## Open — needs Ahmed (both fully prepared)
+
+- [ ] **`python tools/refresh_r2_catalog.py 20260803 --allow-shrink zillow,ksh`** — DENIED by the
+      permission classifier. **36 of 57 partial units are blocked by nothing else**: 1,285,487
+      uncatalogued keys, across runs that already fetched 250,418,112 rows successfully. Those
+      sources are not broken — eia +150,676,326, vdem +79,590,111, fhfa +3,227,580 — they merge
+      fine and then report `partial` solely because changed keys have no catalog entry, and since
+      a partial never sets `last_success_utc` they also read as "never succeeded" everywhere.
+      `--allow-shrink` is scoped to two sources with verified reasons (zillow out of the serving
+      surface; ksh withdrawn upstream); every other source keeps never-shrink protection.
+- [ ] **`python tools/rekey_eurostat.py --apply`** — overwrites 7,754 production files. The guard
+      hole is fixed, so it is now safe to attempt. **The run I watched for six hours was
+      `--dry-run` and writes NOTHING** (R323) — `--apply` has never been run. If the dry run's
+      FINAL conflicting-revisions line reads 0 (it was 0 through 5,400/7,754), every collapse was
+      an exact duplicate, no served value changes, and it is mechanical rather than a judgement
+      call. Read that number from the END of the log (R246).
+
+## Open — diagnosed, not yet fixed
+
+- [ ] **stat_estonia** — DELIBERATELY HELD. An agent recommended a long-cadence gate on the
+      `Lepetatud_tabelid` subject citing "99.0% have max(obs_date) <= 2024". **I measure 87.9%,
+      and 7 tables carry 2025+ data.** Both can be true (2,832 catalog entries vs 58 that landed
+      data) but the gate would silently delay live tables. Note the subject-level max is
+      2080-12-31 (population projections), so any staleness gate here must be PER-TABLE — a
+      subject-level test reads it as fresh. See R325 for why I stopped rather than adjusting the
+      threshold.
+- [ ] **insee_bdm** — INSEE is rate-limiting; needs a pacing change, possibly a conversation with
+      the publisher.
+- [ ] **ecb's real coverage is DECLINING** — attempted fell 297 → 288 → 250 over 2026-08-01/02/03
+      at a fixed 540 denominator and a fixed ~2,105 s budget. The 35-minute slice buys less each
+      day and the rotation may not be draining the tail. Cause NOT established.
+- [ ] The remaining 97 unscheduled sources are dominated by four organisational decisions, not 97
+      integrations: unctad (38), the imf_* family (~24), fao_*, unesco_*. 217 source ids come from
+      only **90 distinct publishing organisations**; 82 of those contribute one id each.
+
+## Where the records live (checked 2026-08-04, because it was asked)
+
+- `.claude/MISTAKES.md` — **128 entries**, git-tracked and pushed. 14 this session (R312–R325).
+- `.claude/WORK_QUEUE.md` — this file. Tracked. **Was 4 days stale before this update.**
+- Commit messages + code comments — pushed; the most detailed record of WHY each fix looks the
+  way it does.
+- `session_log.md` (hf repo) — full session narrative, but **gitignored: this disk only**.
+- The in-session task list (92 items) — **harness state, no file on disk.** That is why this
+  section exists: anything that matters has to reach one of the tracked files above.
