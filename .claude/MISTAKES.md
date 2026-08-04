@@ -8266,3 +8266,45 @@ four static sources — barro_lee, gppd, cepii_gravity have no sibling; the only
 pair in 141 entries is ksh/ksh_stadat, already handled in task #59.
 
 Related: R289 / #81 (same shape, same session), R73.
+
+### R318 — I loosened a working gate because my ruler was not the gate's ruler
+
+I measured six "daily" sources at 4-5 days past a 3-day RED-DATA tolerance, all stalled on
+Friday 2026-07-31, and concluded the health gate systematically false-alarms on business-day
+publishers ~2 days in 7. I measured the weekday distribution properly (five of the six carry
+ZERO weekend observations across 673-763 dates), wrote a careful commit message, added
+LATENESS_PERIOD["business_daily"] = 2, and shipped it.
+
+Then, reading the same function for a different reason, twenty lines below where I had edited:
+
+    eff_obs_age = _business_age_days(newest_obs, now) if cadence == "daily" else obs_age
+
+_business_age_days has existed since 2026-07-13. Its docstring states my finding verbatim —
+"the calendar version red-flagged every live FX source every Monday morning (observed
+2026-07-13: cnb + frankfurter, succ_age 0d, gate failure)" — and it carries a SECOND fix from
+2026-07-25 for the partial-day case, naming bcrp and ofr.
+
+My script computed CALENDAR age. The gate computes BUSINESS age for exactly these sources. The
+class was manufactured by using a different rule from the system I was judging.
+
+The check that would have cost nothing: the CI run's own output. cnb, frankfurter, nyfed and
+riksbank are NOT among the 45 sources the 06:00 UTC gate flagged. I had that log open earlier in
+the same session. Only ofr was RED-DATA, and ofr was genuinely two days behind upstream (fnyr
+and repo both at 2026-07-31, we held 07-29) — running the fetcher took 261 rows and turned it
+`ok`. The gate was right about all six.
+
+WHAT I SHIPPED, briefly: those six would have tolerated 6 business days of silence instead of 3
+— more than a working week — on a gate whose own comments argue that crying wolf is how a real
+freeze gets missed. I made it worse in the name of making it better. Reverted whole.
+
+THE PATTERN, fourth time this session (R315 census, R316 field name, R317 sibling id, this):
+every one is a mistake about the SHAPE OF THE MEASUREMENT rather than the question. This one is
+the most dangerous of the four because it produced a plausible number, a real weekday
+distribution, and a change that PASSED 198 tests — nothing failed, because nothing tested the
+gate's actual verdict.
+
+THE RULE: before "fixing" a rule, compute the thing the rule computes, or read its output. I
+reimplemented `age` instead of calling `_business_age_days`, and I reimplemented the verdict
+instead of reading the gate's own 45-line list.
+
+Related: R315, R316, R317, R248 (did the gate assess anything before you believed it).
