@@ -67,6 +67,14 @@ and order it: remove first, then enable.
 - A FUTURE date is usually a legitimate PROJECTION (CSO to 2057, Estonia 2085, UN WPP 2101).
   A defect is a SENTINEL (9999/2999 repeated) or a COUNTER (contiguous FROM year 1). Never judge
   by the size of the number. [R320, R322, R327]
+- **A RANGE TEST CANNOT DETECT CODE-AS-YEAR FABRICATION.** Codes and years occupy the same
+  integers: Swedish municipality codes run 0114..2584, Slovenian settlements 1..6152, so any
+  sane-band filter keeps the ones that land in 1500..2200 and every instrument then reports
+  clean. I applied a band-based prune to scb, it passed, `audit_impossible_dates` reported 0
+  affected — and 15,990 fabricated rows remained. Detect it by the STRUCTURE that is
+  definitionally impossible instead: a time value inside a series identity (`Tid=`,
+  `TLIST(A1)=1991`, `calendar-years=`) cannot be right, because time varies per observation.
+  And when a repair reports success, **inspect what SURVIVED, not what was removed**. [R334]
 - `obs_count` means "rows this run" on a productive run and "whole store" on a quiet one, so a
   healthy source can appear to lose 168M rows. Count the store. [R326]
 - **A date axis that looks MIS-SELECTED is usually an axis that could not be PARSED.** A parser
@@ -8990,3 +8998,48 @@ remove first, then enable. And when a source has both an ingester and a fetcher,
 shipped until it is in the one that actually runs — check which path the scheduler calls.
 
 Related: R22, R331, R207, task #42 (the ons_uk prune this would have recreated).
+
+
+### R334 — I applied the exact test my own task note said could not work, and every instrument agreed
+
+**What happened.** Task #91 carried this warning, written by me earlier the same night:
+
+> Repair is a clean RE-PULL per table, NOT a date patch — 41,091 of stat_slovenia's fake dates
+> land in 1900..2200 and are indistinguishable from real data.
+
+I then built a repair keyed on exactly that test — "drop rows outside 1500..2200" — applied it to
+four sources, and reported success. Then `tools/audit_impossible_dates.py --r2` reported **0
+sources affected** for all three pruned sources.
+
+The store was not clean. scb's fabricated dates are Swedish MUNICIPALITY CODES, which run
+0114..2584. The band pass removed the codes below 1500 and above 2200 and kept everything
+between, so codes 1500..2200 survived as entirely plausible years:
+
+    BE:...:Medellivsl:Kon=1:ContentsCode=000000NH:Tid=1998-2002   obs_date 1715-12-31
+                                                   ^^^^^^^^^^^^   ^^^^ code 1715, not a year
+
+Measured afterwards: 3,731 / 3,731 / 3,731 / 2,829 / 1,968 surviving rows in the five tables, and
+**100% of them still carried the old grain**. 15,990 fabricated rows, invisible to the audit, in a
+source now certified clean by two separate instruments.
+
+**Why the warning did not save me.** I wrote it about stat_slovenia and filed it under
+stat_slovenia. It is a property of CODE-AS-YEAR fabrication generally — any code list that spans
+the calendar window defeats any range test — and scb's municipality codes are the same defect
+wearing a different country. Knowledge filed under one instance does not fire on the next.
+
+**What actually caught it** was not an instrument. It was asking, before lifting the quarantine,
+"what grain are the rows that SURVIVED?" — a question with no reason to be asked if I believed my
+own green result. Two green instruments and one uncomfortable question, and the question was right.
+
+**The fix is a different discriminator, not a wider band.** `Tid=` inside a series_key is
+definitionally wrong: time varies per observation, so it cannot be part of a series identity. No
+threshold, no judgement — the same signature cso used (`TLIST(A1)=1991`) and ons_uk used
+(`calendar-years=`). A GRAIN pass now selects on key shape.
+
+**Rule.** A range test cannot detect code-as-year fabrication, ever, because codes and years
+occupy the same integers. Detect it by the STRUCTURE that is definitionally impossible — a time
+value inside a series identity — and treat "the audit says zero" as evidence about the audit's
+question, not about the store. When a repair reports success, inspect what SURVIVED, not what was
+removed.
+
+Related: R322 (the one-sided version of this same blindness), R288, R329, task #42.
