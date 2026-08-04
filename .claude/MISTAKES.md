@@ -8545,3 +8545,43 @@ The next one like this gets shipped.
 
 Related: R319 (pin the property, read the constant), R318 (a change that passed 198 tests because
 nothing tested the thing it changed).
+
+### R325 — a subagent's number did not reproduce, and the tempting move was to ship anyway
+
+An investigating agent recommended a long-cadence gate on stat_estonia's `Lepetatud_tabelid`
+subject, citing "2,832 of 4,978 sub-units and 99.0% of the ones holding data have
+max(obs_date) <= 2024" and a sweep going 83 min -> 37 min. Everything about it was plausible:
+the subject name is Estonian for "discontinued tables", the agent had a detailed evidence list,
+and the payoff was the largest throughput win on the board.
+
+I measured the stored parquet myself before touching it:
+
+    Lepetatud_tabelid.parquet   7,775,126 rows across 58 tables WITH DATA
+      max(obs_date) <= 2024 :  51 of 58  (87.9%, not 99.0%)
+      max(obs_date) >= 2025 :   7 tables   <- LIVE
+      years: 2020:18  2021:16  2022:8  2025:6  2024:5  2023:4  2080:1
+
+Both figures can be true — 2,832 CATALOG entries against 58 that have landed data — but 87.9%
+is not 99.0%, and seven tables in a subject called "discontinued" are still publishing. A
+1-in-N gate delays those.
+
+I did not ship it. Not because the agent was wrong (it may well be right about the catalog
+grain), but because I could not reproduce the number the decision rested on, and the failure
+mode of being wrong is SILENT: live data quietly arriving late, which no test and no gate would
+report.
+
+WHY THIS IS A LEDGER ENTRY AND NOT JUST A DECISION. Twice today I shipped a change that loosened
+a working mechanism on an incomplete measurement — R318 (widened a health-gate tolerance
+computed in calendar days when the gate uses business days; reverted) and R323 (treated a
+`--dry-run` as a repair for six hours). The pattern in both is that I acted on a number whose
+PROVENANCE I had not checked, and in both the number came from something I had produced myself.
+This time it came from a subagent, which is if anything easier to trust: it arrives formatted,
+confident, with an evidence array attached. The tool description warns that other agents can
+report incorrect results and not to take them at face value; that warning is doing real work.
+
+Also recorded because the subject-level max is 2080-12-31 (Estonian population projections), so
+the obvious cheap version of this gate — judge the subject by its own max obs_date — would read
+this subject as FRESH and skip nothing. Any staleness gate here has to be per-table.
+
+Related: R318, R323, R246, R288 (the negative control that stopped a plausible repair from
+destroying 11 of 12 rows).
