@@ -8342,3 +8342,48 @@ asked for — and the push scrolled past it. An automated gate I trusted was not
 this session's recurring theme in yet another costume (R315 sweep, R316 field name, R318 ruler).
 
 Related: R318, R42 (verify a push against the branch ref, not HEAD).
+
+### R320 — the impossible-date class was never confined to PxWeb, and nobody had asked all 141 stores
+
+Task #73 closed "the PxWeb positional time-code class" across 8 parsers, and #78 repaired cso's
+swapped time axis over 290 matrices / 754,780 rows. Both were real and both were scoped by the
+mechanism I had in hand: PxWeb parsers I could grep for.
+
+Tonight a line scrolled past in an unrelated hagstofa run —
+
+    [merge] IMPOSSIBLE DATES: 1,120 of 200,100 row(s) ... UMH11130.px:Mælistöð=0:Mánuður=0
+    -> 3001-12-31. Published anyway ... a time axis is almost certainly being read off a
+    non-time dimension.
+
+— and running tools/audit_impossible_dates.py over all 141 stores, then confirming every hit
+against R2, found 273,980 SERVED rows dated between 2999-12-31 and 9999-12-31 across six sources:
+stat_slovenia 214,775 (42% of that file), statfin 32,013 (77%), oecd 25,160 across two files,
+hagstofa 1,120, eurostat 912 (100% of both its files), plus cbs_nl local-only.
+
+THREE THINGS I GOT WRONG ABOUT THE SHAPE OF THIS CLASS.
+
+1. It is NOT a PxWeb class. oecd is SDMX. I had scoped both previous sweeps to the parser family
+   where I first met the bug, so an SDMX instance was never in the search space. "Fix every
+   parser of type X" reads like completeness and is only completeness with respect to X.
+
+2. The instrument already existed and I had never run it. audit_impossible_dates.py was written
+   for exactly this backlog — its own docstring cites cso's 434,408 such rows (R265) — and it
+   takes one command over every store because it reads parquet footers rather than rows. The
+   finding cost about four minutes. It sat unrun while I spent the session on narrower questions.
+
+3. The guard was already SHOUTING. merge_and_write announces impossible dates at write time and
+   deliberately publishes anyway ("dropping would be data loss decided by a heuristic"). So this
+   was printed on every affected run, into logs nobody diffed. A warning that never blocks and
+   never aggregates is indistinguishable from silence.
+
+The keys diagnose themselves once translated, which is the part worth keeping: Mælistöð =
+measuring station, Mánuður = month, DRUŽINE = families, Alue = region, Ikäryhmitys = age group.
+Every one is a non-time dimension pinned at a total/zero code while the date lands in the 3000s.
+I had been reading these keys as opaque ids for weeks.
+
+Also worth separating rather than lumping: eurostat's two files are NOT this bug. Their keys begin
+"LAST UPDATE=01/08/25 23:00:00" — the unstable series_key its own gate already refuses to update
+on. Same symptom, different cause, different fix; the re-key running now should clear them.
+
+Related: R73, R265, R288 (do not patch dates — re-pull), R296, R313 (cleared by behaviour, in one
+state only).
