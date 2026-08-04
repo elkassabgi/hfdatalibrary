@@ -641,3 +641,28 @@ carried a known-present control, which is the only reason those were read correc
 catalogued under different ids, so 2019 and 2023 sit side by side. Retiring or re-labelling
 existing series ids breaks saved links, notebooks and MCP configs (§2). Leave-and-label, retire,
 or alias.
+
+## D1 capacity, finally a number: ~1.77M more series rows TOTAL (2026-08-04)
+
+    wrangler d1 info econ-catalog   ->  8.6 GB of the 10 GB limit   (was 7.87 GB in the old note)
+    SELECT COUNT(*) FROM series     ->  10,860,424
+    SELECT COUNT(*) FROM series_fts ->  15,052,166
+    => ~850 bytes per series row, all-in (row + FTS entries + indexes)
+    => headroom ~1.4 GB  ~=  1,767,976 more series rows, across EVERY source, ever
+
+This had never been computed, and it changes how the dark-store backlog reads:
+
+- **bea (#65), 912,990 dark series, WOULD fit** — but it alone eats ~52% of all remaining
+  headroom, leaving ~0.66 GB for everything else.
+- The dark surface previously sized at **75.7 GB is ~95M series rows** at the measured density —
+  **9.5x the entire D1 limit**. It cannot be catalogued at series grain on this plan at any point,
+  by any amount of tidying. That is why #45 says GRAIN, not capacity.
+- Small high-value fills remain cheap: PWT's 7,103 rows cost ~6 MB (0.4% of headroom) and took the
+  current vintage from 0.8% visible to 100%.
+
+So the real choice is (1) TABLE/FLOW grain for the big stores — one row per table, series
+enumerated at download time, which is what #37 means; (2) spend the 1.77M where series grain IS
+the product; or (3) raise the limit (billing, Ahmed's).
+
+**Do not bulk-catalogue anything six figures or larger before that choice is made.** Adding rows
+is easy; a full re-dump via `core/export_d1.py` is ~945 MB.
