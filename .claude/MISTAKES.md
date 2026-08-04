@@ -63,6 +63,13 @@ grows and never-shrink cannot see it (R22; this is how ons_uk reached 20.2M rows
 observations). Before enabling one on a live path, read what the store holds under the OLD grain
 and order it: remove first, then enable.
 
+**A FLAG THAT NAMES A STORE MUST SET IT.** `audit_impossible_dates --r2` did not: it only picked
+a listing function, while `blob` read `AQUEDUCT_BACKEND` — so with no env var it scanned the LOCAL
+tree and printed `(r2)`. Local is a scratch mirror of the last run only, hence systematically
+CLEANER than what users download, so the instrument failed toward "fixed" — and it was the check
+I used to confirm a 104,501-row prune. Print the RESOLVED backend, never the flag, and treat a
+verification that contradicts a fact you established personally as the suspect. [R335, R296]
+
 **And the two that decide whether a number is even a defect:**
 - A FUTURE date is usually a legitimate PROJECTION (CSO to 2057, Estonia 2085, UN WPP 2101).
   A defect is a SENTINEL (9999/2999 repeated) or a COUNTER (contiguous FROM year 1). Never judge
@@ -9043,3 +9050,41 @@ question, not about the store. When a repair reports success, inspect what SURVI
 removed.
 
 Related: R322 (the one-sided version of this same blindness), R288, R329, task #42.
+
+
+### R335 — `--r2` did not select R2, so the check that confirmed my repair read the wrong store
+
+**What happened.** After pruning 104,501 rows I verified with the project's own auditor:
+
+    python tools/audit_impossible_dates.py --r2 --source scb   ->  0 source(s) affected  (r2)
+
+and reported the repair verified. The flag does not set the backend. It only chooses
+`blob.list_parquets()` over a local `glob`, and `blob` honours `config.BACKEND`, which is read
+from `AQUEDUCT_BACKEND` at import. With no env var the run read the LOCAL tree and printed
+`(r2)` above it.
+
+**Why this is not a cosmetic mislabel.** Under `AQUEDUCT_BACKEND=r2` the local tree is a scratch
+mirror of the LAST RUN ONLY (R296/R36) — so it is *systematically cleaner* than the store users
+download. A repair writes to R2, the audit then reads local, and the all-clear describes a
+directory nobody is served from. The instrument does not fail randomly; it fails toward "fixed".
+
+**How it surfaced.** The same audit reported `stat_slovenia: 05W.parquet min=0001-12-31
+max=6152-12-31` — a file I had deleted from R2 hours earlier and whose absence I had confirmed.
+`head_object` returns 404 for it. The audit was reading `data/clean_full/stat_slovenia/05W.parquet`,
+last written 2026-07-14. A result that contradicted a fact I had personally verified is the only
+reason I looked; had the stale copy agreed with R2, nothing would have exposed this.
+
+**Re-measured with the backend actually set: scb is genuinely 0 affected in R2.** The prune was
+sound. The verification of it was not, and those are different claims — I had reported the second
+as if it established the first.
+
+**Fixed.** `--r2` / `--local` now set `AQUEDUCT_BACKEND` before `updater.config` is imported, so
+the flag means what it says, and the header prints the RESOLVED `config.BACKEND` rather than
+echoing the flag. Verified: `--r2` with no env var now reports `backend=r2`.
+
+**Rule.** A tool that names a store in its flags must SET that store, not assume the caller
+exported it — and its output must print what it resolved, never what it was asked for. When a
+verification and a fact you established personally disagree, the verification is the suspect.
+
+Related: R296/R36 (verify against the store you serve), R330 (a repair tool aimed at a dead path
+reporting `0 corrupt`), R334 (the prune this was supposed to confirm).
