@@ -428,3 +428,89 @@ on the next successful tick. Do not re-fix that mislabel — it is already fixed
 - `session_log.md` (hf repo) — full session narrative, but **gitignored: this disk only**.
 - The in-session task list (92 items) — **harness state, no file on disk.** That is why this
   section exists: anything that matters has to reach one of the tracked files above.
+
+---
+
+# 2026-08-04 (later) — the fabricated-date repair, and three instruments that lied
+
+**Progress: 120 of 217 sources / 9,496,558 of 10,863,548 series scheduled.** Unchanged by this
+block of work, which was data CORRECTNESS, not coverage.
+
+## The headline number was right; I talked myself out of it twice
+
+`~637,000 SERVED rows carry fabricated dates` was correct. Re-measured two-sided against R2:
+**637,178 rows, and all seven sources ARE in SUPPORTED_SOURCES** (219 ids). Three probes said
+otherwise and all three were wrong in the reassuring direction — a `series_id LIKE` missing an
+`SI:` segment, a line-anchored regex that matched 10 ids, and quote-pairing thrown off by an
+apostrophe inside a `//` comment. On the third I ran a control, watched it FAIL, and published the
+numbers anyway. **A failed control voids the run.** R329.
+
+## It is TWO defect classes, not one
+
+| class | what it is | sources | repair |
+|---|---|---|---|
+| COUNTER | a non-time dimension read as years — OURS | stat_slovenia, scb, statfin | clean RE-PULL (R22) |
+| SENTINEL | the PUBLISHER's own placeholder, faithfully recorded | oecd 2999, eurostat 9999 | parser guard / hosting decision |
+
+Eurostat PROBED directly: `TEN00001` and `ENV_WAT_LTAA` return `time: ['9999']` with `freq='NAP'`
+— genuinely time-invariant "long-term annual average" tables. We did not fabricate those.
+
+## Done
+
+- [x] **stat_slovenia 05W — 506,605 rows retired, backed up, re-pull dispatched** (run
+      30879564906). The negative control is the whole story: a whole-file retire looked obviously
+      right at 81.4% out-of-range, and would have **destroyed 1,463 real observations**. Of 33
+      tables, 23 are settlement counters and **10 are real** — they carry a `LETO` (= YEAR)
+      dimension with n=6 and n=2 values matching the measured distinct-year counts exactly, at
+      1991/2002, Slovenia's census years. SURS reports `time=False` on EVERY dimension in BOTH
+      kinds, so the presence of `LETO` is the only discriminator. Both controls pass on the fixed
+      parser: the 10 re-parse to exactly their on-disk row counts, the counters return 0.
+      Backup VERIFIED at `r2://_backup/repull/stat_slovenia/20260804T050351Z/05W.parquet`.
+- [x] **scb — the real bug was a MISSING GRAMMAR, not a bad axis.** All five bad tables have a
+      proper `Tid` flagged `time=true`; `parse_date` simply could not read `2011-2012` (multi-year
+      windows) or `2025V01` (weeks — only `W` was handled). Zero parse-rate on the right axis, so
+      the resolver fell through to `Region`, whose municipality codes 0114..2584 became years
+      114..2026. Added both grammars; verified live: 91/91/91/74/14,974 rows, zero out-of-range,
+      control unchanged. **Without this, a re-pull would have written 0 rows and looked like a
+      success.** 98a57131, R331.
+- [x] **oecd — 25,160 rows at 2999 dropped at parse time**, in BOTH the fetcher and the ingester
+      (kept in sync deliberately). Safe because every 2999 key ALSO has real dated observations —
+      checked, not assumed — so it removes an appendix row per series, never a series. 88f5f4f9.
+- [x] **The whole re-pull toolchain pointed at a dead drive.** `repull_worklist.py` printed
+      `GRAND: clean=0 corrupt=0` across nine sources against a store holding 637,178 bad rows,
+      because `DATA = D:/research/econfindatalibrary/...` and the store moved to E:. `isdir()==False`
+      reads as "this source has no data". Now derived + exits 2 when everything is skipped; the
+      same scan reports **clean=23,174 two_axis=94**. 78ecb30e, R330.
+- [x] **0 hardcoded `D:` constants remain in runtime code** (was ~50). Five were not cosmetic —
+      most importantly `jobs/ingest_edgar_13f.py`, where a stale `PROJ` makes the licence-gate
+      import raise into an `except` that silently substitutes a PERMISSIVE stub. Also disabled
+      `pipeline/title_unctad_cioiuibbicoeair4a.py` outright: it fetches api.db.nomics.world,
+      banned by §0. 537644b6.
+- [x] `repull_file.py` now tests BOTH date bounds and no longer calls in-range rows "FINE" — that
+      line said 291,830 for 05W when the true figure was 1,463. c868fd0e.
+
+## Still open on this defect — 103,381 rows, all COUNTER class
+
+The damage is **9 tables**, not scattered rows:
+
+    scb HE   TABIRH3/4/5                61,152 rows   grammar SHIPPED, needs re-pull
+    scb BE   DodaVeckaRegionCKM,
+             Medellivsl                 26,206 rows   grammar SHIPPED, needs re-pull
+    statfin  tyonv 12tc.px              32,884 rows   parser ALREADY correct (Koulutus, 522
+                                                      education codes 0011..9999); rows are legacy
+    hagstofa Umhverfi UMH11130/40/50    22,994 rows   parser ALREADY correct — VERIFIED, all three
+                                                      re-parse to 1949..2024 with zero bad dates
+
+**Do NOT retire scb BE.parquet as a whole**: 1,553,817 rows of which 26,206 are bad. A whole-file
+retire re-pulls 264 tables through MAX_CELLS-limited tailing queries and leaves the database thin
+for many runs. Precedent is `tools/cso_repull_matrix.py`, built for exactly this (subject-grain
+would have deleted 742 matrices to fix 60). statfin tyonv (41,810 rows) and hagstofa Umhverfi are
+small enough to retire whole.
+
+**Blocked on the single-writer guard (R5) while run 30879564906 is in flight** — that guard is
+correct and stopped me mid-repair; resume the retires when it lands.
+
+## Verify when the run lands
+
+    python tools/audit_impossible_dates.py --r2 --source stat_slovenia    # expect ZERO
+    # AND 05W.parquet back at ~1,463 rows. NOT 0 — 0 means the ten LETO tables were lost too.
