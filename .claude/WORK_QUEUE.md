@@ -561,3 +561,48 @@ quarantine lifts — which is why lifting it is not optional.
 **Blocked, and it is ordinary contention, not a fault:** `updater-heavy` is `queued` for a runner
 and my dispatched `updater-daily` is `pending` behind it on the shared `aqueduct-updater`
 concurrency group. 05W's re-pull is in that pending run.
+
+## FINAL STATE of the fabricated-date defect — every figure R2-VERIFIED
+
+The two corrections above were themselves measured with a broken instrument. `--r2` did not select
+R2 (R335, fixed in 31f1346a): the flag only chose a listing function while the store came from
+`AQUEDUCT_BACKEND`. The local tree is a scratch mirror of the LAST RUN, hence systematically
+cleaner than what users download — so the audit failed toward "fixed", and it was the check
+confirming this very repair. **Every number below was re-measured with the backend actually set.**
+
+    scb            0 affected     87,358 rows removed (71,368 band + 15,990 grain); quarantine lifted
+    statfin        0 affected     36,933 rows (32,013 tyonv + 4,920 mkan/tkker dual grain)
+    hagstofa       0 affected      1,120 rows; parser already rejects the codes, so durable
+    stat_slovenia  3 rows         05L1027S — LIVE bug, task #95
+    oecd          25,160 rows     @2999, the PUBLISHER's placeholder; parse guard shipped, legacy stays
+    eurostat         912 rows     @9999 + freq=NAP — time-invariant tables; hosting decision
+    cbs_nl             0          its flagged files are ABSENT FROM R2 — local only, never served
+
+**125,411 fabricated rows removed from the served store**, plus 505,142 retired with 05W.
+
+### The one still fabricating, and why it is not a quick fix (#95)
+
+SURS sets `time: true` on the AGE axis of 05L1027S ("Deaths by COMPLETED YEAR / YEAR OF BIRTH").
+Code `'1000'` is labelled *"Deaths - TOTAL"* and parses to year 1000. `resolve_time_dim` returns a
+flagged axis unconditionally.
+
+I built the obvious guard — require the flagged axis to yield one sane date, else None — and **the
+test suite killed it**: 7 failures across ssb/hagstofa/statfin/dst. Some PxWeb tables index time
+POSITIONALLY (`category.index` = {"0":0,...}) and carry the period only in `category.label`; the
+parsers already fall back to labels, and that fallback is what fixed hagstofa's 26 false structural
+breaks. A codes-only check makes those axes look unreadable and kills it.
+
+Nor may it fall through to the value scan — that is the 87,358-row scb failure, where the
+publisher was RIGHT about which axis was time and we simply could not read it.
+
+The real fix judges the flagged axis on CODES **or LABELS**, and returns None (never another
+dimension) when neither works. It needs a signature change to `resolve_time_dim` and every caller
+checked. Deliberately not rushed: the mechanism it touches protects four sources, and R318 is the
+entry about loosening a working gate.
+
+### Two rules earned here, both now in the digest
+
+- **A range test cannot detect code-as-year fabrication.** Codes and years are the same integers.
+  Select on the structure that is definitionally impossible — a time value inside a series
+  identity (`Tid=`, `TLIST(A1)=1991`, `calendar-years=`). R334.
+- **A flag that names a store must SET it**, and print what it RESOLVED. R335.
