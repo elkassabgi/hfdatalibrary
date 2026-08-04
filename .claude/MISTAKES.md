@@ -8161,3 +8161,37 @@ LESSONS, in the order they bit:
      mapping contradicted a function in the same module.
 
 Related: R22 (a key change is a re-pull), R296 (right tool, wrong store), R310, R313.
+
+### R315 — I built a 337-request census on a URL I had already watched return 404, and it "completed"
+
+Twenty minutes earlier I probed ons_uk's `trade` dataset and printed, in my own output:
+
+    GET https://api.beta.ons.gov.uk/v1/datasets/trade/editions/time-series/versions/65/csv
+      HTTP 404  len=19  first bytes: b'404 page not found\n'
+
+Then I wrote a grammar census over all 337 ONS datasets and built its URL as
+`<version_href> + "/csv"` — the same route. All 337 came back 404. The script ran to
+completion, printed a tidy `=== TIME GRAMMARS across 337 datasets ===` header, and reported
+nothing, because `header fetch failed: 337`. The working distribution is the `downloads` href
+inside the version JSON, which points at a different host entirely (download.ons.gov.uk) — and
+I knew that too, since `_fetch_one` uses it and I had just edited that function.
+
+What makes this worth an entry is not the wrong URL, it is that the failure was TOTAL and that
+is the only reason I caught it. 337 of 337 is obviously broken. Had the route worked for, say,
+the newer datasets and 404'd for the older ones, I would have had a plausible-looking census
+over a biased subset and no reason to doubt it — and I was about to use that census to decide
+which time grammars needed implementing. Same shape as R308 (my probe PASSED, on output that
+was not the thing being probed), and I repeated it inside the same session that re-read R308.
+
+The rerun then hit a SECOND version of the same disease. It worked, but ONS rate-limited it:
+192 of 337 requests returned 429, so the grammar table it printed covers 145 datasets. The
+numbers in it are a LOWER BOUND, not a census, and the commit message says so. A partial sweep
+that looks like a complete one is exactly what R246 is about ("measure what the run actually
+attempted"), and the temptation to quote `calendar-years 16, yyyy-qq 2, ...` as if it were the
+whole catalogue was real.
+
+THE RULE I SHOULD HAVE APPLIED: before trusting a sweep, look at its failure count, not just
+its results. A sweep reports two numbers — what it found and what it could not reach — and only
+the second one tells you whether the first is a measurement or a sample.
+
+Related: R308, R246, R296.
