@@ -52,6 +52,12 @@ trusting ANY number I produced, check these five things — each one cost real t
   by the size of the number. [R320, R322, R327]
 - `obs_count` means "rows this run" on a productive run and "whole store" on a quiet one, so a
   healthy source can appear to lose 168M rows. Count the store. [R326]
+- **A date axis that looks MIS-SELECTED is usually an axis that could not be PARSED.** A parser
+  returning None does not abstain, it votes for every other column: SCB's `Tid` held
+  `2011-2012` and `2025V01`, no grammar read either, so the axis scored zero and `Region`
+  (municipality codes 0114..2584) won — years 114..2026. Check the right axis parses before
+  concluding anything about selection, and after any selection fix assert the table still
+  yields ROWS: "no impossible dates" is also satisfied by having no data at all. [R331]
 
 ### 2026-08-04 session (R312-R327), compressed
 
@@ -8848,3 +8854,48 @@ make while chasing a data-repair.
 **Rule.** A path constant that can go stale must be derived from the code's own location, or must
 fail loudly. And an audit tool must report its DENOMINATOR: "0 defects found in 0 files examined"
 is not a result. Related: R326, R231, R0 check #4.
+
+
+### R331 — a missing date grammar does not produce missing data, it produces confident wrong data
+
+**What happened.** Five SCB tables held 87,358 rows dated to years 114..2026. The obvious reading
+— "the parser picked the wrong dimension" — is right about the symptom and wrong about the cause.
+SCB's metadata says every one of these tables has a proper `Tid` dimension, correctly flagged
+`time=true`:
+
+    TABIRH3/4/5         Tid n=91  '2011-2012','2011-2013',...   multi-year windows
+    Medellivsl          Tid n=24  '1998-2002','1999-2003',...   5-year windows
+    DodaVeckaRegionCKM  Tid n=74  '2025V01','2025V02',...       weeks (V = vecka)
+
+`parse_date` handled `2023W01` but not `2025V01`, and nothing handled `yyyy-yyyy`. So every value
+on the correct axis returned None, that axis scored a ZERO parse-rate, and the resolver fell
+through to whatever else looked numeric — `Region`, whose Swedish municipality codes run
+**0114..2584**. Those became the years 114..2026. The gap in the grammar chose the wrong axis; I
+had been reading the wrong axis as the bug.
+
+**The two failure modes are the same gap at different times.** Once the sanity guards landed
+(`is_time_dim`'s 1900..cur+2, `resolve_time_dim`'s sane bound) Region could no longer be selected
+— so the tables stopped fabricating and started returning **0 rows**, which is silent: an empty
+table is classified `empty`, and `empty` merely holds the source at `partial`. Same missing
+grammar, first loud and wrong, then quiet and wrong. statfin's `12tc.px` is the same story with
+`Koulutus` (522 education codes, 0011..9999).
+
+**What I nearly did instead.** The store's dates pointed at a bad axis, so the natural fix is a
+re-pull. A re-pull alone would have written 0 rows for all five tables and looked like a success —
+the impossible dates would be gone. The tables would simply have ceased to exist, and nothing in
+the pipeline reports that.
+
+**Fixed.** Two grammars added, both anchored on SCB's own published values rather than invented:
+`yyyy-yyyy` -> the year the window OPENS (same convention as ons_uk's `yyyy-yy` and
+`mmm-mmm-yyyy`, so overlapping windows stay monotonic), and `[WV]` for weeks. Verified live on all
+five: 91 / 91 / 91 / 74 / 14,974 rows, zero out-of-range, and the control table unchanged at 411.
+
+**Did NOT touch** `is_time_dim`'s bound or `resolve_time_dim`. They already work, and R318 was
+exactly the mistake of loosening a working gate for a defect that did not exist.
+
+**Rule.** When a date axis looks mis-selected, check whether the RIGHT axis can be parsed at all
+before concluding anything about selection. A parser that returns None does not abstain — it votes
+for every other column. And after a selection fix, assert the table still yields ROWS: "no
+impossible dates" is also satisfied by having no data.
+
+Related: R22 (a selection fix needs a re-pull), R89 (ons_uk's time grammars), R303.
