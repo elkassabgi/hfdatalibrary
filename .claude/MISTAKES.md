@@ -102,6 +102,17 @@ trusting ANY number I produced, check these five things — each one cost real t
    read through the SAME layer, and remember that a comment asserting a behaviour ("written next
    to the parquet") is not a check of it.
 
+12. **"Deployed" is a state of the RUNNING SYSTEM, not of the repository — and a new check must be
+   shown it can FAIL.** R345: I reported 425,462 series "SERVED" and "live" across three tasks
+   while the worker holding them had not been deployed since 2026-08-02 and nothing in
+   `.github/workflows` deploys it; my verification read the constant out of the local source
+   file, so it went green the moment I edited text. If committing is the last step you perform,
+   find out what turns a commit into a deployment. R346: the replacement probe I wrote returned
+   True for a source id I made up, because auth answers 401 before the migration gate ever runs
+   — I had swapped one always-yes check for another, and only a negative control caught it.
+   Before trusting a check, feed it something that MUST fail, and verify your control really is
+   negative.
+
 **WRITING IT DOWN IS THE EASY HALF — three failures of the READ path in one night.** R328: sixteen
 ledger entries, zero digest lines, so the lessons were invisible the same evening. R330: the
 re-pull toolchain aimed at a dead drive and reported `0 corrupt`. R332: `gen_runbook`'s ledger
@@ -9513,3 +9524,43 @@ reachable. Scheduled they are; reachable they were not.
 **Fixed.** Worker deployed; `/v1/sources` re-checked against the LIVE endpoint; the
 SUPPORTED_SOURCES check in verify_source_served.py changed to query the deployed worker instead
 of the local file, so it can never again go green on an edit alone.
+
+### R346 — my replacement for a broken check could not return False, and I nearly shipped it as the fix
+
+**The defect I was fixing.** Live `/v1/sources` listed 196 sources against 223 catalogued. Cause:
+`core/sync_catalog_d1.py` emits only `series` + `series_fts`, but the worker's SELECT_SOURCES is
+`FROM source s ... WHERE EXISTS (SELECT 1 FROM series se ...)` — it needs a `source` row too. So
+every source first catalogued after the last full `export_d1.py` landed in D1 fetchable and
+invisible: ids resolve, metadata answers, the CSV serves, and the source appears in no listing.
+Measured: **27 sources, all `imf_*`**, including the eight I proved "served" in #39. Nothing ever
+errored. This is the quiet sibling of [[R345]] — that one was undeployed, this one was deployed
+and unlistable, and both passed every check I had.
+
+**The mistake.** Replacing the false-green SUPPORTED_SOURCES check ([[R345]]), I wrote a probe
+that fetched `/v1/series/<id>.csv` and treated "not 501" as supported. It looked like a real
+live check — it hit the deployed API over the network. Then I ran it against a control:
+
+    zillow:ZHVI_US -> 401    ksh:xyz -> 401    not_a_real_source:abc -> 401    <real id> -> 401
+
+Auth runs BEFORE the migration gate, so **every** input returns 401 and the function returns
+True for all of them, including a source id I invented. I had replaced a check that always said
+yes with a different check that always said yes, and the only reason I know is that I ran a
+negative control before committing.
+
+The first control I tried didn't work either: I picked `imf_gfsbs_direct` as "not supported" and
+it came back supported — because it IS in SUPPORTED_SOURCES. Checking, **0 of 223 catalogued
+sources sit outside that set**, so no natural negative control existed and I had to fabricate one.
+
+**The rule.** *Before trusting a new check, feed it something that MUST fail. A check that has
+never returned False has not been tested — it has only been watched agreeing with you.* And when
+picking the negative control, VERIFY the control is actually negative; "a source I assume is
+unsupported" is not a control, it is a second assumption. Extends [[R338]] (an absence check needs
+a known-PRESENT control) to its mirror: a presence check needs a known-ABSENT one.
+
+**Fixed.** The probe now queries unauthenticated `/v1/sources`, which discriminates for real —
+`imf_bop_direct` True, `imf_cpi_direct` True, `zillow` False, `ksh` False, `not_a_real_source`
+False — with an explicit User-Agent, since urllib's default draws a 403 from the edge where curl
+gets 200. Its docstring states the scope honestly: it proves DISCOVERABILITY, not
+SUPPORTED_SOURCES membership, which no unauthenticated endpoint exposes. `sync_catalog_d1.py` now
+emits the parent `source` (and `license`) rows; the 27 were backfilled and live `/v1/sources`
+returns 223.
