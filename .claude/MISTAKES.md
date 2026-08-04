@@ -8623,3 +8623,48 @@ budget-limited by design and its clean success is blocked by the same stale cata
 35 sources.
 
 Related: R231, R246 (measure what the run attempted), R303.
+
+### R327 — I read a PROJECTION frontier as a staleness signal, and the system already knew better
+
+The runbook I had just generated showed cso with `last_obs_date: 5630-12-31`, and I treated it as
+a live defect in a source I had recorded as repaired. I checked the store — clean, 0 files past
+2200 — and then wrote this:
+
+    cso STORE true max obs_date : 2057-12-31
+    TRUE age of newest observation: -11473 days
+
+Ahmed stopped me: *"some data have expected future numbers or observations."* He was right, and
+the check settled it in one query. The file is literally `18_Population_Projections.parquet`,
+table `PEC26`, holding 333,360 rows across years 2030..2057 CONTIGUOUS. CSO Ireland publishes
+population projections to 2057. Nothing is wrong with it.
+
+TWO THINGS I SHOULD HAVE KNOWN, both already written down:
+
+1. `health.py` lines 221-223 already separate exactly this:
+       observed   = [v for v in obs_vals if v <= today]
+       frontier   = max(obs_vals)      # incl. projections, DISPLAY ONLY
+       newest_obs = max(observed)      # the recency signal
+   with a comment recording that 28 of 93 units legitimately report a future frontier. The
+   distinction I needed was in the file I had read twice that night for other reasons.
+
+2. `tools/audit_impossible_dates.py`'s bounds are 2200 and 1500 precisely so real projections
+   never trip them — its own docstring says a bound that flagged UN WPP "would be switched off
+   and protect nothing". My own two-sided rewrite of that tool, hours earlier, argued the same
+   thing. Then I hand-rolled a check without the bound and alarmed myself.
+
+WHAT DISTINGUISHES A DEFECT FROM A PROJECTION, and it is never the size of the number:
+  - projection: a CONTIGUOUS run of plausible years ending 20-80 years out, in a file/series
+    whose key says so (`Population_Projections`, `PEC26`, `rahvastik`).
+  - sentinel:   9999-12-31, 2999-12-31 — a single repeated value meaning "no end date".
+  - counter:    years 1, 2, 3 ... contiguous FROM 1. No projection starts at year 1.
+
+I re-checked the ~637,000 fabricated rows against this and the figure holds: scb's counts are
+rows BELOW year 1500 (its 440 rows above 2030, max 2070, are plausible Swedish projections and
+were never counted); stat_slovenia is a counter from year 1; the rest are 9999/2999/3005
+sentinels. But I checked that AFTER being asked, not before publishing the number.
+
+The durable fix is in the runbook rather than my head: every one of the 248 source files now
+carries the projection-vs-sentinel-vs-counter distinction, so the next session meets it before
+it "repairs" a legitimate forecast.
+
+Related: R320, R322, R318 (measuring with a different rule from the system's own).
