@@ -8229,3 +8229,40 @@ Corollary for parsing: print the first element and the top-level keys BEFORE fil
 name. `json.dumps(arr[0])` would have shown `"source": "abs"` immediately.
 
 Related: R308, R315, R296.
+
+### R317 — "pwt is 4 years behind" — one source id named the OLD product, and I read it as the library
+
+Triaging the health gate's permanent RED-DATA sources, I probed rug.nl and found PWT 11.0
+(published 2025-10-07) covers 1950-2023 while our `pwt` holds 2019. I filed that as a real gap:
+four years of missing data, one major version behind, needs a re-ingest.
+
+Then I opened the registry entry I was about to edit. Its own strategy_reason says
+"(Superseded by penn_world_table.)" and its adapter note says PWT 11.0 "writes a DIFFERENT dir —
+these are two distinct source_ids/dirs covering overlapping data". Measured:
+
+    source            last_obs      rows      objs  catalog rows
+    pwt               2019-12-31   389,098      1      7,159
+    penn_world_table  2023-12-31   418,397     42         60
+
+PWT 11.0 has been ingested since July. Nothing was behind. The probe was right about the
+PUBLISHER and I turned it into a claim about the LIBRARY without checking whether some other id
+already held it — which is task #81 / R289 exactly ("one id names two products"), a mistake I
+made earlier in THIS SESSION and wrote up.
+
+Two things I want to keep from it.
+
+First, the tell was in the file I was already editing. I read the registry entry to find where to
+insert a declaration and only then noticed the supersession note four lines above. Reading the
+entry FIRST is not extra work — it is the work.
+
+Second, the corrected picture is worse than the bug I thought I had, and I would have missed it:
+the catalogue serves 7,159 rows for the SUPERSEDED 10.0 vintage and 60 for current 11.0. A user
+browsing the library predominantly finds PWT 10.0. The freshness question was a false alarm; the
+product question underneath it is real, and only surfaced because the false alarm collapsed.
+
+The generalisable check, now applied to the rest of the class: before declaring a source stale OR
+complete, sweep the registry for a sibling id covering the same publisher. Done for the other
+four static sources — barro_lee, gppd, cepii_gravity have no sibling; the only other superseded
+pair in 141 entries is ksh/ksh_stadat, already handled in task #59.
+
+Related: R289 / #81 (same shape, same session), R73.
