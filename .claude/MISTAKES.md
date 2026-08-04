@@ -7,6 +7,52 @@ Cross-project lessons live in the mistake-ledger skill's global ledger.
 
 ## Rules Digest
 
+> **HOW TO USE THIS FILE.** Read THIS DIGEST — the 8,600 lines below it are the archive, not the
+> read-path. **Every new entry MUST add a digest line here in the same commit.** On 2026-08-04 I
+> wrote 16 entries (R312-R327) and added ZERO digest lines, so the lessons I had just learned were
+> invisible to the next session. Ahmed caught it. An archive nobody reads is a diary, not a control.
+
+### ⚠ R0 — THE ONE THAT KEEPS HAPPENING: my measurement's SHAPE, not my question
+
+Six of this session's sixteen entries are the same error wearing different clothes. Before
+trusting ANY number I produced, check these five things — each one cost real time:
+
+1. **Compute what the SYSTEM computes, or read its output.** Don't re-implement its rule.
+   R318: I widened a health-gate tolerance measured in CALENDAR days; the gate uses BUSINESS days
+   and had solved it three weeks earlier. I loosened a working gate on a class that did not exist.
+   R327: I called a PROJECTION frontier "staleness" when `health.py:221-223` already separates
+   `observed` from `frontier` — in a file I had read twice that night.
+2. **Read a long job's ARGV, not its progress.** R323: I watched `rekey_eurostat.py --dry-run`
+   for six hours and reported it as the repair. A dry run prints the same numbers as a real one.
+3. **A sweep reports TWO numbers — what it found and what it could not reach.** R315: a
+   337-request census on a URL I had already watched 404; then a rerun where 192 of 337 were
+   429s, making its table a lower bound, not a census. Read the failure count first.
+4. **When a probe reports ABSENCE, run it against something known PRESENT.** R316: I said a
+   source was missing from a list I had parsed with the wrong field name — every element was
+   `None`, so EVERY source would have read as missing.
+5. **A one-sided test on a two-sided failure gives a number that LOOKS like a measurement.**
+   R322: "273,980 fabricated rows" was under half — the audit only tested the future, and a
+   counter-as-year starts at 1. The real figure was ~637,000 across seven sources.
+
+**And the two that decide whether a number is even a defect:**
+- A FUTURE date is usually a legitimate PROJECTION (CSO to 2057, Estonia 2085, UN WPP 2101).
+  A defect is a SENTINEL (9999/2999 repeated) or a COUNTER (contiguous FROM year 1). Never judge
+  by the size of the number. [R320, R322, R327]
+- `obs_count` means "rows this run" on a productive run and "whole store" on a quiet one, so a
+  healthy source can appear to lose 168M rows. Count the store. [R326]
+
+### 2026-08-04 session (R312-R327), compressed
+
+- R312. Dev and CI ran different MAJORS of pandas AND pyarrow. "Verified locally" is only as good as dev matching CI; cap majors in requirements-updater.txt.
+- R313. "Cleared by behaviour" is only as good as the STATE you observed. A self-draining queue and a truncation differ only when an item at the head never completes — test that state.
+- R314. Two docs disagreed about a store; I believed the file under my cursor. Query the STORE. And a re-key check that compares IDENTIFIERS misses a bug in the DATES — compare (key, date) pairs.
+- R317. One id can name two products: "pwt is 4 years behind" was false — PWT 11.0 ships as `penn_world_table`. Sweep for a sibling id before calling a source stale OR complete.
+- R319. Never gate a commit on a piped pytest — `pytest | tail && git commit` exits on tail. Capture `$?`. And pin the PROPERTY, not a constant copied from the code under test.
+- R321. A red status has a DATE: bcrp's crash predated my fix by 13h41m and it had not run since. Also: grepping one exception type missed the same defect raising a different one.
+- R324. A NameError in a rarely-taken branch is invisible to a green suite. Import the module you edited.
+- R325. A subagent's number arrives formatted and confident. Reproduce it before acting: "99% discontinued" measured 87.9%, with 7 live tables.
+
+
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
 
 - R1. Never push the local hfdatalibrary tree — it holds Ahmed's WIP and predates worktree-pushed commits; edit via a fresh worktree off origin/main. [M-20260713-01]
@@ -8668,3 +8714,40 @@ carries the projection-vs-sentinel-vs-counter distinction, so the next session m
 it "repairs" a legitimate forecast.
 
 Related: R320, R322, R318 (measuring with a different rule from the system's own).
+
+### R328 — I wrote sixteen ledger entries and updated the READ-PATH zero times
+
+Ahmed: *"it's sad that you dont read the document that i told you to write so that you dont make
+these mistakes, you write in the mistakes.md file but you dont read it."*
+
+He is right, and it is measurable. This file opens with a Rules Digest — the part meant to be
+read, because the archive beneath it is 8,670 lines and 913 KB. I appended sixteen entries
+tonight (R312-R327). Digest lines added: **zero**. So every lesson I learned today was invisible
+to the next session, and to me twenty minutes after writing it.
+
+The proof is R327. The projection-vs-staleness distinction was already written down — in
+`health.py:221-223`, with a comment recording that 28 of 93 units legitimately report a future
+frontier — in a file I had opened twice that same night for other reasons. I still called cso's
+2057 projection a defect. Ahmed had to stop me.
+
+WHY IT HAPPENED, mechanically rather than as an apology. Appending is cheap and feels like
+completion: the entry is written, the lesson is "captured", the turn moves on. Updating the
+digest requires deciding what the lesson COMPRESSES to, which is real work and produces nothing
+visible. So the archive grows and the read-path calcifies. An archive nobody reads is a diary,
+not a control — and I was grading myself on the diary.
+
+WHAT CHANGED, so this is not another promise:
+  1. The digest now opens with an instruction that every new entry MUST add a digest line IN THE
+     SAME COMMIT, with this failure named as the reason.
+  2. The six measurement-shape errors (R315, R316, R318, R322, R323, R327) are promoted to a
+     single rule R0 at the very top, because they are one lesson in six costumes and six
+     scattered entries is how a pattern stays invisible.
+  3. The other ten are compressed to one line each under a dated heading.
+
+The thing I should sit with: I generated a 248-file runbook TONIGHT whose entire premise is that
+knowledge must live where the next person will actually find it, while failing to apply that to
+the one file I was writing all night. The runbook exists because Ahmed asked for it, not because
+I noticed.
+
+Related: R202 (I had written the lesson into a comment and never into an enforcement) — the same
+failure, 126 entries earlier.
