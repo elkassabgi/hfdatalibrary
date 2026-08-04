@@ -8078,3 +8078,39 @@ upgrading now because five long jobs are running and swapping site-packages unde
 is its own incident. Until then, "verified locally" still carries an asterisk.
 
 Related: R296 (right tool, wrong store), R308 (the environment as the defect), R311.
+
+### R313 — "R190 class CLOSED, every other candidate cleared by BEHAVIOUR not grep" — ons_uk was in the class
+
+Task #83 closed the R190 sweep (a bound over a fixed order is a truncation, not a budget) with
+worldbank_esg and adb fixed and the explicit boast that every remaining candidate had been cleared
+by behaviour rather than by grep. Today ons_uk turned out to be squarely in that class:
+
+    batch = todo[:MAX_PER_RUN]        # fixed prefix of a stable catalog order, no rotation
+
+I record it because of WHY the behaviour check passed it, which is more interesting than the miss.
+ons_uk looks self-draining and, on a healthy source, IS: a dataset that publishes gets its vintage
+advanced and drops out of `todo`, so the prefix slides forward on its own. No rotation needed. That
+is a real pattern and my sweep was right to accept it.
+
+It degenerates only when a unit CANNOT publish. Then it never advances, never leaves `todo`, and
+holds its slot forever. So the defect is invisible in the mechanism and visible only in the
+interaction between the mechanism and a second, unrelated failure — here a parser that could not
+read ONS's time codes. MEASURED: 10 of the 12 slots were held by permanent non-publishers, 297
+datasets were pending, and the queue drained at about 2 per run while those 10 re-downloaded
+themselves daily. Roughly 143 runs to finish, with 83% of every run's bandwidth spent re-fetching
+data it would discard again.
+
+THE LESSON, and it generalises past R190: "cleared by behaviour" is only as good as the STATE the
+behaviour was observed in. I checked whether each candidate's window advances. It does — when
+everything succeeds. I never checked what the window does when a unit fails forever, which is the
+only state in which a self-draining queue and a truncation differ. A conditional defect passes any
+check run outside its condition. Same family as R310 (bcrp crashed six hours after a fix declared
+it safe) and R306 (grepped the label, missed the behaviour), one level more subtle: the behaviour
+here was genuinely correct, in the case I happened to exercise.
+
+The concrete correction: when clearing a queue-shaped mechanism, the test is not "does the window
+move" but "does the window move when the item at its head never completes". That is now pinned as
+test_permanent_blockers_do_not_starve_the_rest, which fails on the old prefix and passes on the
+rotation.
+
+Related: R190, R83/#83 (the claim this corrects), R306, R310, R311.
