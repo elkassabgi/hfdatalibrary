@@ -61,7 +61,14 @@ trusting ANY number I produced, check these five things — each one cost real t
    later runs local has never seen. `--push-state` would have "fixed" it by discarding CI's runs,
    causing the lost update I was hunting. Diff BOTH directions with counts before reconciling, and
    always name WHICH database you are holding.
-7. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
+7. **To measure completeness, enumerate from the side that can be OVER-complete.** R341: I closed
+   noaa's re-derive on "400/400 present" — a sample drawn from the catalogue, which cannot see the
+   1,998 series the store had gained since. The sampling frame WAS the thing with the hole in it.
+   The reported "missing 1,943" was the NET of 1,998 uncatalogued and 55 sidecar-omitted: two
+   defects with opposite fixes, cancelled into one figure matching neither. Split every difference
+   into both directions before acting, and note the obvious remedy here (re-run the cataloguer)
+   would have created 1,998 listed-but-404 rows.
+8. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
    stat_estonia's 18-minute deadline "is NOT working" and cited three 45-minute kills — all of
    them produced by code committed BEFORE the two commits that fixed it. The current cap had never
    run once. "Still broken" and "never tried" look identical in a table of past runs, and only one
@@ -9283,3 +9290,40 @@ holding — "the state" is two files here, and a sentence that does not say whic
 measurement.
 
 Related: R296 (the half of this I already had), R330 (both directions, with counts), R339.
+
+### R341 — a spot-check of what is PRESENT cannot measure what is ABSENT
+
+I retired noaa's re-derive (#79) on this evidence: "400/400 present, 60/60 byte-identical". Both
+numbers are true and both were computed over series the CATALOGUE already lists. Neither can see
+a series the catalogue does not list, and that was exactly the population that had grown:
+
+    store (sidecars)  3,137,816      catalogue  3,135,873
+    in store, not catalogued  1,998  -> 0 of 1,998 had a CSV object in R2
+    catalogued, not in store     55  -> 55 of 55 DID have one
+
+noaa's store had gained series after its bulk derive — the new objects carry 2026-05 and 2026-06
+observations — and nothing re-derived the additions. A sample drawn from the catalogue is
+structurally incapable of finding them: the sampling frame IS the thing with the hole in it.
+
+**The reported number hid both halves.** reconcile_serving printed "missing 1,943", which is the
+NET of 1,998 and 55. Two different defects with opposite fixes, netted into one figure that
+matches neither. Same shape as R322: a one-sided view of a two-sided failure.
+
+**And the obvious remedy would have made it worse.** `catalog_noaa.py` projects the catalogue
+from the sidecars, so running it first would have written 1,998 rows whose downloads 404 —
+"listed and undownloadable", which that tool's own docstring calls worse than being invisible.
+Its staleness check could not have stopped it: it tests the key FORMAT
+(`substr(series_id,1,10) not in ('noaa:gsom:','noaa:gsoy:')`), not membership. I ran its dry run
+and it offered to write all 3,137,816 rows. The only thing between that and shipping it was
+checking, first, whether the 1,998 actually existed as downloads — all 1,998, with a
+known-present control, not a sample.
+
+Correct order, now the tool: DERIVE (1,998 written, re-check MISSING 0) → verify every object →
+CATALOGUE (3,137,871 rows, every one downloadable).
+
+**Rule.** To measure completeness, enumerate from the side that can be over-complete — the STORE
+— and check membership in the side you are validating. A frame drawn from the catalogue can only
+ever confirm the catalogue. And before acting on a difference, split it: report both directions
+with their own counts, because a net figure is not a defect, it is two defects that cancelled.
+
+Related: R322 (one-sided test), R330 (no denominator, no result), R338 (control in the probe).
