@@ -22,8 +22,11 @@ trusting ANY number I produced, check these five things — each one cost real t
    and had solved it three weeks earlier. I loosened a working gate on a class that did not exist.
    R327: I called a PROJECTION frontier "staleness" when `health.py:221-223` already separates
    `observed` from `frontier` — in a file I had read twice that night.
-2. **Read a long job's ARGV, not its progress.** R323: I watched `rekey_eurostat.py --dry-run`
-   for six hours and reported it as the repair. A dry run prints the same numbers as a real one.
+2. **Read a long job's ARGV, not its progress — and never pipe it to `tail`.** R323: I watched
+   `rekey_eurostat.py --dry-run` for six hours and reported it as the repair; a dry run prints the
+   same numbers as a real one. R336: `cmd | tail -18` shows NOTHING until the process exits, so a
+   healthy job looks stalled — I invented a mechanism for the silence and killed the job, twice in
+   one session. If a job is silent, suspect the plumbing before the program.
 3. **A sweep reports TWO numbers — what it found and what it could not reach. No denominator, no
    result.** R315: a 337-request census on a URL I had already watched 404; then a rerun where 192
    of 337 were 429s, making its table a lower bound, not a census. Read the failure count first.
@@ -9088,3 +9091,37 @@ verification and a fact you established personally disagree, the verification is
 
 Related: R296/R36 (verify against the store you serve), R330 (a repair tool aimed at a dead path
 reporting `0 corrupt`), R334 (the prune this was supposed to confirm).
+
+
+### R336 — I piped a long job to `tail`, then diagnosed its silence as a stall. Twice.
+
+**What happened.** Deriving 7,163 PWT CSVs, I ran
+
+    python -m core.derive_csv --source penn_world_table --bucket econ-data --workers 8 \
+        --skip-existing 2>&1 | tail -18
+
+saw no output for several minutes, reasoned that `--skip-existing` must be listing the whole
+`series/` prefix (millions of keys) to skip a handful, and KILLED it. The restart without
+`--skip-existing` produced no output either — because `tail` buffers everything until the process
+exits. The silence was mine. Nothing was stalling.
+
+Then the correction compounded: `--skip-existing` was in fact the RIGHT flag. R2 already held
+5,003 of the 7,163 objects, which I discovered a minute later by listing the prefix directly. I
+had assumed the CSVs were missing and the catalogue was fine; the truth was the reverse.
+
+**This is the second time in one session.** `tools/repull_worklist.py`, run the same way earlier,
+also showed 0 bytes for twenty minutes and I checked whether the process was alive rather than
+recognising the pipe. Same shell habit, same wrong inference, hours apart.
+
+**Why it is worth an entry rather than a shrug.** A silent job invites a story, and the story I
+reach for is always a plausible mechanism ("it must be listing the prefix") rather than the dull
+truth ("I cannot see anything because of how I ran it"). That is the R309 shape — acting on a
+mechanism never checked — with the twist that the missing evidence was withheld by my own command.
+Killing a healthy job is cheap here (idempotent PUTs); the same reflex against a migration or a
+prune is not.
+
+**Rule.** Do not pipe a long-running job to `tail`/`head` and then reason about its output. Let it
+write in full — the harness already captures it to a file and reports the exit — and read the tail
+of THAT. If a job is genuinely silent, the first hypothesis is the plumbing, not the program.
+
+Related: R323 (six hours watching a `--dry-run`), R309, R330.
