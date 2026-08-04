@@ -733,3 +733,20 @@ passed 400,000 on a partial listing.
 noaa is complete AND current. New tool `tools/sample_source_coverage.py` — random over the whole
 key space, Wilson interval, prints its denominator, and says outright that it cannot see orphans.
 Control: penn_world_table 120/120 against a known-exact 7,163/7,163.
+
+### …and eia settles it outright
+
+    eia   317,619,508 rows -> 3,846,986 distinct series, CATALOGUED 7
+          (measured over 30 of its 60 files — the true count is HIGHER)
+
+    eia alone   = 218% of all remaining D1 headroom
+    vdem alone  =  83%
+    bea alone   =  52%
+    the three   = 6,225,728 series = 352% of what is left, with eia half-counted
+
+**There is no ordering of these that fits.** Emptying the entire headroom on one still fails for
+eia, which needs ~2.2x the remaining space by itself. That permanently closes the "which dark
+store first?" framing — it was never a prioritisation problem.
+
+At TABLE grain the same backlog is a few thousand rows: eia's 3.8M series live in 60 files,
+vdem's 1.47M in 2.
