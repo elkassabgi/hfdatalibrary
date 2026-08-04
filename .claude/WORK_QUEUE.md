@@ -750,3 +750,18 @@ store first?" framing — it was never a prioritisation problem.
 
 At TABLE grain the same backlog is a few thousand rows: eia's 3.8M series live in 60 files,
 vdem's 1.47M in 2.
+
+### Fabricated dates — final audit, all 7 sources, backend genuinely set to r2
+
+    scb            0 affected        statfin   0 affected        hagstofa  0 affected
+    stat_slovenia  0 affected        cbs_nl    0 affected
+    oecd           2 of 1,434 files  max 2999-12-31   the PUBLISHER's placeholder (guard shipped)
+    eurostat       2 of 7,754 files  max 9999-12-31   publisher sentinel + freq=NAP
+
+**5 of 7 clean.** The remaining 26,072 rows are not our fabrication — OECD publishes `2999` in its
+own TIME_PERIOD column and Eurostat returns `time: ['9999']` with `freq: 'NAP'` for genuinely
+time-invariant "long-term annual average" tables. Parse-time guards stop new ones; the legacy rows
+are a hosting decision, not a bug.
+
+(The earlier oecd/eurostat/cbs_nl figures in this file came from the broken `--r2` path and are
+superseded by these.)
