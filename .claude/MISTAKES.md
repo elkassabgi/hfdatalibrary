@@ -8507,3 +8507,41 @@ dry run and a real run print the same numbers — that is what makes a dry run u
 makes this mistake easy. `Get-CimInstance Win32_Process | select CommandLine` is four seconds.
 
 Related: R246 (measure what the run attempted), R296 (right tool, wrong store), R318.
+
+### R324 — two I caught before shipping, recorded anyway because "caught in time" is luck talking
+
+Neither of these reached production. Both would have, on the next affected run, and in each case
+what saved me was a check I nearly did not run.
+
+**A NameError in code I had just written and reviewed.** Wiring the impossible-date aggregate, I
+added `merge.impossible_reset()` and `merge.impossible_report()` to updater/orchestrate.py. That
+module does not import merge. I had read the file's import block earlier in the same session for
+a different reason, written both call sites, re-read my own diff, and still shipped
+`NameError: name 'merge' is not defined` into the working tree. It surfaced only because I ran
+`python -c "from updater import orchestrate"` as an afterthought — the whole 213-test suite would
+NOT have caught it, because no test exercises that branch of the orchestrator's finally-block.
+Pinned now by a test asserting `orchestrate.merge is merge`, which is a strange-looking test and
+exactly the one that was missing.
+
+The lesson is not "check your imports". It is that a module-level name error in a rarely-taken
+branch is invisible to a green suite, and I treat green as proof more than I should.
+
+**A test that asserted an implementation trace instead of the property.** For the eurostat guard
+I wrote:
+
+    assert max(fb.reads) >= n - 1, "must look at the END of the list, not just the head"
+
+and it failed, correctly: the guard stops at the FIRST offender, so on a store whose tail is
+unconverted it raises at index 5815 and never reads 7753. My assertion described the sequence of
+reads a passing run happens to make, not the behaviour I cared about — that the sample reaches far
+past the head. Same family as R319, where a test hardcoded `_named`'s cap and went red when the
+cap legitimately moved: both times I pinned an incidental fact and called it a contract.
+
+WHY RECORD THESE AT ALL. The standing order says every mistake, and there is a specific reason
+not to grade on outcome here: I did not catch either by process. The import survived a diff review
+and a full green suite; the assertion survived my own reasoning about what the guard does. Each
+was caught by one extra command I could easily have skipped, at the end of a very long session.
+The next one like this gets shipped.
+
+Related: R319 (pin the property, read the constant), R318 (a change that passed 198 tests because
+nothing tested the thing it changed).
