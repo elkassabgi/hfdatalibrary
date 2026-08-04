@@ -8308,3 +8308,37 @@ reimplemented `age` instead of calling `_business_age_days`, and I reimplemented
 instead of reading the gate's own 45-line list.
 
 Related: R315, R316, R317, R248 (did the gate assess anything before you believed it).
+
+### R319 — I pushed a red test to main because `pytest | tail && git commit` gates on tail
+
+I raised _named's offender cap 6 -> 20, ran the suite, and committed and pushed in one command:
+
+    timeout 1800 python -m pytest -q 2>&1 | tail -3 && git add -A ... && git commit ... && git push
+
+The suite FAILED — `1 failed, 205 passed` was printed right there in my own output — and the
+push went ahead anyway, because a shell pipeline exits with the status of its LAST element and
+`tail` always succeeds. `&&` was gating on tail, not on pytest. I have used this exact pattern
+all session; it worked only because nothing had failed yet.
+
+Main carried a failing test until the next run caught it, about four minutes.
+
+The failure itself was benign and my own: test_deferred_units_are_named built 9 deferred ids and
+asserted "+N more", which silently encoded the cap of the day. Raising the cap made a
+still-correct test red. Fixed by deriving the count from `_named.__defaults__` and asserting BOTH
+directions — cap+3 states its elision, exactly cap claims none — so the property survives the
+next cap change instead of pinning a number.
+
+TWO SEPARATE LESSONS and the second is the one that bites:
+
+1. A test that hardcodes a constant from the code under test will go red when that constant
+   legitimately moves. Pin the PROPERTY, read the constant.
+
+2. Never gate a commit on a piped pytest. `$?` after a pipeline is the last command's. Capture
+   it: `pytest -q > out; rc=$?; ... if [ $rc -ne 0 ]`. I now do this, and it is what caught the
+   failure on the retry.
+
+The uncomfortable part is that the evidence was on my screen — "1 failed" in the tail output I
+asked for — and the push scrolled past it. An automated gate I trusted was not gating, which is
+this session's recurring theme in yet another costume (R315 sweep, R316 field name, R318 ruler).
+
+Related: R318, R42 (verify a push against the branch ref, not HEAD).
