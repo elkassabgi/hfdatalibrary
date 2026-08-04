@@ -8387,3 +8387,43 @@ on. Same symptom, different cause, different fix; the re-key running now should 
 
 Related: R73, R265, R288 (do not patch dates — re-pull), R296, R313 (cleared by behaviour, in one
 state only).
+
+### R321 — I read a stale state row as a fresh crash, and my earlier sweep had stepped over the live bug
+
+Two errors, in opposite directions, about the same source.
+
+**I invented a crash.** bcrp sat at `transient_fail` with
+`UNEXPECTED:AttributeError("'str' object has no attribute 'isoformat'")` and I reported it as
+"bcrp crashed AGAIN despite my R310 fix — urgent". It had not. The crash is stamped
+2026-08-03T09:33:30Z; the fix (15f49f1c) landed 2026-08-03T23:14:40Z, thirteen hours and
+forty-one minutes LATER. The `runs` table has no bcrp row after id 447 and `last_attempt_utc`
+is still that same timestamp, so it has not been attempted since. The red was a stale pre-fix
+row and I read a status without reading its DATE — R246 again ("scheduled is not attempted"),
+this time as "failed once is not failing now".
+
+**And there really was a bug, one my own sweep had walked past.** bcrp.py:343:
+
+    genuinely_new = any((di > last) for di in d)
+    TypeError: '>' not supported between 'datetime.date' and 'str'
+
+`di` is a dt.date; `last` comes from _max_by_key, which mints ISO strings. R310 fixed line 276
+and line 363 — and 343 sits BETWEEN them in execution order. I had grepped for the
+AttributeError, and this site raises a TypeError. One defect, two exception types, and a
+symptom-shaped search can only ever find the symptom it was shaped from.
+
+THE ROOT ENABLER was a lying type hint: `_per_series_last(path) -> dict[str, dt.date]` returning
+strings. Three separate sites read that signature, believed it, and broke. An annotation is
+documentation that looks like a guarantee, and nothing in the pipeline checks it.
+
+WHAT ACTUALLY FOUND IT: a subagent I had asked to investigate, which ran the real update()
+against a copy of the production parquet instead of reading code. Behaviour found in one run
+what two of my greps had missed — R306's lesson, which I wrote and then did not apply here.
+
+Class then swept properly, by behaviour: all five _max_by_key consumers (bcrp, boc, riksbank,
+scb, tcmb). Four were already handled; the two comparisons that still looked risky are clean
+(scb.py:412 normalises in every branch; tcmb.py:203's dict is built locally from dates only).
+Pinned with a NEGATIVE CONTROL asserting `date > str` still raises, so the fix is demonstrably
+load-bearing rather than decorative.
+
+Related: R310 (the sweep that missed it), R306 (grep the label, miss the behaviour), R246,
+R317 (also a false premise, also corrected by looking at what I was about to edit).
