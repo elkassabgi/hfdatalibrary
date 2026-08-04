@@ -8469,3 +8469,41 @@ deep-history source allowlisted BY NAME AND REASON so widening it later is a dec
 makes rather than a net that quietly grows.
 
 Related: R320 (same class, twelve hours earlier), R288 (do not patch dates — re-pull), R265.
+
+### R323 — I watched a --dry-run for six hours and told the user it was fixing eurostat
+
+I reported, twice and in a task note, that "the eurostat re-key is RUNNING (5,300/7,754, zero
+conflicts)" with the clear implication that the gate would lift when it finished. An investigating
+agent read the process table:
+
+    PID 26252  python.exe -u tools/rekey_eurostat.py --dry-run
+
+and the tool: `blob.write_table_atomic` is reached only under `if a.apply`. The run I had been
+quoting progress from writes NOTHING. When it completes, zero files will have been re-keyed and
+the gate will fire exactly as before. I had been treating a MEASUREMENT as a REPAIR for six hours,
+and I am the one who launched it.
+
+The progress line I kept quoting even says so — `rows=1,616,434,841 -> 1,614,124,788` is what the
+migration WOULD collapse, in the subjunctive. I read the arrow as an accomplishment.
+
+TWO THINGS THIS COST, and the second is the reason it matters:
+
+1. Six hours of "eurostat is being fixed" that was six hours of eurostat not being fixed. Cheap.
+
+2. It nearly hid a real corruption bug. Because I believed the store was being converted, I had
+   no reason to look at what happens when a conversion is INTERRUPTED. The guard sampled
+   `blob.list_parquets(out_dir)[:5]` — the first five of a SORTED list that the migration walks in
+   the SAME order — so a partial --apply converts exactly those five and disarms the guard at
+   0.06% of 7,754 files. The next daily tick then merges stable-key fetches into ~3,300 unstable
+   files under two key schemes, which is the precise duplication the guard exists to prevent and
+   which never-shrink cannot catch. And the interrupt is OBSERVED: the tool's own comment records
+   a pass dying at file 4,403 of 7,754 after four hours.
+
+   So the fix I was waiting on would, if it had been the real one, have had a decent chance of
+   corrupting the store on the way.
+
+THE RULE: when a long job is the thing you are waiting on, read its ARGV, not its progress. A
+dry run and a real run print the same numbers — that is what makes a dry run useful and what
+makes this mistake easy. `Get-CimInstance Win32_Process | select CommandLine` is four seconds.
+
+Related: R246 (measure what the run attempted), R296 (right tool, wrong store), R318.
