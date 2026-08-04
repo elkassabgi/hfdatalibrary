@@ -694,3 +694,42 @@ behaviour and migrate one at a time. Verified live in both directions: 05L1027S 
 
 **Still pending:** 05W's re-pull must return ~1,463 rows. **0 would mean the ten real LETO tables
 were lost too** — that is the number to check, not "did the run go green".
+
+## The dark-store question is now SETTLED by arithmetic (2026-08-04)
+
+    D1 headroom                    ~1,767,976 series rows, TOTAL, across every source ever
+    vdem   1,465,759 dark series   = 83% of it   (vdem.parquet 783,100 + vparty 682,659,
+                                                  counted exactly, CATALOGUED: 0)
+    bea      912,990 dark series   = 52% of it
+    together 2,378,749             = 134% of what remains
+
+**They cannot both be catalogued at series grain.** Not "should not" — cannot. And that is before
+eia or anything else. The 75.7 GB figure the old note carried is ~95M rows at the measured
+density, **9.5x the entire D1 limit**.
+
+So the options are exactly: (1) table/flow grain — one row per table, series enumerated at
+download time; (2) raise the limit, and even then the full dark surface needs ~10x the current
+ceiling; or (3) deliberately spend the 1.77M on a chosen subset, understanding it is a permanent
+allocation rather than a first instalment. That is Ahmed's call and it is now a decision with
+numbers attached instead of a standing worry.
+
+**Cheap fills should not wait on it.** PWT's entire dark set was 7,103 rows — 0.4% of headroom —
+and took the current vintage from 0.8% visible to 100%.
+
+**Schema trap for whoever builds the table-grain path:** `eia` does NOT use `series_key`. Its
+parquets are `(series_id, obs_date, value, period, freq)` while vdem/bea/most others are
+`(series_key, obs_date, value)`. A sweep that assumes the common schema raises KeyError on eia —
+mine did.
+
+## noaa's re-derive was retired by measuring it (2026-08-04)
+
+`#79` carried "re-derive at 31.1%", reading as ~69% of 3,135,873 objects outstanding — a ~55-hour
+job. It had never been re-tested because `verify_source_served.py` is O(objects) and `series/noaa`
+passed 400,000 on a partial listing.
+
+    presence   400/400 sampled present   100.0%  CI [99.0%, 100%]  -> at most ~29,830 missing
+    freshness   60/60 byte-identical to a fresh derive, 0 stale
+
+noaa is complete AND current. New tool `tools/sample_source_coverage.py` — random over the whole
+key space, Wilson interval, prints its denominator, and says outright that it cannot see orphans.
+Control: penn_world_table 120/120 against a known-exact 7,163/7,163.
