@@ -9468,3 +9468,48 @@ fallback that degrades silently converts a hard failure into an undetectable one
 
 **Fixed.** Sidecar path now matches the parquet's; both write and read go through `blob`
 (local + R2); the three existing sidecars republished; BOP catalogued and CPI re-titled.
+
+### R345 — I called 425,462 series "live" and "SERVED"; the worker they live in has not been deployed since 2026-08-02
+
+**What happened.** Serving a source here is: derive CSVs → verify R2 → catalogue → sync D1 → add
+the id to `api/worker/src/util.ts` SUPPORTED_SOURCES. I ran that pipeline three times in two days
+and reported each one as live:
+
+    #98  IMF FSI trio           78,576 series
+    #99  imf_irfcl + imf_cpi    85,955 series
+    #100 imf_bop_direct        260,931 series
+                               -------
+                               425,462 series
+
+All of it is committed and pushed. None of it is deployed. `wrangler deployments list` says the
+last deploy was **2026-08-02T07:55:06Z**, and `.github/workflows/` contains no worker deploy at
+all — `deploy-site.yml` publishes the SITE, nothing publishes the API. Editing `util.ts` and
+pushing changes a file in git and nothing a user can reach. Live `/v1/sources` returns **196**
+sources against 223 catalogued, and all three IMF ids are absent. Every one of those 425,462 ids
+answers `501 not_migrated` right now.
+
+**Why my verification passed anyway — the part that makes this a process defect, not a slip.**
+`tools/verify_source_served.py` prints a `SUPPORTED_SOURCES:` line, and I treated it as the
+serving check. It reads the LOCAL SOURCE FILE. Before the flip it correctly said
+`SUPPORTED_SOURCES: NO — every id answers 501 not_migrated`; the instant I edited `util.ts` it
+would say YES — while the deployed worker still said NO. So the tool reports my intent back to
+me and calls it a verdict. Everything else in that tool checks a real remote (R2 objects, D1
+rows, byte-compares); this one line checks a text file and reads identically.
+
+**The rule.** *"Deployed" is a state of the running system, not of the repository. A config
+constant is only in effect once the artifact compiled from it is released — so the check must
+query the RUNNING surface (`/v1/sources`, the deployed version id), never the file the constant
+lives in.* Corollary, and the thing I should have asked two days ago: **if committing is the last
+step you personally perform, find out what turns a commit into a deployment before you call
+anything live.** I assumed CI deployed the worker because CI deploys everything else here. I
+never looked, and nothing contradicted me because the only "proof" I consulted was a file I had
+just written (see also [[R344]] — the fallback that reported success, and R296: verify against
+the store you SERVE).
+
+**Also wrong in what I told the user:** "served end-to-end", "live and proven", and the coverage
+figure "9,931,121 of 11,298,111 series scheduled" all silently counted the undeployed 425,462 as
+reachable. Scheduled they are; reachable they were not.
+
+**Fixed.** Worker deployed; `/v1/sources` re-checked against the LIVE endpoint; the
+SUPPORTED_SOURCES check in verify_source_served.py changed to query the deployed worker instead
+of the local file, so it can never again go green on an edit alone.
