@@ -8195,3 +8195,37 @@ its results. A sweep reports two numbers — what it found and what it could not
 the second one tells you whether the first is a measurement or a sample.
 
 Related: R308, R246, R296.
+
+### R316 — third probe-shape error in one session: I asserted a source was missing from a list I had parsed wrong
+
+Checking whether ons_uk survived its re-key on the live API, I ran:
+
+    ids = {x.get("id") for x in arr}        # arr = /v1/sources results
+    "ons_uk" in ids   ->  False
+
+and said so. The field is `source`, not `id`. Every element yielded None, so the set was {None} and
+EVERY source would have come back missing — including ones I had verified live hours earlier. A
+second script then iterated the response dict itself rather than `j["sources"]`, "found" 2 entries
+named `sources` and `total`, and paired that with a `util.ts` regex that matched 10 of its entries.
+It printed a tidy list of "10 sources absent from the live API" that was pure artifact.
+
+Three of these in one session — R315 (a 337-request census on a URL I had watched 404), the 429
+lower-bound, and now this. The common shape is not carelessness about the QUESTION, it is
+carelessness about the SHAPE OF THE ANSWER: I write the query, get output, and read the output as
+if the parse were free. It never is.
+
+What saved the last one was a CONTROL, and only because I reached for it: before reporting
+"ons_uk is catalogued but every series 404s" — which under Ahmed's standing no-metadata-only rule
+is a serious accusation — I ran the same route against noaa, fed_board and istat. All three 404
+too, and noaa is verified downloadable. So `/v1/series/{id}` is simply not the download route and
+there was no defect at all. Without that control I would have filed a false alarm against a rule
+the user cares about, with a plausible-looking measurement behind it.
+
+THE RULE, and it is cheap: when a probe reports ABSENCE, run it against something you already
+know is PRESENT. An absence is the one result that looks identical whether the data is missing or
+the probe is broken. A presence check costs one extra call and distinguishes them every time.
+
+Corollary for parsing: print the first element and the top-level keys BEFORE filtering on a field
+name. `json.dumps(arr[0])` would have shown `"source": "abs"` immediately.
+
+Related: R308, R315, R296.
