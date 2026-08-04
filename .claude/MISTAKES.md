@@ -46,6 +46,14 @@ trusting ANY number I produced, check these five things — each one cost real t
    R322: "273,980 fabricated rows" was under half — the audit only tested the future, and a
    counter-as-year starts at 1. The real figure was ~637,000 across seven sources.
 
+**WRITING IT DOWN IS THE EASY HALF — three failures of the READ path in one night.** R328: sixteen
+ledger entries, zero digest lines, so the lessons were invisible the same evening. R330: the
+re-pull toolchain aimed at a dead drive and reported `0 corrupt`. R332: `gen_runbook`'s ledger
+matcher was case-sensitive, so R331 — five SCB tables, the word "SCB" five times — attached to
+zero pages, and `scb.md` was the one page missing it. Each looked fine from the writing end. After
+writing anything meant to be read later, **read it back from where the reader stands, and pick the
+sample most likely to fail** (a spot-check that stops at the first pass is not a check).
+
 **And the two that decide whether a number is even a defect:**
 - A FUTURE date is usually a legitimate PROJECTION (CSO to 2057, Estonia 2085, UN WPP 2101).
   A defect is a SENTINEL (9999/2999 repeated) or a COUNTER (contiguous FROM year 1). Never judge
@@ -8899,3 +8907,33 @@ for every other column. And after a selection fix, assert the table still yields
 impossible dates" is also satisfied by having no data.
 
 Related: R22 (a selection fix needs a re-pull), R89 (ons_uk's time grammars), R303.
+
+
+### R332 — the runbook's ledger matcher was case-sensitive, so the page that needed the entry lacked it
+
+**What happened.** Ahmed asked for a per-database manual precisely so a future session could fix a
+broken source without rediscovering everything. `tools/gen_runbook.py` builds it and attaches, to
+each source's page, the ledger entries that mention that source. After writing R331 — five SCB
+tables, `scb` named in the title, the fix, and the verification — I regenerated and checked:
+
+    docs/runbook/scb.md : 0 references to R329/R330/R331
+
+The matcher is `re.search(rf"\b{sid}\b", body)`. Source ids are lowercase (`scb`); ledger entries
+name publishers the way people write them (`SCB`, `ONS`, `BIS`, `OECD`). R331 says "SCB" five
+times and "scb" never in prose, so it attached to nothing. The single page whose reader most needs
+that entry was the one page that did not carry it.
+
+**Why I nearly missed it.** Four of the five sources I spot-checked DID show hits
+(stat_slovenia 1, oecd 1, statfin 2, hagstofa 1) because their ids are lowercase in ordinary
+prose. A spot-check that samples until it sees a pass is not a check. The one that failed is the
+one whose publisher has an acronym — a property I could have predicted and did not think to test.
+
+**Fixed.** `re.I` on the match, with the reason in the code so nobody "tidies" it back.
+
+**The pattern this makes three of, tonight alone.** R328: sixteen ledger entries, zero digest
+lines. R330: a repair tool aimed at a dead drive, reporting `0 corrupt`. R332: the manual missing
+the entry about the source. Writing the thing down is the easy half; every one of these was a
+failure of the READ path, and every one looked fine from the writing end.
+
+**Rule.** After writing documentation, READ IT BACK from where the reader will stand — and choose
+the sample that is most likely to fail, not the first one to hand.
