@@ -76,7 +76,15 @@ trusting ANY number I produced, check these five things — each one cost real t
    defects with opposite fixes, cancelled into one figure matching neither. Split every difference
    into both directions before acting, and note the obvious remedy here (re-run the cataloguer)
    would have created 1,998 listed-but-404 rows.
-9. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
+9. **A reserved task reserves what its TEXT says, not its prefix — and "the queue is empty" is a
+   claim that needs the same proof as any other.** R343: I filed all 36 not-scheduled `imf_*`
+   sources under #46, whose title reads "the 8 served imf_* sources"; the reservation is about
+   RE-KEYING old ids, not about building `_direct` successors, which I had finished for the FSI
+   trio an hour earlier. 1,093,077 series went into the nothing-to-do pile on a prefix match.
+   Checked against IMF's own catalogue: 6 exact id matches, 3 built and pushed the same session.
+   Corollary: a category you invent ("frozen" = no _direct counterpart) is a hypothesis — test it
+   against the system's list, or you will nearly duplicate a source that already auto-updates.
+10. **Check that your evidence POSTDATES the fix before calling the fix a failure.** R339: I said
    stat_estonia's 18-minute deadline "is NOT working" and cited three 45-minute kills — all of
    them produced by code committed BEFORE the two commits that fixed it. The current cap had never
    run once. "Still broken" and "never tried" look identical in a table of past runs, and only one
@@ -9372,3 +9380,35 @@ standing as the number it doubts.
 
 Related: R338 (a control belongs IN the probe), R341 (enumerate from the side that can be
 over-complete), R330.
+
+### R343 — I filed 36 sources under a reserved task whose own text covers 8
+
+I told Ahmed the queue was empty. It was not, and the error was a single unchecked substitution:
+the auto-update gap is 97 sources, I bucketed them by PREFIX, and mapped all 36 `imf_*` entries
+onto task #46 — whose title reads "**The 8 served imf_* sources** cannot auto-update without
+changing their series ids". Eight. I had the number in front of me and matched on the prefix
+instead.
+
+The two are not the same question. #46 reserves what happens to the OLD ids that users may have
+cited. It says nothing about BUILDING `_direct` successors — which is exactly what task #18 did
+for nine of them, and what I had myself finished for the FSI trio an hour earlier. So "reserved"
+was doing work the reservation never authorised, and 1,093,077 series went into the
+nothing-to-do pile on the strength of a prefix match.
+
+Checked properly, against IMF's own /dataflow catalogue (222 live flows), the 30 frozen sources
+split three ways: 6 EXACT id matches, 12 CANDIDATE, 12 genuinely restructured. Three of the six
+were then built and pushed the same session.
+
+**A second substitution inside the first.** My mapping script called a source "frozen" when it had
+no `_direct` counterpart. That is not what frozen means: `imf_weo` has its own fetcher, is
+`live: true`, and auto-updates fine. It appeared on my buildable list and I nearly created a
+duplicate source for it. Caught only by intersecting against the ACTUAL not-scheduled list rather
+than trusting my own label — the same shape as the first error, one level down.
+
+**Rule.** A reserved task reserves what its text says, not its prefix. Before filing anything
+under one, read the scope sentence and check the count: if the task says eight and you are filing
+thirty-six, the difference is unexamined work, not covered ground. And when you invent a category
+("frozen", "dark", "stale"), immediately test it against the system's own list — a label you
+defined is a hypothesis, not a measurement.
+
+Related: R339 (evidence that predates the fix), R341 (the frame with the hole in it), R330.
