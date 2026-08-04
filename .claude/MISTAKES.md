@@ -91,6 +91,17 @@ trusting ANY number I produced, check these five things — each one cost real t
    is a reason to write code. Compare the newest run timestamp to `git log` on the file under
    test, and state both.
 
+11. **When a component has a fallback, plausible output proves NOTHING — it may be the fallback's.**
+   R344: an ingest recorded the authoritative key order in a sidecar, but wrote it one directory
+   too shallow AND read it with `open()` while the store lives in R2. Two breaks, zero symptoms:
+   the reader silently guessed the order instead, and the guess was usually right. It was never
+   once used. The failure only surfaced on the one source where guessing is impossible — after
+   260,931 series had shipped with raw keys for titles and 27,094 live ones carried a
+   mislabelled dimension. Prove the PRIMARY path by its own evidence — assert the reader RETURNS
+   the value, not that a file exists — or make the fallback announce itself. Corollary: write and
+   read through the SAME layer, and remember that a comment asserting a behaviour ("written next
+   to the parquet") is not a check of it.
+
 **WRITING IT DOWN IS THE EASY HALF — three failures of the READ path in one night.** R328: sixteen
 ledger entries, zero digest lines, so the lessons were invisible the same evening. R330: the
 re-pull toolchain aimed at a dead drive and reported `0 corrupt`. R332: `gen_runbook`'s ledger
@@ -9412,3 +9423,48 @@ thirty-six, the difference is unexamined work, not covered ground. And when you 
 defined is a hypothesis, not a measurement.
 
 Related: R339 (evidence that predates the fix), R341 (the frame with the hole in it), R330.
+
+### R344 — a silent fallback hid a broken primary path for weeks, and the fallback's guess was good enough to look fine
+
+**What happened.** `jobs/ingest_imf_direct.py` records the positional key order in a
+`<store>.parquet.dims.json` sidecar, because that order cannot be recovered from the DSD
+afterwards. Its own comment says the file is "written next to the parquet". It was not. The
+parquet goes to `OUT/<source_id>/<source_id>.parquet`; the sidecar's fallback path said
+`OUT/<source_id>.parquet` — one directory too shallow. Separately, the reader
+(`tools/imf_direct_titles.load_dims`) used `os.path.exists` + `open()`, so under
+`AQUEDUCT_BACKEND=r2` — the mode the catalogue actually runs in — it could not have seen the
+sidecar even at the right path.
+
+Two independent breaks on the same channel, and I shipped both.
+
+**Why it stayed invisible.** `load_dims` has a fallback: if the sidecar is missing, `infer_dims`
+GUESSES the order by finding a permutation where every key part resolves against IMF's
+codelists. For most `_direct` sources that guess is right, so titles looked correct and nothing
+ever reported an error. The recorded order was never once used. I diagnosed the visible symptom
+three times — "retired area-code vocabulary", "needs a crosswalk", "METHODOLOGY is not a DSD
+Dimension" — each a true statement about the FALLBACK, and each irrelevant, because the primary
+path was supposed to make the fallback unnecessary.
+
+**What it cost.** `imf_bop_direct` has 7 key parts against 5 codelisted dims, so no permutation
+resolves everything and inference returns `None`: 260,931 series catalogued with their raw key
+as the title, invisible to search. Measured after the fix, the recorded order resolves
+**260,931 of 260,931 at 5/5, 0 blank**. `imf_cpi_direct` was quieter and worse — inference put
+`CPI` under METHODOLOGY instead of INDEX_TYPE, so all **27,094** live titles read "CPI" where
+the recorded order reads "Consumer price index (CPI)". Full-population comparison: **27,094
+better, 0 worse.** Those titles were live and wrong, and nothing flagged them.
+
+**The rule.** *When a component has a fallback, an output that looks right proves nothing — it
+may be the fallback's output. Test the PRIMARY path by its own evidence: assert the sidecar is
+readable BY THE READER (not that a file exists), or make the fallback announce itself.* A
+fallback that degrades silently converts a hard failure into an undetectable one.
+
+**Corollaries, both of which bit here.**
+- *Write it and read it through the same layer.* The parquet went through `blob`, the sidecar
+  through `open()`. `blob.read_bytes`' own docstring already warned: "a plain open(path) sees
+  nothing on a CI runner and the state resets every run." I wrote a second instance of a bug the
+  codebase had already documented.
+- *A comment asserting a behaviour is not a check of it.* "Written next to the parquet" was
+  false the day it was written, and it read as verification every time I passed over it.
+
+**Fixed.** Sidecar path now matches the parquet's; both write and read go through `blob`
+(local + R2); the three existing sidecars republished; BOP catalogued and CPI re-titled.
