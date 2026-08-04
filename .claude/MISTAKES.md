@@ -9564,3 +9564,45 @@ gets 200. Its docstring states the scope honestly: it proves DISCOVERABILITY, no
 SUPPORTED_SOURCES membership, which no unauthenticated endpoint exposes. `sync_catalog_d1.py` now
 emits the parent `source` (and `license`) rows; the 27 were backfilled and live `/v1/sources`
 returns 223.
+
+### R347 — I added three registry entries and not the count that guards them; the updater fetched NOTHING for ~14 hours
+
+**What happened.** I registered `imf_bop_direct`, `imf_irfcl_direct` and `imf_cpi_direct` in
+`updater/registry.yaml` and left `config.EXPECTED_SOURCE_COUNT = 141`. Registry validation runs
+BEFORE any source is touched, and it does not warn or skip — it refuses the run:
+
+    registry invalid (fix before running):
+      expected 141 sources, found 144
+    updater exit code: 1
+
+From that commit until this one, **every run, cloud and local, exited 1 having fetched nothing.**
+Not one source updated. The auto-update system — the entire point of this work — was down, and I
+spent the intervening hours adding sources to it.
+
+**How I nearly missed it, twice.** First, I dispatched a targeted run to verify something else
+entirely (whether the refreshed R2 catalog had fixed fed_board's CSV coherence). The run failed,
+and the failure summary printed fed_board with a coherence error — the exact string I was looking
+for. I almost read that as "the catalog fix did not work". It was the STORED state row being
+echoed back; the fetch never ran. The tell was `+1856844 new rows`, byte-identical to the
+previous verdict, and a 3.7-minute gap that was really 8 seconds of work plus a state dump.
+
+Second: I had run `registry.validate(reg)` when I added the entries and it returned OK — because
+I called it WITHOUT `expected_count`. The orchestrator calls it WITH
+`config.EXPECTED_SOURCE_COUNT`. I validated a weaker contract than production enforces and read
+the pass as clearance.
+
+**The rule.** *A guard keyed to a count is part of the thing it counts: adding an entry means
+updating the count in the same change.* And more generally — *call a validator the way PRODUCTION
+calls it, arguments and all. A pass under weaker arguments is not a pass* (cf. [[R344]], where a
+fallback made the primary path's failure invisible; here a default argument did).
+
+**The compounding lesson, which is the expensive one.** For hours I attributed a red pipeline to
+causes I could name — a stale catalog, deferral noise, unlabelled sub-units — all real, none of
+them the reason the runs were failing at that moment. When a system stops working shortly after
+you changed it, check YOUR change before investigating the system. The registry break was in the
+first ten lines of the run log, and I read past it to the summary further down because the
+summary contained the words I was looking for.
+
+**Fixed.** `EXPECTED_SOURCE_COUNT = 144`, validated the way the orchestrator validates it
+(`registry.validate(reg, expected_count=config.EXPECTED_SOURCE_COUNT)` -> no problems), 263 tests
+pass, and the constant's comment block now records the three additions with their vintage tokens.
