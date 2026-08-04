@@ -8585,3 +8585,41 @@ this subject as FRESH and skip nothing. Any staleness gate here has to be per-ta
 
 Related: R318, R323, R246, R288 (the negative control that stopped a plausible repair from
 destroying 11 of 12 rows).
+
+### R326 — obs_count means two different things, and the freshness view reads a healthy source as losing 168M rows
+
+Chasing ecb's declining coverage I found this in the runs table:
+
+    2026-07-31   obs=218,396,836   dur=4362.8s   +5,866,080 new rows
+    2026-08-01   obs= 62,928,444   dur=2108.4s   243/540 deferred
+    2026-08-03   obs= 49,851,636   dur=2102.9s   290/540 deferred
+
+Read straight, that is a source that lost 168 million observations in three days, and my first
+reaction was that this was the most serious finding of the night. I counted the store before
+saying so: **218,396,859 rows across all 540 files — intact, and 23 rows MORE than the 07-31
+figure.**
+
+THE CAUSE IS A REPORTING AMBIGUITY, not data. Fetchers compute `published` as the rows they
+merged this run, then several of them do:
+
+    if published == 0:
+        published = sum(blob.row_count(...) for every file in the store)
+
+So `obs_count` is "rows written this run" on a run that wrote something, and "total rows in the
+store" on a run that wrote nothing. Those differ by three orders of magnitude here. The moment
+ecb's budget was cut from ~72 min (4,362 s) to 35 min (2,108 s) it began processing a fraction
+of its 540 files per tick, so the number it reports collapsed — while the store never moved.
+
+WHY THIS MATTERS BEYOND ONE SOURCE. obs_count is what the freshness views and the digest read.
+A metric that silently changes denominator is worse than a missing one: a missing number prompts
+a question, and this one answers confidently and wrongly in the direction of alarm. It is the
+same shape as R231 (a `partial` never setting last_success_utc, so healthy sources read as never
+having succeeded) — a field whose meaning depends on a branch the reader cannot see.
+
+ALSO SETTLED, since I was there: ecb's "declining coverage" (297 → 288 → 250 attempted) is not a
+defect. The budget was halved on 08-01, and the rotation IS advancing — the deferred head is a
+different file every run (SI 2025 → SE 2022 → LU 2026), so it is not R190. ecb is
+budget-limited by design and its clean success is blocked by the same stale catalog as the other
+35 sources.
+
+Related: R231, R246 (measure what the run attempted), R303.
