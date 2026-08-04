@@ -8114,3 +8114,50 @@ test_permanent_blockers_do_not_starve_the_rest, which fails on the old prefix an
 rotation.
 
 Related: R190, R83/#83 (the claim this corrects), R306, R310, R311.
+
+### R314 — I re-keyed a store from a docstring, and my verification compared IDS while the bug was in the DATES
+
+Two things happened here. The first I caught before it did harm; the second my own check nearly
+missed, and only a differently-shaped check found it.
+
+**Believing the file I was editing.** ons_uk's fetcher docstring said, plainly, that the key grain
+was still wrong and that fixing it "is a re-ingest, not a fetcher patch". I read that, agreed, and
+shipped `mode="replace"` with the v4 parser — overwriting nine datasets on R2. Only afterwards did
+I open `api/worker/src/util.ts`, which says the opposite in equal detail: re-keyed 2026-07-29,
+"3,897,884 real series with 0 (key,date) collisions", after an APPROVED re-key. Two documents in
+the same repo, flatly contradictory, and I had bet production writes on the one that happened to
+be in the file under my cursor. Neither is authoritative. The STORE is, and it is one query away.
+
+Checking it settled everything at once, and turned up something worse than the contradiction: the
+re-key was real but the fetcher had been UNDOING it. Four datasets still carried `CV=` and time
+tokens — ashe-table-5, ashe-tables-11-and-12, -20, -25 — at 1.8 rows per key, which is the two
+grains coexisting. Their row counts sum to 10,646,304 + 4,966,950 + 3,824,768 + 760,280 =
+20,198,302, EXACTLY the `obs_count` on the state row. So the last run had merged observation-level
+keys back over the approved re-key, on precisely those four, and would have done the next four
+next time. My change stops that and `replace` repairs them as rotation reaches them — but I found
+that by luck, chasing a contradiction I only noticed after writing.
+
+**The verification that would have passed a live bug.** I then checked my parser against datasets
+I had NOT touched, and got `KEYS identical=True`. That is the check I would naturally have stopped
+at, and it was worthless for the actual defect: for regional-gdp-by-quarter the key set matched
+perfectly while every single one of its 31,992 dates was wrong. I had mapped `2012-q1` to the
+quarter's LAST month (`q*3`) where the store — and `parse_ons_period` twenty lines above my own
+function, for 'YYYY Qn' — uses the FIRST. A key-level comparison cannot see a date-level error,
+and series ids are exactly what a re-key check instinctively compares.
+
+The same pass found `mmm-mmm-yyyy` (labour-market's rolling three-month windows) unhandled, so v4
+declined all 31,968 rows. Both conventions are now decided FROM THE STORE rather than by taste:
+first-month reproduces every pair, last-month misses 1,728.
+
+Neither bug reached data — none of the nine datasets I wrote uses either grammar — but the quarter
+bug was on main with CI due in hours.
+
+LESSONS, in the order they bit:
+  1. When two documents disagree about the state of a store, neither is evidence. Query the store.
+     I had the query; I wrote it afterwards instead of first.
+  2. A re-key check that compares IDENTIFIERS verifies the half you changed on purpose. The half
+     you changed by accident is in the values. Compare (key, date) pairs, or the whole row.
+  3. "Consistent with the convention already in this file" is a cheap check I skipped: my quarter
+     mapping contradicted a function in the same module.
+
+Related: R22 (a key change is a re-pull), R296 (right tool, wrong store), R310, R313.
