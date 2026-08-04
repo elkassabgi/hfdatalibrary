@@ -9125,3 +9125,42 @@ write in full — the harness already captures it to a file and reports the exit
 of THAT. If a job is genuinely silent, the first hypothesis is the plumbing, not the program.
 
 Related: R323 (six hours watching a `--dry-run`), R309, R330.
+
+
+### R337 — I overturned a correct finding with a number that answered a different question
+
+**What happened.** An agent recommended a long-cadence gate on stat_estonia's `Lepetatud_tabelid`
+subject, citing "99.0% have max(obs_date) <= 2024". I measured 87.9%, found 7 tables carrying
+2025+ data, and DELIBERATELY HELD the gate (R325), on the reasoning that a gate built on a figure
+I could not reproduce might silently delay live tables.
+
+Re-measured today at TABLE grain against the store:
+
+    1,869 tables carrying data
+      newest obs >= 2025-01-01 :    19  (1.0%)
+      newest obs <  2025-01-01 : 1,850  (99.0%)
+
+The 99% reproduces exactly. My 87.9% almost certainly counted CATALOG ENTRIES (2,832) rather than
+tables that actually hold data (1,869) — a different denominator, so a different question, so a
+number that could never have agreed.
+
+**And the 7 "live" tables were the same error again.** They are `Rahvastik.Arhiiv` — *rahvastik*
+is Estonian for POPULATION — with newest observations at 2080, 2050, 2045, 2040. Population
+PROJECTIONS. I had written R327 about exactly this ("a FUTURE date is usually a legitimate
+projection, not staleness") eight entries earlier, and then used projection frontiers as evidence
+that an archived subject was live.
+
+**What holding cost.** 1,850 discontinued tables have gone on competing for the same per-source
+budget as the live ones, on a source that reports `partial` and has never set `last_success_utc`.
+The caution was not free; it just moved the cost somewhere I was not looking.
+
+**What was actually right in R325** was the CONSTRAINT, not the refusal: any gate here must be
+PER-TABLE, because the subject-level max is a 2080 projection and a subject-level test reads the
+whole archive as fresh. That survives.
+
+**Rule.** Before overturning someone else's measurement, reproduce THEIR question — same grain,
+same denominator, same filter — and only then compare. A disagreeing number is not evidence until
+it is the same measurement. And "I could not reproduce it" justifies re-measuring, never
+indefinite inaction: holding is a decision with its own running cost.
+
+Related: R327 (projection vs staleness — mine, ignored), R325 (the hold this corrects), R330.
