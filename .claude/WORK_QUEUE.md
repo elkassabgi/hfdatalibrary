@@ -666,3 +666,31 @@ the product; or (3) raise the limit (billing, Ahmed's).
 
 **Do not bulk-catalogue anything six figures or larger before that choice is made.** Adding rows
 is easy; a full re-dump via `core/export_d1.py` is ~945 MB.
+
+## Fabricated dates: 4 of 7 sources now audit CLEAN in R2 (2026-08-04, final)
+
+    scb            0 affected      87,358 rows removed (band + grain passes)
+    statfin        0 affected      36,933 rows
+    hagstofa       0 affected       1,120 rows
+    stat_slovenia  0 affected      505,142 (05W, retired) + 3 (05L1027S)
+    oecd          25,160 rows      @2999 — the PUBLISHER's placeholder, parse guard shipped
+    eurostat         912 rows      @9999 + freq=NAP — time-invariant tables, hosting decision
+    cbs_nl             0           its flagged files are ABSENT from R2 — local only, never served
+
+**The last LIVE fabrication is fixed** (#95, commit 5808f30f). SURS sets `time: true` on the AGE
+axis of 05L1027S; code `'1000'` is labelled *"Deaths - TOTAL"* and parsed to year 1000, and the
+parser was still emitting those rows today.
+
+The obvious guard — require the flagged axis to yield a sane date from its CODES — **broke
+label-fallback across four sources (7 tests)**: some PxWeb tables index time positionally
+('0','1','2') with the period only in `category.label`, and that fallback is what fixed hagstofa's
+26 false structural breaks. Falling through to the value scan is worse still: that is the
+87,358-row scb failure, where the publisher was RIGHT about which axis was time.
+
+So the rule is **codes OR labels; if neither, return None — never a different dimension**. It
+applies only when the caller passes `dim_labels`, so the other 22 call sites keep their exact
+behaviour and migrate one at a time. Verified live in both directions: 05L1027S 3 → 0, while
+05L2020S/05L3004S/05L1006S/05L1018S each still parse to **exactly** their stored row counts.
+
+**Still pending:** 05W's re-pull must return ~1,463 rows. **0 would mean the ten real LETO tables
+were lost too** — that is the number to check, not "did the run go green".
