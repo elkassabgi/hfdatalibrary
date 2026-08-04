@@ -27,9 +27,16 @@ trusting ANY number I produced, check these five things — each one cost real t
 3. **A sweep reports TWO numbers — what it found and what it could not reach.** R315: a
    337-request census on a URL I had already watched 404; then a rerun where 192 of 337 were
    429s, making its table a lower bound, not a census. Read the failure count first.
-4. **When a probe reports ABSENCE, run it against something known PRESENT.** R316: I said a
-   source was missing from a list I had parsed with the wrong field name — every element was
-   `None`, so EVERY source would have read as missing.
+4. **When a probe reports ABSENCE, run it against something known PRESENT — and a FAILED control
+   VOIDS the run.** R316: I said a source was missing from a list I had parsed with the wrong
+   field name — every element was `None`, so EVERY source would have read as missing. R329: three
+   probes on one question, each reporting the damage as smaller or unreachable, each wrong; on the
+   third I *did* run a control, watched it fail, and published the numbers anyway. A failed control
+   is not a caveat to report alongside the result — it means there is no result. Note the tell:
+   all three errors pointed the same way, because a probe built hoping for absence gets believed
+   the moment it reports absence. **Never regex a language whose comments can contain the
+   delimiter** — a quoted phrase inside a `//` comment flips quote-pairing parity and silently
+   drops real entries. Strip comments first, or ask the system for its own answer.
 5. **A one-sided test on a two-sided failure gives a number that LOOKS like a measurement.**
    R322: "273,980 fabricated rows" was under half — the audit only tested the future, and a
    counter-as-year starts at 1. The real figure was ~637,000 across seven sources.
@@ -8751,3 +8758,42 @@ I noticed.
 
 Related: R202 (I had written the lesson into a comment and never into an enforcement) — the same
 failure, 126 entries earlier.
+
+
+### R329 — I "corrected" a correct number twice, using three broken probes that all failed toward reassurance
+
+**What happened.** `WORK_QUEUE` recorded *~637,000 SERVED rows carry fabricated dates across 7
+sources*. Investigating the largest case I ran three probes and each one told me the damage was
+smaller or unreachable. All three were wrong, all three were wrong in the *comforting* direction,
+and I published two of them as corrections before catching it.
+
+| # | probe | said | truth |
+|---|---|---|---|
+| 1 | `series_id LIKE 'stat_slovenia:05W%'` | 0 catalogued | 33 — the id is `stat_slovenia:**SI:**05W…`, I omitted a segment |
+| 2 | `^\s*"(id)",\s*$` over util.ts | 0 of 7 served | matched **10** ids total, none of them real |
+| 3 | quote-pairs inside the array body | 3 of 7 served | comments contain `"…service"` spanning two lines, which **flips the quote-pairing parity** so real ids land in the gaps |
+
+Stripping `//` comments before pairing quotes yields 219 ids, the control passes, and the answer is
+**all seven sources are served — 637,178 rows.** The original figure was right the whole time.
+
+**Why it matters more than a bad regex.** Probes 1 and 2 were *sanity-check-shaped*: I ran them to
+confirm a fear, they came back clean, and a clean result on a fear is exactly when verification
+feels unnecessary. Probe 3 I did control — the control FAILED (`eia=N oecd=N eurostat=N`) — and I
+still reported its numbers, treating a failed control as a curiosity rather than as the answer
+"your instrument is broken, discard this measurement." A failed control is not a caveat to publish
+alongside the result. It voids the result.
+
+**The asymmetry is the tell.** Three independent bugs, three errors, and every single one made the
+problem look smaller. That is not chance: a probe built while hoping for absence gets accepted the
+moment it reports absence, and one built while hoping for presence gets debugged until it works.
+The direction of an error is evidence about the process that produced it.
+
+**Rule.** A probe that reports ABSENCE is not a measurement until a known-PRESENT case passes
+through the same code path (R0 check #4 — already written, and I still skipped it twice tonight).
+If the control fails, the run is VOID: do not report its numbers, not even as provisional. And
+never hand-parse a language with a regex when comments can contain the delimiter — strip comments
+first, or ask the system for its own answer.
+
+Related: R316 (asserted a source missing from a list parsed with the wrong field name — same bug,
+same night, thirteen entries earlier), R322 (a one-sided audit that halved the same damage figure),
+R0.
