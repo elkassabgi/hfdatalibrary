@@ -54,6 +54,15 @@ zero pages, and `scb.md` was the one page missing it. Each looked fine from the 
 writing anything meant to be read later, **read it back from where the reader stands, and pick the
 sample most likely to fail** (a spot-check that stops at the first pass is not a check).
 
+**MOST SOURCES HAVE TWO PARSERS — an ingester (`jobs/ingest_X.py`) for backfills and a fetcher
+(`updater/strategies/fetchers/X.py`) for the 06:00 tick. A fix in one is not shipped.** R333: I
+fixed scb's grammar in the ingester and verified it with a real live call, which proved the half
+that does not run nightly. And a parser change that alters AXIS SELECTION is a RE-GRAIN, not a bug
+fix — `series_key` changes with it, old and new rows never collide under dedup, so the file only
+grows and never-shrink cannot see it (R22; this is how ons_uk reached 20.2M rows for 10.1M
+observations). Before enabling one on a live path, read what the store holds under the OLD grain
+and order it: remove first, then enable.
+
 **And the two that decide whether a number is even a defect:**
 - A FUTURE date is usually a legitimate PROJECTION (CSO to 2057, Estonia 2085, UN WPP 2101).
   A defect is a SENTINEL (9999/2999 repeated) or a COUNTER (contiguous FROM year 1). Never judge
@@ -8937,3 +8946,47 @@ failure of the READ path, and every one looked fine from the writing end.
 
 **Rule.** After writing documentation, READ IT BACK from where the reader will stand — and choose
 the sample that is most likely to fail, not the first one to hand.
+
+
+### R333 — I shipped the parser fix to the backfill path, and shipping it to the live path would have duplicated
+
+**Two mistakes in one fix, and the second was nearly expensive.**
+
+**One: I fixed the wrong file.** R331's grammars went into `jobs/ingest_scb.py`. The NIGHTLY path
+is `updater/strategies/fetchers/scb.py`, which carries its own `_parse_date` with the identical
+gap. Every source here has this shape — an ingester for backfills, a fetcher for the daily tick —
+and I verified the fix "live" by calling the ingester's `query_table`, which is a real call to SCB
+and looks exactly like proof. It proved the half that does not run at 06:00 UTC. Same family as
+R207 (fixed the Arrow crash in one file, left it in seven).
+
+**Two, and worse: the obvious completion of the fix would have duplicated the store.** Adding the
+grammars to the fetcher changes which dimension is the time axis, and that changes `series_key`
+(R22). Measured:
+
+    OLD  ...Medellivsl:Kon=1:ContentsCode=000000NH:Tid=1998-2002   obs_date 0114-12-31
+    NEW  ...Medellivsl:Region=00:Kon=1:ContentsCode=000000NH       obs_date 1998-12-31
+
+`Tid` was unparseable, so it sat INSIDE the key while `Region` — municipality codes 0114..2584 —
+was read as the date. Fixed, they swap. Dedup is on `(series_key, obs_date)`, so old and new
+**never collide**: both survive, the file only grows, and never-shrink cannot see it. That is
+precisely how ons_uk reached 20,198,302 rows for 10,099,151 observations, and I had spent the
+earlier part of the same night cleaning that up.
+
+**What saved it** was asking, before shipping, "what does the store already hold for these
+tables?" — and reading the old keys instead of assuming they looked like the new ones. The answer
+took one query. Note that the naive check would have passed: the old and new rows have different
+dates AND different keys, so any test for "would these collide?" says no — which is exactly the
+problem, not the reassurance it sounds like.
+
+**Fixed.** Grammars added to the fetcher too, with an explicit `_REGRAIN_QUARANTINE` of the five
+table paths, holding them back until their legacy rows are removed. They report `deferred_unit`
+— not attempted, not failed — so they neither hold scb at `partial` nor fake a failure. Parser
+parity asserted across all 15 cases, because a fetcher and an ingester that disagree about what a
+date is will write different rows for the same series.
+
+**Rule.** A parser change that alters AXIS SELECTION is a re-grain, not a bug fix. Before shipping
+it to a live path, read what the store already holds under the old grain and decide the order:
+remove first, then enable. And when a source has both an ingester and a fetcher, a fix is not
+shipped until it is in the one that actually runs — check which path the scheduler calls.
+
+Related: R22, R331, R207, task #42 (the ons_uk prune this would have recreated).
