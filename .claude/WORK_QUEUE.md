@@ -514,3 +514,50 @@ correct and stopped me mid-repair; resume the retires when it lands.
 
     python tools/audit_impossible_dates.py --r2 --source stat_slovenia    # expect ZERO
     # AND 05W.parquet back at ~1,463 rows. NOT 0 — 0 means the ten LETO tables were lost too.
+
+## CORRECTION to the block above — the band prune was NOT sufficient for scb (R334)
+
+The section above says the prune was applied and verified. It was applied; the verification was
+worth less than it looked. **`audit_impossible_dates --r2` reported 0 affected for scb, and 15,990
+rows in those five tables were still fabricated.**
+
+scb's fake dates are Swedish MUNICIPALITY CODES, 0114..2584. A sane-band prune removes the codes
+below 1500 and above 2200 and KEEPS everything between, so codes 1500..2200 survive as entirely
+plausible years:
+
+    BE:...:Medellivsl:Kon=1:ContentsCode=000000NH:Tid=1998-2002   obs_date 1715-12-31
+                                                   ^^^^^^^^^^^^   ^^^^ code 1715, not a year
+
+Measured after the band prune, every surviving row still carried the OLD grain: 3,731 / 3,731 /
+3,731 / 2,829 / 1,968. I had written the warning myself, earlier the same night, about
+stat_slovenia — and filed it under stat_slovenia instead of under "code-as-year fabrication".
+
+**A RANGE TEST CANNOT DETECT CODE-AS-YEAR FABRICATION, EVER.** Codes and years are the same
+integers. Use the structure that is definitionally impossible instead: `Tid=` inside a series_key
+(time varies per observation, so it cannot be part of a series identity) — the same signature cso
+used (`TLIST(A1)=1991`) and ons_uk used (`calendar-years=`). And when a repair reports success,
+**inspect what SURVIVED, not what was removed** — that question, not any instrument, is what
+caught this.
+
+### State of the four sources, corrected
+
+    statfin  tyonv    CLEAN   32,013 dropped, audit 0 affected
+    hagstofa Umhverfi CLEAN    1,120 dropped, audit 0 affected. NB those codes are Hagstofa's
+                              CLIMATE NORMALS on the `Ár` axis (3000..3005, labelled "Average
+                              1951-1980" … "Meðaltal 1991-2020") — NOT station codes as I first
+                              guessed. parse_date already rejects them, so the prune is durable.
+    scb      HE/BE    PARTIAL 71,368 band-dropped, but 15,990 old-grain rows REMAIN
+
+### The one command left on this defect (needs the store writer free)
+
+    python tools/prune_bad_grain_rows.py --apply --only scb     # GRAIN pass, drops 15,990
+    # then delete the five entries from _REGRAIN_QUARANTINE in
+    # updater/strategies/fetchers/scb.py — ORDER IS LOAD-BEARING, rows first, quarantine second.
+
+Dry-run verified: HE 167,633 -> 156,440, BE 1,532,408 -> 1,527,611. The five tables EMPTY (100% of
+their content is fabricated) and are restored by the publisher on the next tick once the
+quarantine lifts — which is why lifting it is not optional.
+
+**Blocked, and it is ordinary contention, not a fault:** `updater-heavy` is `queued` for a runner
+and my dispatched `updater-daily` is `pending` behind it on the shared `aqueduct-updater`
+concurrency group. 05W's re-pull is in that pending run.
