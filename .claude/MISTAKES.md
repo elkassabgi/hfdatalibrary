@@ -9642,3 +9642,33 @@ moves (object counts, row counts — R54/R80), which is what worked here.
 **Also noted for honesty:** the harness's own task-output capture makes the `| tail` doubly
 pointless — the full output lands in the task file either way; the pipe only delays it to
 process exit.
+
+### R349 — the runbook told 215 sources' pages that they were not served, and I read it as ground truth
+
+**What happened.** Cycle 2's first read (imf_dot's runbook page) said "served to users: no —
+absent from api/worker/src/util.ts". The live /v1/sources listed imf_dot, and util.ts line 160
+contains it — on a PACKED line: `"imf_bop", "imf_cdis", "imf_cpis", "imf_dot",`.
+`gen_runbook.load_served()` harvested util.ts with `^\s*"([a-z0-9_]+)",\s*$` — a regex that
+matches only lines holding EXACTLY ONE quoted id. Measured: it found **11** of the 226 served
+sources; **215 pages** carried a false "NOT SERVED" verdict, republished on every regeneration
+— including the one I ran twenty minutes earlier, whose header says "every fact below is read
+from the system". It was; the reader was broken.
+
+**Why it existed.** tools/audit_schedule_coverage.py had already solved this exact harvest
+(scope to the SUPPORTED_SOURCES array, strip comments FIRST — its docstring cites R137) and
+gen_runbook grew its own second parser anyway — the R333 two-parsers drift class, this time
+between two AUDIT tools. The runbook's own generated caveat about scb (R332, its matcher
+missing entries) was sitting in the same file as a second matcher with the same disease.
+
+**Why it was caught.** The 5-reads procedure put the runbook claim NEXT TO the live surface
+probe in the same minute, and they disagreed — two instruments, one question (the R276/R248
+pattern: when a lookup contradicts reality, suspect the accessor). Had the cycle started from
+the runbook alone, imf_dot's plan would have included "flip util.ts" for a source already live.
+
+**The rule.** *A tool that reads a structure another tool already parses COPIES that parser or
+imports it — never a third regex. And a generated page's "read from the system" header is a
+claim about the WRITER; the reader can still be wrong, so any surprising verdict on a generated
+page gets one confirmation against the live artefact before it drives work.* Fixed by copying
+the audit's harvest verbatim into gen_runbook, plus a drift test asserting the two harvests are
+IDENTICAL on the real util.ts (fails the moment either is edited alone) and a fixture test for
+packed lines and comment prose. 215 pages corrected in one regeneration; 283 tests pass.
