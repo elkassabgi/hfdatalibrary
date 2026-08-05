@@ -184,6 +184,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R353. An Exception-subclass control signal is only as strong as the narrowest broad `except Exception` in its path — audit every handler between raise and handle, or re-raise by name. CORRECTION: the named victim was wrong (step-vs-unit conflation); a proven-possible mechanism plus a duration anomaly is still a hypothesis until the run's own per-unit clock testifies.
 - R354. A cross-generation vocabulary comparison scored 0/74 because it compared COMPOSITE legacy codes against DECOMPOSED successor codes — a test that could not succeed (R346 class). Redone at the shared level it flipped to 61/74 covered (G111 -> G111_T). Before reading 0-overlap as "no successor", prove the comparison CAN hit: decompose both sides to the grain they share and run a positive control on a code you know survived.
 - R355. dst's manifest was read with os.path.exists+open — in CI (backend=r2) it never existed, every run cold-started, the cold start adopted the catalog's CURRENT timestamps as baseline, and the served store froze 4 MONTHS behind daily green no_change ('63/63 drained, backlog clear', 0 rows). The #54 fix converged only on the workstation (R36 reborn a third time). Cross-run fetcher STATE lives behind blob, exactly like the store — and a fix proven only under backend=local proves nothing about CI.
+- R356. I catalogued GS_LI at SERIES grain by family reflex — 80,394 rows, ~16% of the remaining D1 headroom — without re-running the pre-committed #45 arithmetic for THIS flow's measured count. Measured after the fact: 233 C.F tables (a 345x collapse). Caught before D1/serve; the rows were local-only and replaced. A pre-committed decision RULE is not a decision — it re-runs on every new measurement, especially when the family's previous members made the other grain look default.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -9911,3 +9912,27 @@ all-stale (2,317 tables) so the 4-month backlog drains over checkpointed runs; s
 other `json.load(open` fetchers — ecb/stat_slovenia are self-healing caches, statcan is
 workstation-by-design (R249), fred_releases has no registry entry (dead module),
 _imf_direct's sidecar was measured harmless. [M-20260805, cycle 8]
+
+
+### R356 — a pre-committed grain rule skipped because the family's earlier members made series grain feel default
+
+**What happened.** Serving the GS gender family, four flows measured small (973–12,057
+series) and went to series grain correctly. The fifth, GS_LI, measured **80,394 series** —
+and I catalogued it at series grain in the same breath, pattern-matching the family default
+instead of re-running the #45 D1 arithmetic that the cycle's own registry comment pre-commits
+("grain by the #45 arithmetic when the counts land"). 80,394 rows is ~16% of the remaining
+headroom. Measured immediately after: 233 COUNTRY×FREQ tables — a 345× collapse, position-3
+COUNTRY vocabulary-proven with zero misses — i.e. the arithmetic's answer was overwhelming
+and in the OTHER direction.
+
+**Why it was caught.** The derive timed out mid-chain, forcing a look at the numbers instead
+of a rolling green chain; the 80,394 stood out against every prior series-grain add today
+(191–14,018). The wrong rows never left the local catalog.db — not synced to D1, not in the
+R2 catalog, no CSVs — so the fix was a local delete + re-catalogue at table grain, with the
+family tool gaining configurable cut positions (GS_LI's COUNTRY sits mid-key at position 3).
+
+**The rule.** *A pre-committed decision RULE is not a decision. It re-runs on every new
+measurement — and the risk of skipping it is highest exactly when a family's earlier members
+all landed on one side, because the default stops feeling like a choice.* Corollary: a
+mid-chain timeout is a checkpoint, not an obstacle — the pause is where the number gets
+looked at. [M-20260805, cycle 15]
