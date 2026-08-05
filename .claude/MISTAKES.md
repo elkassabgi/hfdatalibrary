@@ -176,6 +176,13 @@ verification that contradicts a fact you established personally as the suspect. 
 - R321. A red status has a DATE: bcrp's crash predated my fix by 13h41m and it had not run since. Also: grepping one exception type missed the same defect raising a different one.
 - R324. A NameError in a rarely-taken branch is invisible to a green suite. Import the module you edited.
 - R325. A subagent's number arrives formatted and confident. Reproduce it before acting: "99% discontinued" measured 87.9%, with 7 live tables.
+- R347. A registry entry add/remove without bumping EXPECTED_SOURCE_COUNT refuses ALL runs, not just yours — the bump is part of the entry, same commit (CI-enforced by test_registry_count_guard).
+- R349. The runbook lied for 215 of 226 served sources: a hand-rolled one-id-per-line regex found 11. Copy the parser a sibling tool already got right; add a drift test between them.
+- R350. (sibling session) A source was catalogued at a grain that does not exist in its store — 0 of 2,937 ids resolved. Measure the store's key shape BEFORE cataloguing, and probe one catalogued id end-to-end after.
+- R351. (sibling session) Two sessions, one repo: a deploy I didn't run and a count changing between my own probes were explained away — evidence of a concurrent writer must stop the line until ownership is settled.
+- R352. A concurrent session rewrote MISTAKES.md from a stale buffer: 118 entries deleted beside a 34-line insertion. Ledger writes are append-only at the anchor; the pre-commit hook now refuses any count decrease.
+- R353. An Exception-subclass control signal is only as strong as the narrowest broad `except Exception` in its path — audit every handler between raise and handle, or re-raise by name. CORRECTION: the named victim was wrong (step-vs-unit conflation); a proven-possible mechanism plus a duration anomaly is still a hypothesis until the run's own per-unit clock testifies.
+- R354. A cross-generation vocabulary comparison scored 0/74 because it compared COMPOSITE legacy codes against DECOMPOSED successor codes — a test that could not succeed (R346 class). Redone at the shared level it flipped to 61/74 covered (G111 -> G111_T). Before reading 0-overlap as "no successor", prove the comparison CAN hit: decompose both sides to the grain they share and run a positive control on a code you know survived.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -9850,3 +9857,25 @@ victim was wrong. Rule sharpened: *a mechanism proven possible plus a duration a
 still a HYPOTHESIS about any particular run — the run's own per-unit clock is the only
 witness, and it testifies when the run concludes.* (The R257 shape: a plausible mechanism
 citing real rules, refuted by one number.)
+
+
+### R354 — a 0% overlap from comparing codes at different decomposition levels — the test could not succeed
+
+**What happened.** Mapping legacy imf_gfsr to a successor, I compared its composite indicator
+codes (`1A_S1_G13` = coverage_sector_Gcode in ONE dotted part) against the GFS successor
+stores' key vocabularies, where those dims are SEPARATE parts and the G-codes carry suffixes
+(`G111_T`). Score: 0 of 74 — which I was about to read as "no successor exists". The same
+shape had already produced fsire's 0-of-68 minutes earlier, and I published that verdict in
+conversation before noticing the class. Redone at the level both generations share (bare
+G-code roots, suffix-tolerant), gfsr flipped to **61 of 74 covered by the already-served
+imf_gfssoo_direct** — the opposite conclusion, no new build needed. fsire stayed 0 at every
+decomposition level, so its no-successor verdict survived — but only the redone test makes
+that claim meaningful.
+
+**The rule.** *A cross-generation code comparison is only evidence when the two vocabularies
+are decomposed to the grain they SHARE — and a 0% overlap is unreadable until a positive
+control proves the comparison can hit (R346, R141's grain rule applied to vocabularies).*
+Publisher re-codings come in two kinds: decorative (G111 -> G111_T, recoverable by
+suffix-tolerant root matching) and semantic (IFS's BCAXF mnemonics, unrecoverable — 0 root
+overlap in every family is then the true answer). Decide which kind you are looking at
+BEFORE trusting a zero. [M-20260805, cycle-5 queue work]
