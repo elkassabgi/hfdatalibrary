@@ -185,6 +185,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R354. A cross-generation vocabulary comparison scored 0/74 because it compared COMPOSITE legacy codes against DECOMPOSED successor codes — a test that could not succeed (R346 class). Redone at the shared level it flipped to 61/74 covered (G111 -> G111_T). Before reading 0-overlap as "no successor", prove the comparison CAN hit: decompose both sides to the grain they share and run a positive control on a code you know survived.
 - R355. dst's manifest was read with os.path.exists+open — in CI (backend=r2) it never existed, every run cold-started, the cold start adopted the catalog's CURRENT timestamps as baseline, and the served store froze 4 MONTHS behind daily green no_change ('63/63 drained, backlog clear', 0 rows). The #54 fix converged only on the workstation (R36 reborn a third time). Cross-run fetcher STATE lives behind blob, exactly like the store — and a fix proven only under backend=local proves nothing about CI.
 - R356. I catalogued GS_LI at SERIES grain by family reflex — 80,394 rows, ~16% of the remaining D1 headroom — without re-running the pre-committed #45 arithmetic for THIS flow's measured count. Measured after the fact: 233 C.F tables (a 345x collapse). Caught before D1/serve; the rows were local-only and replaced. A pre-committed decision RULE is not a decision — it re-runs on every new measurement, especially when the family's previous members made the other grain look default.
+- R357. A background catalog refresh streamed catalog.db WHILE a foreground cataloguer wrote it: the upload passed quick_check yet carried 114 torn-page phantom "sources" (raw b-tree bytes as source_ids) that then held the superset guard hostage — and the guard's own report line crashed on bytes.__format__. Refreshes SERIALIZE after cataloguing; the guard now drops non-text ids LOUDLY as corruption; quick_check proves structure, never snapshot consistency.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -9936,3 +9937,32 @@ measurement — and the risk of skipping it is highest exactly when a family's e
 all landed on one side, because the default stops feeling like a choice.* Corollary: a
 mid-chain timeout is a checkpoint, not an obstacle — the pause is where the number gets
 looked at. [M-20260805, cycle 15]
+
+
+### R357 — a catalog refresh raced a cataloguer: the upload passed quick_check and poisoned the guard
+
+**What happened.** To pipeline the GS family I ran `refresh_r2_catalog.py` in the BACKGROUND
+while the foreground kept cataloguing (and, for GS_LI, deleting + re-inserting 80k rows). One
+of those refreshes streamed `catalog.db` mid-write and uploaded a structurally-valid but
+logically-torn snapshot: `quick_check: ok`, counts round-tripped — and the series table
+carried **114 rows whose source_id is raw b-tree page bytes**. Every later refresh then
+compared against those phantoms, reported "114 source(s) lose series", ABORTED — and crashed
+formatting its own report (`bytes.__format__`). Meanwhile a 10-minute-killed derive had
+stranded 38,102 series-grain CSVs under the gsli prefix.
+
+**Recovery.** The LOCAL catalog was healthy and authoritative (245 text sources, clean
+quick_check). Fix shipped in the tool: non-text source_ids on the R2 side are excluded from
+the guard LOUDLY as corruption ("CORRUPT R2 COPY: … REPLACED by this upload") and the format
+crash is gone by construction. One quiet-tree re-upload restored R2 (242 real sources -> 245,
++20,462, clean superset, verified). The 38,102 strays were deleted (my own minutes-old
+artifacts, re-derivable in seconds, referenced by no catalogue row) and gsli re-verified
+SERVED.
+
+**The rule.** *A refresh that reads a database another process is writing produces a
+snapshot that structure checks cannot condemn — serialize catalog refreshes AFTER cataloguing
+completes, never pipeline them into the same window (R144's bulk-export corollary, on the
+catalog itself).* And: the tool's own docstring warned "another process can write catalog.db
+mid-stream" — its post-upload verify was built for THIS, but quick_check + counts test
+structure and totals, not row-level sanity; the guard is where torn rows finally surface,
+so the guard must know what corruption looks like instead of crashing on it.
+[M-20260805, cycle 15]
