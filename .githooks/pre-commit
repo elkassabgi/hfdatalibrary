@@ -1,0 +1,17 @@
+#!/bin/sh
+# MISTAKES.md is append-only (R247). A commit that DECREASES its entry count is a stale-buffer
+# rewrite in progress — the exact failure that deleted 18 entries once (R247) and 118 entries
+# on 2026-08-05 (R352). Refuse it mechanically; a genuine restructure can bypass with
+# git commit --no-verify AFTER a human decision, never silently.
+if git diff --cached --name-only | grep -q "^\.claude/MISTAKES.md$"; then
+  staged=$(git show :./.claude/MISTAKES.md | grep -c "^### R")
+  head_n=$(git show HEAD:./.claude/MISTAKES.md 2>/dev/null | grep -c "^### R" || echo 0)
+  if [ "$staged" -lt "$head_n" ]; then
+    echo "REFUSED: staged MISTAKES.md has $staged entries; HEAD has $head_n." >&2
+    echo "The ledger is append-only (R247/R352). You are probably writing through a stale" >&2
+    echo "buffer. Rebuild your edit on the CURRENT file. (--no-verify only after a human" >&2
+    echo "decision to restructure.)" >&2
+    exit 1
+  fi
+fi
+exit 0
