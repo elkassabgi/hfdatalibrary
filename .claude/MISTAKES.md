@@ -183,6 +183,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R352. A concurrent session rewrote MISTAKES.md from a stale buffer: 118 entries deleted beside a 34-line insertion. Ledger writes are append-only at the anchor; the pre-commit hook now refuses any count decrease.
 - R353. An Exception-subclass control signal is only as strong as the narrowest broad `except Exception` in its path — audit every handler between raise and handle, or re-raise by name. CORRECTION: the named victim was wrong (step-vs-unit conflation); a proven-possible mechanism plus a duration anomaly is still a hypothesis until the run's own per-unit clock testifies.
 - R354. A cross-generation vocabulary comparison scored 0/74 because it compared COMPOSITE legacy codes against DECOMPOSED successor codes — a test that could not succeed (R346 class). Redone at the shared level it flipped to 61/74 covered (G111 -> G111_T). Before reading 0-overlap as "no successor", prove the comparison CAN hit: decompose both sides to the grain they share and run a positive control on a code you know survived.
+- R355. dst's manifest was read with os.path.exists+open — in CI (backend=r2) it never existed, every run cold-started, the cold start adopted the catalog's CURRENT timestamps as baseline, and the served store froze 4 MONTHS behind daily green no_change ('63/63 drained, backlog clear', 0 rows). The #54 fix converged only on the workstation (R36 reborn a third time). Cross-run fetcher STATE lives behind blob, exactly like the store — and a fix proven only under backend=local proves nothing about CI.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -9879,3 +9880,34 @@ Publisher re-codings come in two kinds: decorative (G111 -> G111_T, recoverable 
 suffix-tolerant root matching) and semantic (IFS's BCAXF mnemonics, unrecoverable — 0 root
 overlap in every family is then the true answer). Decide which kind you are looking at
 BEFORE trusting a zero. [M-20260805, cycle-5 queue work]
+
+
+### R355 — a fetcher's cross-run state read raw-local made every CI run a cold start — four months frozen behind green
+
+**What happened.** The health gate showed dst RED-DATA: newest real observation 2026-04-01
+against a daily cadence, while every daily run logged SUCCESS with `no_change`. The run log
+said "63/63 due table(s) drained; backlog clear" — fetching happily, merging nothing. The
+publisher was alive (catalog `updated` = the same morning). The split that broke it open:
+the LOCAL store held 2026-06 data (AUS.parquet mtime = the #54 fix's local proof run) while
+the R2 store the system SERVES was frozen at 2026-04.
+
+**Mechanism.** `_load_manifest`/`_save_manifest` used `os.path.exists` + `open()`. Under CI
+(backend=r2) the runner's scratch dir never has the manifest, so every run took the COLD
+START branch — which "adopts" every on-disk subject at the catalog's CURRENT `updated`
+values. That marks all changed tables as already-processed; only missing-subject tables
+become due; their merges add ~nothing; the checkpoint saves to the scratch dir and dies with
+the runner. Repeat daily, forever. The store reads on the same paths were blob-routed (the
+R261 fix) — only the STATE channel was missed, and state is what makes run N+1 different
+from run N (R130).
+
+**The rule.** *A fetcher's cross-run state (manifests, cursors, seen-sets) lives behind
+`blob`, exactly like the store — a raw-local read of state under backend=r2 doesn't fail, it
+resets, and a reset that lands in a "adopt as current" branch converts silently into
+completed work.* Corollary of R36, third occurrence: a fix proven only under backend=local
+proves nothing about CI — dst's #54 convergence fix worked flawlessly on the machine that
+tested it and no-oped in the cloud from its first scheduled run. Fix: manifest load/save
+blob-routed; 3 routing-property tests that fail on the raw code; R2 manifest seeded
+all-stale (2,317 tables) so the 4-month backlog drains over checkpointed runs; sweep of the
+other `json.load(open` fetchers — ecb/stat_slovenia are self-healing caches, statcan is
+workstation-by-design (R249), fred_releases has no registry entry (dead module),
+_imf_direct's sidecar was measured harmless. [M-20260805, cycle 8]
