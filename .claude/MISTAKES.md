@@ -4832,3 +4832,45 @@ The tell I walked past: 2,937 is not a fraction of 472,234, it is 245 countries 
 Related: R231 (simulated a pipeline I could run), R123 (suspect the instrument), R338 (the control
 that was sound and still insufficient), R229 (grep the tree before building — prior sessions leave
 their reasoning in commits as well as code).
+
+## R237
+
+**Two sessions, one repo: I re-made a fix another session had committed twenty minutes earlier — and I had the evidence of them in front of me.**
+
+Ahmed asked, mid-turn, whether I was aware two chats were doing the same work. I was not. The
+evidence had already crossed my screen twice and I explained it away both times:
+
+* the API worker deployed at **03:55:58Z, author elkassabgi@gmail.com**, when I had run no
+  deploy — I noted the anomaly, attributed the resulting change to a D1 `source` row landing
+  (R346, plausible and irrelevant), and moved on;
+* `/v1/sources` went **224 → 225 between two of my own probes** — I treated the later reading as
+  the correct one instead of asking what had changed the system underneath me.
+
+The duplication itself: `tools/audit_schedule_coverage.py` crashed with `database is locked`, I
+diagnosed it, matched the six sibling tools' `PRAGMA busy_timeout`, and committed it as
+`e5ded6d3`. The other session had committed `037033eb` — same file, same fix, a near-identical
+commit message — at 22:51:51, twenty minutes before me. Different trees, so genuinely two
+independent pieces of work, not one rebased.
+
+**Why this was the SAME session's opposite error.** Earlier today I rewrote R230 after concluding
+there was no concurrent session, having been told by a compaction summary that there was. I
+corrected an over-belief into an under-belief and treated the corrected state as settled. Ahmed's
+own question is what re-opened it. R210 and R230 are one rule seen from two sides: session
+ownership is a MEASUREMENT, not a standing belief, and it expires.
+
+**What made it invisible.** Every artefact was authored `Ahmed Elkassabgi` — the machine's git
+identity, shared by both sessions — so authorship could not discriminate. The discriminator was
+available and cheap: commits appearing that I did not make, in a window I was awake for.
+
+**The rules.**
+1. Re-establish ownership at the point of each consequential action, not once per session. `git
+   log --since="30 minutes ago"` before committing to a shared repo costs one command.
+2. An unexplained change to the system — a deploy I did not run, a count that moved between my own
+   probes — is a REPORT THAT SOMEONE ELSE IS ACTING. Explaining the mechanism does not explain the
+   agency, and I mistook the first for the second, twice.
+3. On a shared machine, git author is not identity. Use timing and "did I do this?" instead.
+4. When a fix feels obvious and quick, that is exactly when someone else has already made it —
+   obvious fixes are discovered independently, and grep for the fix before writing it.
+
+Related: R210 (duplicated 23,814 uploads the same way), R230 (the mirror error, corrected earlier
+TODAY — and over-corrected), R229 (grep before building).
