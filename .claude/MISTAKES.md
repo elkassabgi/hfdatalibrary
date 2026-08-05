@@ -113,6 +113,14 @@ trusting ANY number I produced, check these five things — each one cost real t
    Before trusting a check, feed it something that MUST fail, and verify your control really is
    negative.
 
+13. **Syntactic ledger rules are checked at COMMAND-COMPOSITION time, not at reading time.**
+   R348 (recurrence of R255's shape): one hour after reading R336 in the skill digest, I piped
+   two backgrounded long jobs through `| tail` — twice. Nothing about the task's TOPIC cues the
+   rule; only scanning the command line itself does. Before running anything backgrounded or
+   >60s, scan for the triggers: a pipe after the long-running process, a bare `&`, missing
+   `-u`, missing `PYTHONIOENCODING`, a relative path after `cd`. Correct shape:
+   `cmd > log 2>&1`, nothing appended; read progress from the artifact the job moves.
+
 **WRITING IT DOWN IS THE EASY HALF — three failures of the READ path in one night.** R328: sixteen
 ledger entries, zero digest lines, so the lessons were invisible the same evening. R330: the
 re-pull toolchain aimed at a dead drive and reported `0 corrupt`. R332: `gen_runbook`'s ledger
@@ -9606,3 +9614,31 @@ summary contained the words I was looking for.
 **Fixed.** `EXPECTED_SOURCE_COUNT = 144`, validated the way the orchestrator validates it
 (`registry.validate(reg, expected_count=config.EXPECTED_SOURCE_COUNT)` -> no problems), 263 tests
 pass, and the constant's comment block now records the three additions with their vintage tokens.
+
+### R348 — I re-typed a ledger rule's exact anti-pattern twice, within the hour of reading the rule
+
+**What happened.** During cepii_baci's serve (cycle 1 of the econ-updater loop), I launched two
+long background jobs — the 90,582-CSV derive and the D1 catalog sync — each as
+`... | tail -4` with `run_in_background`. R336 says never pipe a watched long job through
+`tail`/`head`: the pipe buffers everything and the silence is yours. I had read that rule, in
+the skill's iron-rules digest, roughly one hour earlier — and then composed the same pipe
+twice. Progress became invisible both times; the jobs themselves were healthy (proven by
+counting R2 objects advancing: 12,385 → 24,326), so the cost was observability, not data. The
+same recurrence shape as R255 ("the ledger applies at the point of ACTION, not at session
+start" — typed `nohup … &` inside run_in_background the same hour it was written down).
+
+**Why reading did not prevent it.** Rules with a SYNTACTIC trigger (`| tail` on a long-running
+command, `&` inside run_in_background, `git -C` for the ledger) are not retrieved by topic —
+nothing about "derive CSVs" cues "tail". They fire only if checked at composition time, and
+composition is exactly when attention is on the domain, not the shell.
+
+**The rule (sharpened, not new).** *When composing any command that will run in background or
+exceed ~60s, scan the command line itself for the syntactic ledger triggers before running:
+a pipe after the long-running process, a bare `&`, a missing `-u`, a missing
+`PYTHONIOENCODING`, a relative path after `cd`.* The correct shape is
+`cmd > log 2>&1` with NOTHING appended (R216), and progress is read from the ARTIFACT the job
+moves (object counts, row counts — R54/R80), which is what worked here.
+
+**Also noted for honesty:** the harness's own task-output capture makes the `| tail` doubly
+pointless — the full output lands in the task file either way; the pipe only delays it to
+process exit.
