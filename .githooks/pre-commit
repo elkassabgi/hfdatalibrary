@@ -1,12 +1,17 @@
 #!/bin/sh
 # MISTAKES.md is append-only (R247). A commit that DECREASES its entry count is a stale-buffer
-# rewrite in progress — the exact failure that deleted 18 entries once (R247) and 118 entries
-# on 2026-08-05 (R352). Refuse it mechanically; a genuine restructure can bypass with
-# git commit --no-verify AFTER a human decision, never silently.
+# rewrite in progress — the failure that deleted 18 entries once (R247) and 118 on 2026-08-05
+# (R352). Refuse it mechanically. NOTE: grep -c prints its count even when it exits 1 on zero
+# matches, so `|| echo 0` DOUBLES the output and broke this hook's first version — the
+# self-test caught it committing a truncation with exit 0 (a guard that cannot refuse, R346).
 if git diff --cached --name-only | grep -q "^\.claude/MISTAKES.md$"; then
-  staged=$(git show :./.claude/MISTAKES.md | grep -c "^### R")
-  head_n=$(git show HEAD:./.claude/MISTAKES.md 2>/dev/null | grep -c "^### R" || echo 0)
-  if [ "$staged" -lt "$head_n" ]; then
+  staged=$(git show :./.claude/MISTAKES.md | grep -c "^### R" || true)
+  if git cat-file -e HEAD:./.claude/MISTAKES.md 2>/dev/null; then
+    head_n=$(git show HEAD:./.claude/MISTAKES.md | grep -c "^### R" || true)
+  else
+    head_n=0
+  fi
+  if [ "${staged:-0}" -lt "${head_n:-0}" ]; then
     echo "REFUSED: staged MISTAKES.md has $staged entries; HEAD has $head_n." >&2
     echo "The ledger is append-only (R247/R352). You are probably writing through a stale" >&2
     echo "buffer. Rebuild your edit on the CURRENT file. (--no-verify only after a human" >&2
