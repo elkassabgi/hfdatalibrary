@@ -9809,3 +9809,30 @@ TODAY — and over-corrected), R229 (grep before building).
 **Why R247 did not save it.** R247 names the exact signal (large deletions beside small insertions) and the write-time discipline (verify the ENTRY COUNT after writing) — but nothing enforces it mechanically, and a session that reads the rules can still write through a stale buffer.
 
 **Fix beyond reconstruction.** A pre-commit hook now refuses any MISTAKES.md commit whose `### R` count decreases (installed with this entry). Reconstruction was append-only from git history: base 8cbc0cc, correction re-applied inside R350, R237 re-applied as R351; nothing force-pushed.
+
+### R353 — a control signal built as an Exception was eaten by every broad handler between the signal and its handler
+
+**What happened.** imf_pip_direct's proof run passed 80 minutes against the orchestrator's
+45-minute per-unit SIGALRM. `UnitTimeout` is DELIBERATELY a plain `Exception` — the design
+comment explains why: the unit handler must demote one source, never abort the run. But three
+broad `except Exception` blocks sat between the signal and that handler, inside
+`jobs/ingest_imf_direct.py`: two retry loops that caught the kill, slept and RETRIED it
+(consuming the one-shot signal), and the streamed→sliced belt-and-braces fallback that caught
+it and **started a full sliced re-pull from zero** — the kill became the starting gun for the
+work being stopped.
+
+**How it was found.** The run's behaviour contradicted the code I had just read: the flat-45
+deadline was confirmed at orchestrate.py:153 with no heavy override, yet the unit lived on.
+The contradiction was checkable in one grep (`except Exception` in the ingester) and the
+mechanism fell out of the three contexts. The live run was left to finish (cancelling
+guaranteed nothing); the fix shipped for every next run.
+
+**The rule.** *An Exception-subclass control signal is only as strong as the narrowest broad
+handler in its path. Shipping one obliges you to audit EVERY `except Exception` between where
+it is raised and where it is handled — or the signal must re-raise by name at each, or be a
+BaseException (which this one must not be, per its own design).* Corollary: when a deadline
+provably exists and the process outlives it, the deadline was consumed, not missed — look for
+the eater, not for a longer clock. Fix: name-based re-raise at all three sites (import-cycle
+forbids the class import), four tests planting a fake-named exception at each signal landing
+point, and AQUEDUCT_UNIT_TIMEOUT_MIN=180 on updater-heavy — the 45-minute default is right
+for the shared daily run and wrong for a dedicated-giant workflow. Commit 9b76aec5.
