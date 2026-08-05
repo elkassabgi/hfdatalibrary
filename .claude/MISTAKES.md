@@ -9836,3 +9836,17 @@ the eater, not for a longer clock. Fix: name-based re-raise at all three sites (
 forbids the class import), four tests planting a fake-named exception at each signal landing
 point, and AQUEDUCT_UNIT_TIMEOUT_MIN=180 on updater-heavy — the 45-minute default is right
 for the shared daily run and wrong for a dedicated-giant workflow. Commit 9b76aec5.
+
+**R353 CORRECTION (same day, from the run's own log):** the claim "PIP ran 80+ minutes past a
+45-minute deadline" was WRONG. When the run concluded, its log showed the unit took **1,595s
+(27 min) — under the deadline**; the 2+ hours I attributed to a swallowed kill were the
+POST-unit steps (publishing a 3.33 GB-stream store and coherence-mapping 3,126,127 keys). I
+diagnosed a live victim from step-level elapsed time without a unit-level clock — the same
+step-vs-unit conflation I had already caught myself making on IMTS hours earlier, and this
+time I wrote it into a ledger entry and a commit message before the run could answer. The
+DEFECT is real (the three handlers demonstrably catch UnitTimeout — the four tests plant the
+signal and prove the swallow), the fix and the heavy-runner ceiling stand; only the named
+victim was wrong. Rule sharpened: *a mechanism proven possible plus a duration anomaly is
+still a HYPOTHESIS about any particular run — the run's own per-unit clock is the only
+witness, and it testifies when the run concludes.* (The R257 shape: a plausible mechanism
+citing real rules, refuted by one number.)
