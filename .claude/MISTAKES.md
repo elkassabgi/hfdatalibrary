@@ -186,6 +186,8 @@ verification that contradicts a fact you established personally as the suspect. 
 - R355. dst's manifest was read with os.path.exists+open — in CI (backend=r2) it never existed, every run cold-started, the cold start adopted the catalog's CURRENT timestamps as baseline, and the served store froze 4 MONTHS behind daily green no_change ('63/63 drained, backlog clear', 0 rows). The #54 fix converged only on the workstation (R36 reborn a third time). Cross-run fetcher STATE lives behind blob, exactly like the store — and a fix proven only under backend=local proves nothing about CI.
 - R356. I catalogued GS_LI at SERIES grain by family reflex — 80,394 rows, ~16% of the remaining D1 headroom — without re-running the pre-committed #45 arithmetic for THIS flow's measured count. Measured after the fact: 233 C.F tables (a 345x collapse). Caught before D1/serve; the rows were local-only and replaced. A pre-committed decision RULE is not a decision — it re-runs on every new measurement, especially when the family's previous members made the other grain look default.
 - R357. A background catalog refresh streamed catalog.db WHILE a foreground cataloguer wrote it: the upload passed quick_check yet carried 114 torn-page phantom "sources" (raw b-tree bytes as source_ids) that then held the superset guard hostage — and the guard's own report line crashed on bytes.__format__. Refreshes SERIALIZE after cataloguing; the guard now drops non-text ids LOUDLY as corruption; quick_check proves structure, never snapshot consistency.
+- R358. The 2026-07-16 DeFiLlama un-gating updated D1 + worker but left catalog.db on the pre-audit 'defillama-open' row — an NC written grant advertised as commercial_ok=1 for 20 days on every catalog.db-fed surface. R38's two-store rule extends to LICENCE rows: a re-classification lands in catalog.db AND D1 AND the R2 snapshot in one session, flags read from configs/sources.yaml (tools/apply_license_class.py), never re-typed per store.
+- R359. §5.7 demoted to partial on ANY unmapped changed key even when every catalogued key was mapped and re-derived — so partial catalogue coverage was punished HARDER than zero coverage (which passes trivially), 10+ sources could never go green or bump vintage, and the gate was red every day with real reds buried in it (R244). Now: proven-uncatalogued residue = non-demoting 'csv coverage note:'; zero-mapped-with-rows (key-form mismatch) and derive failures still demote. Before triaging a mass health event source-by-source, CLASSIFY THE NOTES — 36 "unhealthy" collapsed to 3 causes in one query. A check the median healthy source cannot pass measures its own policy, not the fleet.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -9966,3 +9968,56 @@ mid-stream" — its post-upload verify was built for THIS, but quick_check + cou
 structure and totals, not row-level sanity; the guard is where torn rows finally surface,
 so the guard must know what corruption looks like instead of crashing on it.
 [M-20260805, cycle 15]
+
+### R358 — an un-gating updated D1 and the worker but not catalog.db: an NC grant advertised as commercial-OK for 20 days
+
+**What happened.** The 2026-07-16 DeFiLlama un-gating (written grant from
+support@defillama.com: non-commercial + attribution) regenerated the denylist, synced D1 and
+deployed the worker — and left LOCAL `catalog.db` on the pre-audit `defillama-open` row with
+`commercial_ok=1`. Every surface fed from catalog.db (R2 coherence snapshot, runbooks, any
+future D1 re-sync) carried terms the grant does not give, for 20 days. Found only because the
+health-gate triage of 2026-08-05 walked defillama end-to-end; nothing audits licence-row
+parity between the stores. The ei_statreview entry had already named this exact hazard
+("un-gating alone would have advertised EI data as commercial-OK") — the check existed as
+prose, not as a mechanism.
+
+**The fix.** `tools/apply_license_class.py` — points a source's catalog rows at a licence
+class DECLARED in configs/sources.yaml (single source of truth, refuses undeclared or
+mismatched classes, prints before/after, idempotent). Applied: defillama → defillama-granted
+(reservable=1, commercial_ok=0, attribution_required=1); D1 re-synced, R2 refreshed.
+
+**The rule.** *R38 (catalog lives in TWO stores) extends to LICENCE rows: an un-gating or
+re-classification must land in catalog.db AND D1 AND the R2 snapshot in the same session, and
+the flags must come from one declared source of truth (configs/sources.yaml), never re-typed
+per store.* A compliance change that skips a store is not partially done — it is wrong
+somewhere, and the somewhere is whichever surface a user reads next.
+[M-20260805, defillama cycle]
+
+### R359 — §5.7 punished partial catalogue coverage harder than zero coverage: 10+ sources permanently partial, the gate red every day
+
+**What happened.** The CSV-coherence step demoted a run to `partial` whenever ANY changed
+store key lacked a catalog mapping — even when every key that HAD a catalog row was mapped
+and its CSV re-derived. A source with ZERO catalogued series passes trivially (the measured
+exemption); a source with a deliberately-partial catalogue (statfin's new-table tail, snb's
+2 stray keys, unesco_*/who_sdg's uncatalogued splits, defillama's dark bulk families) could
+NEVER go green, never bump its vintage (so it re-fetched everything, forever), and sat in the
+health gate's failing list every single day. 36 live sources were ATTENTION on 2026-08-05,
+every daily run red for 2+ days — the R244 disease: a gate that is always red stops being
+read, and bls/zillow's REAL reds were buried in it.
+
+**The fix.** The boundary is now explicit: residual keys PROVEN uncatalogued (all three
+mapping rules tried) after a successful mapped-derive are a `csv coverage note:` — persisted
+on the unit, printed, NOT demoting. Zero-mapped-with-rows (key-form mismatch, defillama
+pre-fix: "24 rows but none matched") still demotes; derive failures and missing cursors still
+demote. Producer and consumer pin the prefix in tests (test_csv_coverage_note.py). defillama
+itself additionally needed cursor QUALIFICATION (store spells identity as file+bare key,
+catalog as family-qualified id) — its 24 served CSVs had never once re-derived from CI.
+
+**The rule.** *When a health signal fires on a status, ask what fraction of the population
+holds that status BY DESIGN — a check that the median healthy source cannot pass is measuring
+its own policy, not the fleet. Coherence (§5.7) is a claim about SERVED artifacts tracking
+the store; keys with no catalog row have no artifact to go stale and belong in a coverage
+note, not a demotion.* Corollary: before triaging a mass event source-by-source, classify
+the notes first — 36 "unhealthy" decomposed into 5 designed budget slices, 12 coherence
+(mostly one policy), and 19 assorted in one query.
+[M-20260805, defillama cycle]
