@@ -9672,3 +9672,53 @@ page gets one confirmation against the live artefact before it drives work.* Fix
 the audit's harvest verbatim into gen_runbook, plus a drift test asserting the two harvests are
 IDENTICAL on the real util.ts (fails the moment either is edited alone) and a fixture test for
 packed lines and comment prose. 215 pages corrected in one regeneration; 283 tests pass.
+
+## R236
+
+**A source was catalogued at a grain that does not exist in its own store: 0 of 2,937 ids resolve.**
+
+`imf_imts_direct` was registered and catalogued in an earlier cycle as the publisher-direct
+successor to the frozen `imf_dot` relay. Measured today before touching anything:
+
+```
+store            71,668,759 rows / 472,234 distinct series
+catalogue             2,937 rows
+state.db                  0 rows   (the fetcher has never run)
+live /v1/sources     absent        (control imf_bop_direct present -> real absence, R338)
+```
+
+The catalogued ids read `IMTS:ABW.A.MG_CIF_USD` — country·frequency·indicator, THREE parts. The
+store's keys read `IMTS:NIC.ALB.M.TBG_USD.IMTS` — country·**counterpart**·frequency·indicator,
+FIVE parts. The catalogue silently drops COUNTERPART_COUNTRY, which is the dimension that makes
+a trade-by-partner dataset what it is. Intersecting the catalogued ids against ALL 472,234 store
+keys, with a key drawn from the store as a passing control: **0 of 2,937 exist.**
+
+Every one of those rows is an offer to serve something that cannot be produced. They have not
+hurt anyone only because the source is absent from `SUPPORTED_SOURCES`, so it answers 501
+`not_migrated` rather than 404 — the "never flip the flag first" ordering rule (R167,
+M-20260727-09) protected users from a defect it was not aimed at.
+
+This is the R245/R221 fingerprint stated in the skill — *unmapped == catalog-count means grain
+mismatch, not missing catalogue* — and I recognised it only because the numbers were measured in
+the order the per-source procedure prescribes (state, catalogue, live) before any edit.
+
+**What I did NOT do, and why.** The obvious repair is to re-catalogue at the store's real grain
+with `tools/catalog_imf_direct.py`. That writes 472,234 rows. Measured D1 occupancy is 9.31 GB of
+a ~10 GB hard ceiling with a practical budget of ~400–500k rows for ALL remaining cataloguing —
+so this ONE source would consume the entire remaining capacity of the catalogue, leaving nothing
+for the other 25 actionable sources. That is task #45, reserved to Ahmed, and deleting the 2,937
+phantom rows is independently reserved ("deleting catalog rows, including phantom rows").
+
+**The rules.**
+1. Before serving or repairing a source, intersect its CATALOGUED ids against its STORE keys and
+   report the hit count. Equal counts of "catalogued" and "unmapped" is a grain mismatch, never a
+   missing catalogue.
+2. Count the parts. A key with N dot-separated fields and a catalogue id with N-1 is a dropped
+   DIMENSION, and dropping one from a by-partner dataset destroys its meaning, not just its size.
+3. A grain decision is arithmetic against measured headroom, done BEFORE the work: 472,234 rows
+   against a ~450k budget is the answer, and it is not re-arguable.
+4. `SUPPORTED_SOURCES` last, always. Here it was the only thing standing between 2,937 phantom
+   rows and 2,937 live 404s.
+
+Related: R245/R221 (the fingerprint), R167 (order: derive → sync → flip), R338 (the control that
+made the absence real), R231 (measure the artefact, not a model of it).
