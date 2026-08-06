@@ -192,6 +192,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R361. The csv_retry_queue was WRITE-ONLY: derive.py promised failed/deferred CSV ids are "retried next run instead of lost", the caller enqueued them — and csv_retries()/clear_csv_retries() had ZERO callers, so every parked id was lost (insee_bdm: 43,354 in one run). When code says "retried later", grep for the READER before believing it. Fixed: run_once drains per source (cap 20k/run), successes cleared, refailures stay queued WITHOUT demoting (else R359's disease returns through a new door). Every buffering structure belongs in the health report by SIZE.
 - R362. I dispatched census's "proof run" to the CLOUD — but census is run_location: local and its key is deliberately not a CI secret; the explicit --source override is location-blind, so 45/45 flows got the Missing-Key page (HTTP 200 + HTML) and were recorded as schema breaks. Prove a source WHERE IT RUNS (read run_location first; local proofs via run_local_heavy.ps1 -Only X, never a bare local updater.run — doomed lineage). Wall-to-wall identical failure right after your change is an ENVIRONMENT signature, not a logic one. The override now warns loudly.
 - R363. A NEW tool wrapping wrangler crashed its reader thread on cp1252 (R234's exact landmine, recurred the day after re-reading the rule): I set PYTHONIOENCODING for the CHILD but subprocess.run(text=True) decodes the pipe with the PARENT's locale — pass encoding="utf-8" explicitly, the pattern already pinned in core/sync_state_d1.py:226-233. When wrapping a subprocess the codebase already wraps elsewhere, COPY the existing call's kwargs, don't re-derive them. (Same minute's other lesson: a Cloudflare 7403 on one call with an identical call succeeding 60s later is a transient, not a permission wall — re-probe once before diagnosing auth, R222 class.)
+- R364. The whr derive PUT 1,927 CSVs for a 1,749-row catalogue — derive_csv_bulk streams EVERY parquet shard in the source dir, and the dir held the quarantine-pending OWID-era whr.parquet (178 series) beside the new primary whr_fig21.parquet. The dry run SAID "2 shards" and printed 1,927; I greped for "verify/done", saw 300/300 byte-identical, and ran the real PUT past both tells. 178 provenance-tainted CSVs landed on R2 (unreachable behind whr's 451 denylist; deletion queued on the blocked permission; local legacy shard moved OUT of the store dir to data/_quarantine/ so no re-derive repeats it). Rules: read a dry run's COUNTS against the catalogue count before the real run — a derive for source X must PUT exactly catalogue(X) objects, and any excess names the exact contamination; and when a store dir deliberately hosts two provenances, physically separate them BEFORE running any whole-dir tool.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10119,6 +10120,32 @@ beside a succeeding twin is a TRANSIENT, not a permission wall — re-probe once
 diagnosing auth (R222 class). Had I "fixed" auth first I would have burned an hour on a
 blip.
 [M-20260806, delist tool]
+
+### R364 — the whr derive PUT 1,927 CSVs for a 1,749-row catalogue: the dry run announced the contamination twice and I read past both tells
+
+Serving whr's rebuilt Figure-2.1 data, I ran `derive_csv_bulk --source whr`. The tool
+streams EVERY parquet shard in the source dir — and the dir still held the OWID-era
+`whr.parquet` (178 series, the provenance-tainted data the whole rebuild exists to
+never serve) beside the new primary `whr_fig21.parquet` (1,749). The dry run printed
+`2 shards` and `1,927 series streamed`; my grep pattern surfaced both lines and I
+proceeded anyway, because `verify: 300/300 byte-identical` pattern-matched success.
+178 tainted CSVs landed on R2.
+
+Contained: they are unreachable behind whr's 451 denylist (verified this morning),
+their deletion is queued on the already-blocked R2-deletion permission, the legacy
+shard is physically moved out of the store dir (`data/_quarantine/whr_owid_era.parquet`
+— last copy, re-crawlable, NOT deleted), and the un-gate now WAITS for the purge.
+
+**Rules. (1) Before any real derive, reconcile the dry run's series count against the
+catalogue count — a derive for source X must PUT exactly catalogue(X) objects, and any
+excess names the exact contamination set. (2) When a store dir deliberately holds two
+provenances (or two grains — the scb _REGRAIN_QUARANTINE precedent), physically
+separate them BEFORE running any whole-dir tool; a doc note saying "these rows are
+unserved" does not bind a tool that enumerates files.**
+
+Related: R167 (derive samples), R333/R314 (two-grain stores), R150 (publishing tools
+outrun intent).
+[M-20260806, whr derive]
 
 ## R238
 
