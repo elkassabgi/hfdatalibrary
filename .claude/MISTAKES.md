@@ -189,6 +189,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R358. The 2026-07-16 DeFiLlama un-gating updated D1 + worker but left catalog.db on the pre-audit 'defillama-open' row — an NC written grant advertised as commercial_ok=1 for 20 days on every catalog.db-fed surface. R38's two-store rule extends to LICENCE rows: a re-classification lands in catalog.db AND D1 AND the R2 snapshot in one session, flags read from configs/sources.yaml (tools/apply_license_class.py), never re-typed per store.
 - R359. §5.7 demoted to partial on ANY unmapped changed key even when every catalogued key was mapped and re-derived — so partial catalogue coverage was punished HARDER than zero coverage (which passes trivially), 10+ sources could never go green or bump vintage, and the gate was red every day with real reds buried in it (R244). Now: proven-uncatalogued residue = non-demoting 'csv coverage note:'; zero-mapped-with-rows (key-form mismatch) and derive failures still demote. Before triaging a mass health event source-by-source, CLASSIFY THE NOTES — 36 "unhealthy" collapsed to 3 causes in one query. A check the median healthy source cannot pass measures its own policy, not the fleet.
 - R360. I reported a healthy CI run at "3h… 4h… past its 6-hour ceiling" while it was at ~2h05m — durations estimated from session-feel across CDT/UTC timestamps, never from a clock — and the phantom overrun spawned fake anomaly analysis and nearly a cancel. A duration claim needs two same-zone instrument reads (`date -u` beside startedAt), and timeout reasoning needs the CONFIGURED value (grep timeout-minutes), not a platform default from memory.
+- R361. The csv_retry_queue was WRITE-ONLY: derive.py promised failed/deferred CSV ids are "retried next run instead of lost", the caller enqueued them — and csv_retries()/clear_csv_retries() had ZERO callers, so every parked id was lost (insee_bdm: 43,354 in one run). When code says "retried later", grep for the READER before believing it. Fixed: run_once drains per source (cap 20k/run), successes cleared, refailures stay queued WITHOUT demoting (else R359's disease returns through a new door). Every buffering structure belongs in the health report by SIZE.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10041,6 +10042,32 @@ felt. And before reasoning about any timeout, read the configured value (`grep
 timeout-minutes`), not a platform default from memory.* A wrong duration is not cosmetic:
 it manufactures phantom anomalies, and killing a healthy run over one destroys real work.
 [M-20260806, trio watch]
+
+### R361 — the csv_retry_queue was write-only: the code PROMISED "retried next run instead of lost" and nothing ever read the queue
+
+**What happened.** derive.py's wall-clock budget ships failures/deferrals back to the
+caller with an explicit written contract: ids not reached "come back in `failed` ... so
+they are retried next run instead of lost." The caller enqueues them
+(store.enqueue_csv_retry) — and that was the END of the pipeline: `csv_retries()` and
+`clear_csv_retries()` existed in state.py with ZERO callers. Every id ever parked was in
+fact lost (silently stale served CSVs, §5.7's exact target); insee_bdm's outage-recovery
+run parked 43,354 in one go, which is what made the gap visible. Found by asking the
+one-command question: who CONSUMES this queue?
+
+**The fix.** run_once's csv step drains the source's queue after the fresh derive
+(bounded at _CSV_RETRY_CAP=20,000/run): successes cleared + recorded for catalog sync;
+refailures STAY QUEUED and are deliberately NOT merged into csv_failed — demoting a run
+over old residue would re-create R359's permanently-partial disease through a new door.
+Under r2 a retried id only derives when its file is on the runner; the rest wait for the
+run that next rewrites their file. Tests pin the roundtrip and the non-demotion.
+
+**The rule.** *A queue is a liability until its consumer exists — when code writes
+"retried later" / "picked up next run", grep for the READER before believing it; a
+promise implemented halfway is a silent data-loss path wearing a safety feature's name.*
+Corollary: every buffering structure (queue, retry table, deferred list) belongs in the
+health report by SIZE, because a write-only queue looks identical to a healthy one from
+the outside.
+[M-20260806, insee_bdm recovery]
 
 ## R238
 
