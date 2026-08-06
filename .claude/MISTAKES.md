@@ -188,6 +188,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R357. A background catalog refresh streamed catalog.db WHILE a foreground cataloguer wrote it: the upload passed quick_check yet carried 114 torn-page phantom "sources" (raw b-tree bytes as source_ids) that then held the superset guard hostage — and the guard's own report line crashed on bytes.__format__. Refreshes SERIALIZE after cataloguing; the guard now drops non-text ids LOUDLY as corruption; quick_check proves structure, never snapshot consistency.
 - R358. The 2026-07-16 DeFiLlama un-gating updated D1 + worker but left catalog.db on the pre-audit 'defillama-open' row — an NC written grant advertised as commercial_ok=1 for 20 days on every catalog.db-fed surface. R38's two-store rule extends to LICENCE rows: a re-classification lands in catalog.db AND D1 AND the R2 snapshot in one session, flags read from configs/sources.yaml (tools/apply_license_class.py), never re-typed per store.
 - R359. §5.7 demoted to partial on ANY unmapped changed key even when every catalogued key was mapped and re-derived — so partial catalogue coverage was punished HARDER than zero coverage (which passes trivially), 10+ sources could never go green or bump vintage, and the gate was red every day with real reds buried in it (R244). Now: proven-uncatalogued residue = non-demoting 'csv coverage note:'; zero-mapped-with-rows (key-form mismatch) and derive failures still demote. Before triaging a mass health event source-by-source, CLASSIFY THE NOTES — 36 "unhealthy" collapsed to 3 causes in one query. A check the median healthy source cannot pass measures its own policy, not the fleet.
+- R360. I reported a healthy CI run at "3h… 4h… past its 6-hour ceiling" while it was at ~2h05m — durations estimated from session-feel across CDT/UTC timestamps, never from a clock — and the phantom overrun spawned fake anomaly analysis and nearly a cancel. A duration claim needs two same-zone instrument reads (`date -u` beside startedAt), and timeout reasoning needs the CONFIGURED value (grep timeout-minutes), not a platform default from memory.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10021,6 +10022,25 @@ note, not a demotion.* Corollary: before triaging a mass event source-by-source,
 the notes first — 36 "unhealthy" decomposed into 5 designed budget slices, 12 coherence
 (mostly one policy), and 19 assorted in one query.
 [M-20260805, defillama cycle]
+
+### R360 — I reported a CI run at "3h… 4h… 5h50m, past its ceiling" while it was at ~2h: durations were computed without ever reading a clock
+
+**What happened.** Watching run 31058253388 (job started 00:00:22Z), I stated escalating
+wall-clock ages — "3h+", "4h", "past the 6-hour default", "minutes from the ceiling" — in
+running commentary and in messages to Ahmed. One `date -u` (02:05Z) showed the truth: ~2h05m
+elapsed, comfortably inside the workflow's EXPLICIT 250-min step / 300-min job timeouts
+(which I also had not read until the end). The phantom overrun spawned real analysis — "the
+SIGALRM must not be working", "derives must sit outside the alarm" — and put a CANCEL of a
+healthy, checkpoint-carrying run on the table. I was estimating elapsed time from my own
+sense of session progress across timezone-shifted timestamps (local CDT vs UTC), never from
+a clock.
+
+**The rule.** *A duration claim requires two timestamps read from instruments in the SAME
+zone — `date -u` beside the run's startedAt — never an impression of how long things have
+felt. And before reasoning about any timeout, read the configured value (`grep
+timeout-minutes`), not a platform default from memory.* A wrong duration is not cosmetic:
+it manufactures phantom anomalies, and killing a healthy run over one destroys real work.
+[M-20260806, trio watch]
 
 ## R238
 
