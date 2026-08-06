@@ -191,6 +191,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R360. I reported a healthy CI run at "3h… 4h… past its 6-hour ceiling" while it was at ~2h05m — durations estimated from session-feel across CDT/UTC timestamps, never from a clock — and the phantom overrun spawned fake anomaly analysis and nearly a cancel. A duration claim needs two same-zone instrument reads (`date -u` beside startedAt), and timeout reasoning needs the CONFIGURED value (grep timeout-minutes), not a platform default from memory.
 - R361. The csv_retry_queue was WRITE-ONLY: derive.py promised failed/deferred CSV ids are "retried next run instead of lost", the caller enqueued them — and csv_retries()/clear_csv_retries() had ZERO callers, so every parked id was lost (insee_bdm: 43,354 in one run). When code says "retried later", grep for the READER before believing it. Fixed: run_once drains per source (cap 20k/run), successes cleared, refailures stay queued WITHOUT demoting (else R359's disease returns through a new door). Every buffering structure belongs in the health report by SIZE.
 - R362. I dispatched census's "proof run" to the CLOUD — but census is run_location: local and its key is deliberately not a CI secret; the explicit --source override is location-blind, so 45/45 flows got the Missing-Key page (HTTP 200 + HTML) and were recorded as schema breaks. Prove a source WHERE IT RUNS (read run_location first; local proofs via run_local_heavy.ps1 -Only X, never a bare local updater.run — doomed lineage). Wall-to-wall identical failure right after your change is an ENVIRONMENT signature, not a logic one. The override now warns loudly.
+- R363. A NEW tool wrapping wrangler crashed its reader thread on cp1252 (R234's exact landmine, recurred the day after re-reading the rule): I set PYTHONIOENCODING for the CHILD but subprocess.run(text=True) decodes the pipe with the PARENT's locale — pass encoding="utf-8" explicitly, the pattern already pinned in core/sync_state_d1.py:226-233. When wrapping a subprocess the codebase already wraps elsewhere, COPY the existing call's kwargs, don't re-derive them. (Same minute's other lesson: a Cloudflare 7403 on one call with an identical call succeeding 60s later is a transient, not a permission wall — re-probe once before diagnosing auth, R222 class.)
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10097,6 +10098,27 @@ is absent. And when every sub-unit fails identically right after your change, su
 ENVIRONMENT of the run before the change: identical wall-to-wall failure is an
 environment signature, not a logic one.*
 [M-20260806, census proof]
+
+### R363 — my new delist tool crashed decoding wrangler's output: the R234 landmine, re-shipped in fresh code the day after re-reading the rule
+
+Building tools/delist_source_rows.py (Ahmed-authorized hf_equities/owid removals), I set
+`PYTHONIOENCODING=utf-8` in the child's env — the documented fix — and still crashed:
+`UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f` in `subprocess.py`'s reader
+thread. The env var governs the CHILD's stdout encoding; `subprocess.run(text=True)`
+decodes the pipe with the PARENT's locale (cp1252 on this console). The fix —
+`encoding="utf-8", errors="replace"` on the subprocess call — was already pinned in
+`core/sync_state_d1.py:226-233`, in the very codebase, wrapping the very same wrangler.
+
+**Rule: when wrapping a subprocess the codebase already wraps somewhere else, copy the
+existing call site's kwargs — the survivors encode the platform lessons; re-deriving the
+call from memory re-runs the whole minefield.**
+
+The same run carried a second lesson: the first D1 DELETE failed `[code: 7403] not
+authorized`, and sixty seconds later the identical call class succeeded. A one-off 7403
+beside a succeeding twin is a TRANSIENT, not a permission wall — re-probe once before
+diagnosing auth (R222 class). Had I "fixed" auth first I would have burned an hour on a
+blip.
+[M-20260806, delist tool]
 
 ## R238
 
