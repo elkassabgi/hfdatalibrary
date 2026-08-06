@@ -190,6 +190,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R359. §5.7 demoted to partial on ANY unmapped changed key even when every catalogued key was mapped and re-derived — so partial catalogue coverage was punished HARDER than zero coverage (which passes trivially), 10+ sources could never go green or bump vintage, and the gate was red every day with real reds buried in it (R244). Now: proven-uncatalogued residue = non-demoting 'csv coverage note:'; zero-mapped-with-rows (key-form mismatch) and derive failures still demote. Before triaging a mass health event source-by-source, CLASSIFY THE NOTES — 36 "unhealthy" collapsed to 3 causes in one query. A check the median healthy source cannot pass measures its own policy, not the fleet.
 - R360. I reported a healthy CI run at "3h… 4h… past its 6-hour ceiling" while it was at ~2h05m — durations estimated from session-feel across CDT/UTC timestamps, never from a clock — and the phantom overrun spawned fake anomaly analysis and nearly a cancel. A duration claim needs two same-zone instrument reads (`date -u` beside startedAt), and timeout reasoning needs the CONFIGURED value (grep timeout-minutes), not a platform default from memory.
 - R361. The csv_retry_queue was WRITE-ONLY: derive.py promised failed/deferred CSV ids are "retried next run instead of lost", the caller enqueued them — and csv_retries()/clear_csv_retries() had ZERO callers, so every parked id was lost (insee_bdm: 43,354 in one run). When code says "retried later", grep for the READER before believing it. Fixed: run_once drains per source (cap 20k/run), successes cleared, refailures stay queued WITHOUT demoting (else R359's disease returns through a new door). Every buffering structure belongs in the health report by SIZE.
+- R362. I dispatched census's "proof run" to the CLOUD — but census is run_location: local and its key is deliberately not a CI secret; the explicit --source override is location-blind, so 45/45 flows got the Missing-Key page (HTTP 200 + HTML) and were recorded as schema breaks. Prove a source WHERE IT RUNS (read run_location first; local proofs via run_local_heavy.ps1 -Only X, never a bare local updater.run — doomed lineage). Wall-to-wall identical failure right after your change is an ENVIRONMENT signature, not a logic one. The override now warns loudly.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10068,6 +10069,34 @@ Corollary: every buffering structure (queue, retry table, deferred list) belongs
 health report by SIZE, because a write-only queue looks identical to a healthy one from
 the outside.
 [M-20260806, insee_bdm recovery]
+
+### R362 — I dispatched a workstation-routed source's "proof run" to the cloud: 45/45 flows returned the Missing-Key page and were recorded as schema breaks
+
+**What happened.** To prove the census table-cursor fix I ran
+`gh workflow run updater-daily.yml -f source=census -f force=true` — but census is
+`run_location: local`; its CENSUS_API_KEY lives in .env on the workstation and is
+deliberately NOT a CI secret. The explicit `--source` override is location-blind by design
+(the workstation job depends on it), so the cloud ran census keyless: the Census API
+answers a missing key with HTTP **200** and an HTML page, the fetcher correctly refuses
+DEFINITIVELY per flow, and the run wrote "45/45 sub-unit(s) returned 200 but parsed 0 rows
+(schema/structural break)" into cloud state — a false verdict wearing my fix's name. I had
+read the fetcher's own error text — "this source is routed run_location: local for exactly
+that reason" — HOURS earlier, in this same session, while auditing that very key.
+
+**The tell I initially misread:** all 45 flows failing identically the first run after my
+change looked like my change. The discriminating probe (the fetcher's exact query, with the
+key, from the machine that has it) returned real rows — the fix was never exercised.
+
+**The fix.** The override now prints a loud warning when an explicit --source runs at the
+wrong location; the real census proof goes through `tools/run_local_heavy.ps1 -Only census`
+(the CAS pull/push wrapper — a bare local `updater.run` writes to a doomed lineage).
+
+**The rule.** *Before dispatching any proof run, read the source's `run_location` and
+prove it WHERE IT RUNS — a cloud proof of a local-routed source proves only that the key
+is absent. And when every sub-unit fails identically right after your change, suspect the
+ENVIRONMENT of the run before the change: identical wall-to-wall failure is an
+environment signature, not a logic one.*
+[M-20260806, census proof]
 
 ## R238
 
