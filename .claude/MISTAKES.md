@@ -193,6 +193,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R362. I dispatched census's "proof run" to the CLOUD — but census is run_location: local and its key is deliberately not a CI secret; the explicit --source override is location-blind, so 45/45 flows got the Missing-Key page (HTTP 200 + HTML) and were recorded as schema breaks. Prove a source WHERE IT RUNS (read run_location first; local proofs via run_local_heavy.ps1 -Only X, never a bare local updater.run — doomed lineage). Wall-to-wall identical failure right after your change is an ENVIRONMENT signature, not a logic one. The override now warns loudly.
 - R363. A NEW tool wrapping wrangler crashed its reader thread on cp1252 (R234's exact landmine, recurred the day after re-reading the rule): I set PYTHONIOENCODING for the CHILD but subprocess.run(text=True) decodes the pipe with the PARENT's locale — pass encoding="utf-8" explicitly, the pattern already pinned in core/sync_state_d1.py:226-233. When wrapping a subprocess the codebase already wraps elsewhere, COPY the existing call's kwargs, don't re-derive them. (Same minute's other lesson: a Cloudflare 7403 on one call with an identical call succeeding 60s later is a transient, not a permission wall — re-probe once before diagnosing auth, R222 class.)
 - R364. The whr derive PUT 1,927 CSVs for a 1,749-row catalogue — derive_csv_bulk streams EVERY parquet shard in the source dir, and the dir held the quarantine-pending OWID-era whr.parquet (178 series) beside the new primary whr_fig21.parquet. The dry run SAID "2 shards" and printed 1,927; I greped for "verify/done", saw 300/300 byte-identical, and ran the real PUT past both tells. 178 provenance-tainted CSVs landed on R2 (unreachable behind whr's 451 denylist; deletion queued on the blocked permission; local legacy shard moved OUT of the store dir to data/_quarantine/ so no re-derive repeats it). Rules: read a dry run's COUNTS against the catalogue count before the real run — a derive for source X must PUT exactly catalogue(X) objects, and any excess names the exact contamination; and when a store dir deliberately hosts two provenances, physically separate them BEFORE running any whole-dir tool.
+- R365. broaden_catalog's apply printed "2 sources KEPT (60,192 series)" for my --source norgesbank run and I diagnosed a ksh RESURRECTION (the R226 do-not-resurrect source), burned both classifier attempts on a reversal delete, and nearly filed an urgent incident on Ahmed's list — before querying the store: ksh had 0 catalogue rows and 0 source rows. The summary is a CUMULATIVE resume file (dist/broaden/broaden_summary.json); its ksh entry (25,057) was the OLD R226 incident's bookkeeping, and 25,057+35,135=60,192 exactly. The R326 obs_count disease in a new organ: a resume-file total is not this run's result. Before treating any summary line as an event, query the store for the named source — one SELECT COUNT beats two permission denials and a false alarm.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10146,6 +10147,32 @@ unserved" does not bind a tool that enumerates files.**
 Related: R167 (derive samples), R333/R314 (two-grain stores), R150 (publishing tools
 outrun intent).
 [M-20260806, whr derive]
+
+### R365 — I diagnosed a ksh resurrection from a CUMULATIVE resume-file summary and spent two permission attempts reversing rows that did not exist
+
+broaden_catalog's apply for `--source norgesbank` printed `2 sources KEPT (60,192
+series)`. I read that as this run's output, subtracted my expected 35,135, went
+hunting for a 25,057-row stowaway, matched it to `ksh` in the summary's kept list —
+the R226 do-not-resurrect source — and escalated: attempted the delist reversal twice
+(both classifier-denied), drafted containment, and nearly put an "URGENT: accidental
+ksh resurrection" item on Ahmed's list.
+
+Then I ran the one query that should have come first: `SELECT COUNT(*) FROM series
+WHERE source_id='ksh'` → **0**. And the source row → **0**. The summary is a
+cumulative RESUME file (`dist/broaden/broaden_summary.json`, loaded on every
+non-dry apply); its ksh entry was bookkeeping from the ORIGINAL R226 incident, and
+25,057 + 35,135 = 60,192 exactly. My run inserted only norgesbank.
+
+**Rule: a resume/progress file's totals describe the file's HISTORY, not this run —
+the R326 obs_count disease in a new organ. Before treating any summary line as an
+event (especially one that triggers deletions or incident reports), query the store
+for the named source. One SELECT COUNT costs a second; my skipping it cost two
+classifier denials, a phantom containment plan, and nearly a false report.**
+
+The mirror lesson from the same hour: the alarm ONLY got corrected because the
+delist denial forced a pause. Verification-before-escalation should not depend on
+being blocked.
+[M-20260806, ksh phantom]
 
 ## R238
 
