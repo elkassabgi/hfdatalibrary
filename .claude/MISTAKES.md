@@ -10021,3 +10021,48 @@ note, not a demotion.* Corollary: before triaging a mass event source-by-source,
 the notes first — 36 "unhealthy" decomposed into 5 designed budget slices, 12 coherence
 (mostly one policy), and 19 assorted in one query.
 [M-20260805, defillama cycle]
+
+## R238
+
+**I told Ahmed a feature he asked for did not exist. It had been live for a week — I searched for the wrong vocabulary and read zero hits as proof of absence.**
+
+Asked whether the view counter was ever added to elkassabgidata's about page, I grepped the live
+page for `visitor-count`, `visitor`, `visitors`, `injectVisitorCounter` and `public-stats`, got 0
+for every one, built a coverage table across four sites showing "no" everywhere but hf, and told
+him plainly it was never added.
+
+It was added. It sits in `portal/about.html` as a hidden image beacon:
+
+```html
+<!-- Hidden page-view counter. Records ONLY the path and the UTC date in our own D1
+     (no cookie, no IP, no identifier) ... Read the totals at /v1/pv/report -->
+new Image().src = ".../v1/pv?p=" + encodeURIComponent(location.pathname) + "&t=" + Date.now();
+```
+
+Live, working, and already holding data: 68 loads of `/`, 5 of `/about`, since 29 July.
+
+Every token I searched came from hf's implementation — a baked `<!-- visitor-count: N -->` comment
+plus a `injectVisitorCounter()` DOM insert reading `/v1/public-stats`. The portal solves the same
+problem a completely different way, so a vocabulary search from one could not find the other. I
+searched for the ANSWER I remembered instead of the QUESTION he asked, and a five-term miss felt
+like thoroughness.
+
+**Third instance this session of one failure.** R231: simulated a pipeline instead of running it
+and "found" a bug a guard had covered since July. R233: grepped the generated pages for a string
+that was assembled at runtime in a hand-maintained file, fixed a different bug, and left the
+reported one live. Now this. The shape is identical every time — I choose an instrument from my
+own model, it returns zero, and I report the zero as a fact about the world.
+
+**The rules.**
+1. To answer "does X exist here?", read the FILE and look at what it does. Grep proposes; reading
+   disposes. A hidden beacon, an inline script and a baked comment all satisfy "counter" and share
+   no tokens.
+2. Search for the CAPABILITY, not one implementation's name: `pv|beacon|count|track|Image().src|
+   analytics` — and if the answer is no, say which terms were searched so the claim is scoped.
+3. A zero result across N synonyms is still one hypothesis, not N. All five of my terms came from
+   the same source file; they were one search wearing five hats.
+4. Before telling the user something they asked for was never built, `git log` the file they named.
+   One command would have shown the commit that built it.
+
+Related: R231, R233 (the same failure, twice already today), R229 (verify novelty before building),
+R123 (suspect the instrument first).
