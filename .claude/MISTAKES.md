@@ -194,6 +194,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R363. A NEW tool wrapping wrangler crashed its reader thread on cp1252 (R234's exact landmine, recurred the day after re-reading the rule): I set PYTHONIOENCODING for the CHILD but subprocess.run(text=True) decodes the pipe with the PARENT's locale — pass encoding="utf-8" explicitly, the pattern already pinned in core/sync_state_d1.py:226-233. When wrapping a subprocess the codebase already wraps elsewhere, COPY the existing call's kwargs, don't re-derive them. (Same minute's other lesson: a Cloudflare 7403 on one call with an identical call succeeding 60s later is a transient, not a permission wall — re-probe once before diagnosing auth, R222 class.)
 - R364. The whr derive PUT 1,927 CSVs for a 1,749-row catalogue — derive_csv_bulk streams EVERY parquet shard in the source dir, and the dir held the quarantine-pending OWID-era whr.parquet (178 series) beside the new primary whr_fig21.parquet. The dry run SAID "2 shards" and printed 1,927; I greped for "verify/done", saw 300/300 byte-identical, and ran the real PUT past both tells. 178 provenance-tainted CSVs landed on R2 (unreachable behind whr's 451 denylist; deletion queued on the blocked permission; local legacy shard moved OUT of the store dir to data/_quarantine/ so no re-derive repeats it). Rules: read a dry run's COUNTS against the catalogue count before the real run — a derive for source X must PUT exactly catalogue(X) objects, and any excess names the exact contamination; and when a store dir deliberately hosts two provenances, physically separate them BEFORE running any whole-dir tool.
 - R365. broaden_catalog's apply printed "2 sources KEPT (60,192 series)" for my --source norgesbank run and I diagnosed a ksh RESURRECTION (the R226 do-not-resurrect source), burned both classifier attempts on a reversal delete, and nearly filed an urgent incident on Ahmed's list — before querying the store: ksh had 0 catalogue rows and 0 source rows. The summary is a CUMULATIVE resume file (dist/broaden/broaden_summary.json); its ksh entry (25,057) was the OLD R226 incident's bookkeeping, and 25,057+35,135=60,192 exactly. The R326 obs_count disease in a new organ: a resume-file total is not this run's result. Before treating any summary line as an event, query the store for the named source — one SELECT COUNT beats two permission denials and a false alarm.
+- R367. I hand-dispatched seven consecutive unsdg backfill runs and the seventh was CANCELLED — evicted by the 04:59Z heavy cron and the 06:57Z daily cron arriving at the same single-slot `aqueduct-updater` group (R291, from the other side: my dispatches were the intruder, not the victim). A multi-run manual backfill must (a) check the cron calendar before each dispatch, or better (b) let the SCHEDULED tier do the work once the source is live+due with a rotation bookmark — that is exactly what the bookmark design is for. Serial hand-dispatching a live source is competing with your own scheduler for one slot.
 - R366. I declared unsdg's backfill "COMPLETE — all 713 codes in the store" from a DuckDB count on `data/clean_full/unsdg/unsdg.parquet` — which was the PRE-PURGE LOCAL RELIC (2.9M rows, 715 codes), not the R2 store the fetcher writes (2.07M rows, 396 codes at that moment). R296's exact lesson ("the local tree gave the flat-opposite answer") repeated on a completion claim: for a cloud-backend source, EVERY completeness measurement runs against R2 (mirror it down fresh, or read via blob with backend=r2) — a bare read_parquet on the local path measures whatever relic lives there. Caught only because the flow-catalogue dry run against the fresh mirror disagreed; the false "COMPLETE" had already been reported. Also: purged sources leave LOCAL relics (norgesbank's 20 siblings, unsdg's parquet) — quarantine the relic the moment a purged source is re-registered, BEFORE any tool can read it.
 
 
@@ -10196,6 +10197,24 @@ sibling parquets, unsdg's 2.9M-row store, whr's OWID shard) — quarantine the r
 at RE-REGISTRATION time, before any tool can read it, not when a tool trips over
 it. Three R364-class catches in one day is a checklist item, not a coincidence.**
 [M-20260807, unsdg relic]
+
+### R367 — my seventh hand-dispatched backfill run was cancelled by the scheduler I was racing
+
+unsdg's backfill needs ~4 rotated runs; I hand-dispatched seven in a row
+(`gh workflow run updater-daily.yml -f source=unsdg -f force=true`), each watched
+and chained on completion. Run 7 came back `cancelled` — not a runner failure:
+`updater-heavy` (04:59Z cron) and `updater-daily` (06:57Z cron) had both arrived
+at the single-slot `aqueduct-updater` concurrency group, and a newer pending run
+evicts the waiting one (R291). I had been reading R291 as something done TO my
+runs; here my dispatches were the intruder crowding the scheduled tier.
+
+**Rule: a multi-run manual backfill either checks the cron calendar before each
+dispatch, or — better — hands the work to the SCHEDULED tier once the source is
+`live: true`, due, and carries a rotation bookmark. That combination is precisely
+what makes the scheduler able to finish a backfill by itself; hand-dispatching a
+live source in a serial loop is competing with your own scheduler for one slot,
+and the scheduler wins.**
+[M-20260807, unsdg dispatch race]
 
 ## R238
 
