@@ -194,6 +194,7 @@ verification that contradicts a fact you established personally as the suspect. 
 - R363. A NEW tool wrapping wrangler crashed its reader thread on cp1252 (R234's exact landmine, recurred the day after re-reading the rule): I set PYTHONIOENCODING for the CHILD but subprocess.run(text=True) decodes the pipe with the PARENT's locale — pass encoding="utf-8" explicitly, the pattern already pinned in core/sync_state_d1.py:226-233. When wrapping a subprocess the codebase already wraps elsewhere, COPY the existing call's kwargs, don't re-derive them. (Same minute's other lesson: a Cloudflare 7403 on one call with an identical call succeeding 60s later is a transient, not a permission wall — re-probe once before diagnosing auth, R222 class.)
 - R364. The whr derive PUT 1,927 CSVs for a 1,749-row catalogue — derive_csv_bulk streams EVERY parquet shard in the source dir, and the dir held the quarantine-pending OWID-era whr.parquet (178 series) beside the new primary whr_fig21.parquet. The dry run SAID "2 shards" and printed 1,927; I greped for "verify/done", saw 300/300 byte-identical, and ran the real PUT past both tells. 178 provenance-tainted CSVs landed on R2 (unreachable behind whr's 451 denylist; deletion queued on the blocked permission; local legacy shard moved OUT of the store dir to data/_quarantine/ so no re-derive repeats it). Rules: read a dry run's COUNTS against the catalogue count before the real run — a derive for source X must PUT exactly catalogue(X) objects, and any excess names the exact contamination; and when a store dir deliberately hosts two provenances, physically separate them BEFORE running any whole-dir tool.
 - R365. broaden_catalog's apply printed "2 sources KEPT (60,192 series)" for my --source norgesbank run and I diagnosed a ksh RESURRECTION (the R226 do-not-resurrect source), burned both classifier attempts on a reversal delete, and nearly filed an urgent incident on Ahmed's list — before querying the store: ksh had 0 catalogue rows and 0 source rows. The summary is a CUMULATIVE resume file (dist/broaden/broaden_summary.json); its ksh entry (25,057) was the OLD R226 incident's bookkeeping, and 25,057+35,135=60,192 exactly. The R326 obs_count disease in a new organ: a resume-file total is not this run's result. Before treating any summary line as an event, query the store for the named source — one SELECT COUNT beats two permission denials and a false alarm.
+- R366. I declared unsdg's backfill "COMPLETE — all 713 codes in the store" from a DuckDB count on `data/clean_full/unsdg/unsdg.parquet` — which was the PRE-PURGE LOCAL RELIC (2.9M rows, 715 codes), not the R2 store the fetcher writes (2.07M rows, 396 codes at that moment). R296's exact lesson ("the local tree gave the flat-opposite answer") repeated on a completion claim: for a cloud-backend source, EVERY completeness measurement runs against R2 (mirror it down fresh, or read via blob with backend=r2) — a bare read_parquet on the local path measures whatever relic lives there. Caught only because the flow-catalogue dry run against the fresh mirror disagreed; the false "COMPLETE" had already been reported. Also: purged sources leave LOCAL relics (norgesbank's 20 siblings, unsdg's parquet) — quarantine the relic the moment a purged source is re-registered, BEFORE any tool can read it.
 
 
 - R251. **DBNOMICS IS BANNED — AHMED'S STANDING INSTRUCTION, SAID AT LEAST FIVE TIMES, WRITTEN DOWN ONLY ON 2026-08-02.** Do not fetch from it, do not probe api.db.nomics.world, do not build or keep a DBnomics-backed fetcher/relay/mirror/vintage signal, do not cite its coverage as evidence about a source. Every source comes from ITS OWN PUBLISHER. I violated this repeatedly because the instruction lived only in conversation and did not survive compaction — a spoken rule I do not write down is a rule I will break. Existing DBnomics-derived DATA stays until migrated (nothing is deleted by this rule); `who_hwf`, `who_rs`, `who_sdg` are the last three live relays and must be migrated to WHO directly. It is now §0 of `econfindatalibrary/CLAUDE.md`, which loads every session. [M-20260802-07]
@@ -10173,6 +10174,28 @@ The mirror lesson from the same hour: the alarm ONLY got corrected because the
 delist denial forced a pause. Verification-before-escalation should not depend on
 being blocked.
 [M-20260806, ksh phantom]
+
+### R366 — I declared a backfill complete by measuring the pre-purge relic instead of the R2 store
+
+Verifying unsdg's 6-run backfill, I counted distinct series codes with DuckDB on
+`data/clean_full/unsdg/unsdg.parquet` and got 715 of 713 listed — "backfill
+COMPLETE", reported as such. The file I measured was the PRE-PURGE LOCAL RELIC
+(2,918,435 rows), which survived the 07-23 R2 purge on disk. The store the fetcher
+actually writes — R2's copy — held 2,069,765 rows and only **396** of 713 codes.
+
+R296's lesson verbatim ("the local tree is a scratch mirror... and gave the
+flat-opposite answer"), repeated on a COMPLETION claim. The falsehood was caught
+one step later only because the flow-catalogue dry run ran against a freshly
+mirrored R2 copy and disagreed (396 vs 715).
+
+**Rules. (1) For any cloud-backend source, every completeness/推-progress measurement
+runs against R2 — mirror the object down fresh or read through blob with
+backend=r2; a bare read on the local path measures whatever relic lives there.
+(2) Purged-then-re-registered sources ALWAYS leave local relics (norgesbank's 20
+sibling parquets, unsdg's 2.9M-row store, whr's OWID shard) — quarantine the relic
+at RE-REGISTRATION time, before any tool can read it, not when a tool trips over
+it. Three R364-class catches in one day is a checklist item, not a coincidence.**
+[M-20260807, unsdg relic]
 
 ## R238
 
