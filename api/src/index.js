@@ -3857,6 +3857,27 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
 
 const VALID_TIMEFRAMES = ['1min', '5min', '15min', '30min', 'hourly', 'daily', 'weekly', 'monthly'];
 
+// SINGLE source of the R2 layout, shared by the endpoint that decides whether a
+// download is POSSIBLE (handleDownloadToken) and the one that serves it
+// (handleDownload). Written separately, they disagreed: the token endpoint
+// happily signed URLs for aggregated CSVs that are not generated, so the user
+// followed a valid-looking link to a bare 404 -- with the one-shot token already
+// spent. Reported by a user 2026-08-08.
+//   1-minute parquet:   {version}/{ticker}.parquet
+//   1-minute CSV:       csv/{version}/{ticker}.csv
+//   Aggregated parquet: {version}/{timeframe}/{ticker}.parquet
+//   Aggregated CSV:     csv/{version}/{timeframe}/{ticker}.csv   (NOT generated yet)
+function dataObjectKey(ticker, version, timeframe, format) {
+  if (format === 'csv') {
+    return timeframe === '1min'
+      ? `csv/${version}/${ticker}.csv`
+      : `csv/${version}/${timeframe}/${ticker}.csv`;
+  }
+  return timeframe === '1min'
+    ? `${version}/${ticker}.parquet`
+    : `${version}/${timeframe}/${ticker}.parquet`;
+}
+
 async function handleDownloadToken(ticker, request, env, cors) {
   // Auth two-step (instead of requireAuth) so the CHANNEL the token was issued
   // through is known: a browser session -> 'web', an X-API-Key -> 'api'. The
@@ -3881,6 +3902,25 @@ async function handleDownloadToken(ticker, request, env, cors) {
   if (!['raw', 'clean'].includes(version)) return jsonRes({ error: 'Invalid version. Use: raw or clean' }, 400, cors);
   if (!['parquet', 'csv'].includes(format)) return jsonRes({ error: 'Invalid format. Use: parquet or csv' }, 400, cors);
   if (!VALID_TIMEFRAMES.includes(timeframe)) return jsonRes({ error: 'Invalid timeframe. Use: ' + VALID_TIMEFRAMES.join(', ') }, 400, cors);
+
+  // Never sign a URL for an object that is not there: the user would follow it
+  // and get a bare 404 having already spent the token. Check, and name what IS
+  // available.
+  const head = await env.DATA_BUCKET.head(dataObjectKey(ticker, version, timeframe, format));
+  if (!head) {
+    if (format === 'csv' && timeframe !== '1min') {
+      return jsonRes({
+        error: `CSV is not available for timeframe='${timeframe}' yet - only 1-minute CSV is `
+             + `generated. Use format=parquet for ${timeframe} (every timeframe exists as `
+             + `Parquet), or timeframe=1min with format=csv.`,
+        available: { parquet: VALID_TIMEFRAMES, csv: ['1min'] }
+      }, 404, cors);
+    }
+    return jsonRes({
+      error: `No data for '${ticker}' at version=${version}, timeframe=${timeframe}, `
+           + `format=${format}.`
+    }, 404, cors);
+  }
 
   const token = generateId();
   const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
@@ -3945,39 +3985,27 @@ async function handleDownload(ticker, request, env, cors, ip) {
   }
   const format = tokenRecord ? tokenRecord.format : ((url.searchParams.get('format') || 'parquet').toLowerCase());
 
-  // Mark token as used
-  if (tokenRecord) {
-    await env.DB.prepare('UPDATE download_tokens SET used = 1 WHERE token = ?').bind(downloadToken).run();
-  }
+  const key = dataObjectKey(ticker, version, timeframe, format);
+  const filename = format === 'csv'
+    ? `${ticker}_${version}_${timeframe}.csv`
+    : `${ticker}_${version}_${timeframe}.parquet`;
+  const contentType = format === 'csv' ? 'text/csv' : 'application/octet-stream';
 
-  // R2 path layout:
-  //   1-minute parquet:   {version}/{ticker}.parquet
-  //   1-minute CSV:       csv/{version}/{ticker}.csv
-  //   Aggregated parquet: {version}/{timeframe}/{ticker}.parquet  (e.g. clean/5min/AAPL.parquet)
-  //   Aggregated CSV:     csv/{version}/{timeframe}/{ticker}.csv  (not yet generated)
-  let key, filename, contentType;
-  if (format === 'csv') {
-    if (timeframe === '1min') {
-      key = `csv/${version}/${ticker}.csv`;
-    } else {
-      key = `csv/${version}/${timeframe}/${ticker}.csv`;
-    }
-    filename = `${ticker}_${version}_${timeframe}.csv`;
-    contentType = 'text/csv';
-  } else {
-    if (timeframe === '1min') {
-      key = `${version}/${ticker}.parquet`;
-    } else {
-      key = `${version}/${timeframe}/${ticker}.parquet`;
-    }
-    filename = `${ticker}_${version}_${timeframe}.parquet`;
-    contentType = 'application/octet-stream';
-  }
-
+  // Fetch BEFORE spending the token: a miss must not cost the user their
+  // one-shot link and leave them starting over with no idea why.
   const obj = await env.DATA_BUCKET.get(key);
   if (!obj) {
-    if (format === 'csv') return jsonRes({ error: `CSV for '${ticker}' (${version}) not yet available. Try format=parquet.` }, 404, cors);
-    return jsonRes({ error: `Ticker '${ticker}' not found in ${version}` }, 404, cors);
+    if (format === 'csv' && timeframe !== '1min') {
+      return jsonRes({ error: `CSV is not available for timeframe='${timeframe}' yet - only `
+           + `1-minute CSV is generated. Use format=parquet for ${timeframe}.` }, 404, cors);
+    }
+    return jsonRes({ error: `No data for '${ticker}' at version=${version}, `
+         + `timeframe=${timeframe}, format=${format}.` }, 404, cors);
+  }
+
+  // Object in hand: only now is the token genuinely consumed.
+  if (tokenRecord) {
+    await env.DB.prepare('UPDATE download_tokens SET used = 1 WHERE token = ?').bind(downloadToken).run();
   }
 
   const userId = user.user_id || user.id;
