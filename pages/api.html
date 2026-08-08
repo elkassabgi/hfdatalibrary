@@ -79,9 +79,10 @@
 
     <h2>Getting started</h2>
     <p>Base URL: <code>https://api.hfdatalibrary.com/v1</code></p>
-    <p>All requests require an API key passed as a header:</p>
+    <p>Data requests require an API key passed as a header. <code>/symbols</code> and
+       <code>/symbols/{ticker}</code> are public and need no key:</p>
     <pre><code>curl -H "X-API-Key: your-key-here" \
-  https://api.hfdatalibrary.com/v1/symbols</code></pre>
+  https://api.hfdatalibrary.com/v1/bars/AAPL?version=clean</code></pre>
     <div id="api-key-info">
       <p>API keys are free and expire every 30 days. <a href="download#register">Register here</a> with your name, institution, and email.</p>
     </div>
@@ -165,7 +166,9 @@
     </script>
 
     <div style="background: var(--blue-pale); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0;">
-      <strong>Rate limit:</strong> 300 requests per minute per API key. Responses include <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> headers.
+      <strong>Rate limit:</strong> 100 data downloads per minute per account, 300 general requests per minute. Responses include <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> headers.
+      <br><br>
+      <strong>What the data endpoints return:</strong> a whole-ticker <strong>Parquet file</strong>, streamed from storage — not JSON rows. There is no server-side date filtering: you download a ticker's full history once and slice it locally (pandas, polars, DuckDB, arrow). For a different bar interval or CSV instead of Parquet, use the signed-URL flow at the bottom of this page.
     </div>
 
     <hr style="margin: 2.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
@@ -178,20 +181,17 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/symbols</span>
       </div>
-      <p>List all available tickers with metadata.</p>
+      <p>List every available ticker with its file size and last-updated time. <strong>No API key needed</strong> — this endpoint is public.</p>
       <div class="response-example">
-        <pre><code>{
+        <pre><code>GET /v1/symbols
+
+{
   "count": 1391,
   "symbols": [
     {
-      "ticker": "AAPL",
-      "name": "Apple Inc.",
-      "start_date": "2002-12-30",
-      "end_date": "2026-04-04",
-      "bars_raw": 2847391,
-      "bars_clean": 2846982,
-      "quintile": 5,
-      "source": "pitrading+iex"
+      "ticker": "A",
+      "size_bytes": 37333824,
+      "last_modified": "2026-08-08T11:05:56.651Z"
     },
     ...
   ]
@@ -205,7 +205,18 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/symbols/{ticker}</span>
       </div>
-      <p>Metadata for a single ticker: date range, bar counts, quality scores, data source.</p>
+      <p>File size and last-updated time for one ticker, per version. <strong>No API key needed.</strong></p>
+      <div class="response-example">
+        <pre><code>GET /v1/symbols/AAPL
+
+{
+  "ticker": "AAPL",
+  "versions": {
+    "raw":   { "size_bytes": 44735570, "last_modified": "2026-08-08T11:07:01.907Z" },
+    "clean": { "size_bytes": 43755784, "last_modified": "2026-08-08T11:07:02.257Z" }
+  }
+}</code></pre>
+      </div>
     </div>
 
     <!-- GET /bars/{ticker} -->
@@ -214,50 +225,30 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/bars/{ticker}</span>
       </div>
-      <p>Query 1-minute OHLCV bars for a ticker.</p>
+      <p>The ticker's <strong>complete 1-minute OHLCV history</strong> as a single Parquet file.
+         Requires <code>X-API-Key</code>, a verified email, and a complete profile.
+         Typical size is 30–60 MB per ticker.</p>
       <h4>Parameters</h4>
       <div class="table-wrap">
         <table class="param-table">
           <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td>start</td><td>date</td><td>earliest</td><td>Start date (YYYY-MM-DD)</td></tr>
-            <tr><td>end</td><td>date</td><td>latest</td><td>End date (YYYY-MM-DD)</td></tr>
-            <tr><td>version</td><td>string</td><td>clean</td><td>Data version: <code>raw</code> or <code>clean</code></td></tr>
-            <tr><td>format</td><td>string</td><td>json</td><td>Response format: <code>json</code>, <code>csv</code>, or <code>parquet</code></td></tr>
-            <tr><td>limit</td><td>int</td><td>10000</td><td>Max rows per response (pagination)</td></tr>
-            <tr><td>offset</td><td>int</td><td>0</td><td>Row offset for pagination</td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code> or <code>clean</code> — the only parameter this endpoint takes</td></tr>
           </tbody>
         </table>
       </div>
       <div class="response-example">
-        <pre><code>GET /bars/AAPL?start=2024-01-02&end=2024-01-02&version=clean&format=json
+        <pre><code>curl -H "X-API-Key: YOUR_KEY" -o AAPL_clean.parquet \
+  "https://api.hfdatalibrary.com/v1/bars/AAPL?version=clean"
 
-{
-  "ticker": "AAPL",
-  "version": "clean",
-  "count": 389,
-  "bars": [
-    {
-      "datetime": "2024-01-02 09:30:00",
-      "open": 187.15,
-      "high": 187.28,
-      "low": 186.92,
-      "close": 187.01,
-      "volume": 1284300
-    },
-    ...
-  ]
-}</code></pre>
-      </div>
-    </div>
+# 200 OK · Content-Type: application/octet-stream
+# Content-Disposition: attachment; filename="AAPL_clean.parquet"
 
-    <!-- GET /bars/{ticker}/daily -->
-    <div class="endpoint">
-      <div class="endpoint-header">
-        <span class="method-badge method-get">GET</span>
-        <span class="endpoint-path">/bars/{ticker}/daily</span>
+# then, locally:
+import pandas as pd
+df = pd.read_parquet("AAPL_clean.parquet")
+day = df.loc["2024-01-02"]        # slice the range you need</code></pre>
       </div>
-      <p>Daily OHLCV bars aggregated from intraday data. Same parameters as <code>/bars/{ticker}</code>.</p>
     </div>
 
     <!-- GET /variables/{ticker} -->
@@ -266,35 +257,21 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/variables/{ticker}</span>
       </div>
-      <p>All 25 computed academic variables, daily frequency.</p>
+      <p>All 25 computed academic variables at daily frequency, as a Parquet file covering
+         the ticker's whole history. Requires <code>X-API-Key</code>. Select the columns and
+         dates you want after loading.</p>
       <h4>Parameters</h4>
       <div class="table-wrap">
         <table class="param-table">
           <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td>start</td><td>date</td><td>earliest</td><td>Start date</td></tr>
-            <tr><td>end</td><td>date</td><td>latest</td><td>End date</td></tr>
-            <tr><td>version</td><td>string</td><td>clean</td><td>Data version</td></tr>
-            <tr><td>variables</td><td>string</td><td>all</td><td>Comma-separated list: <code>rv_5min,bns_z,amihud</code></td></tr>
-            <tr><td>format</td><td>string</td><td>json</td><td><code>json</code>, <code>csv</code>, or <code>parquet</code></td></tr>
+            <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code> or <code>clean</code> — the only parameter this endpoint takes</td></tr>
           </tbody>
         </table>
       </div>
       <div class="response-example">
-        <pre><code>GET /variables/AAPL?start=2024-01-02&end=2024-01-02&variables=rv_5min,bns_z,amihud
-
-{
-  "ticker": "AAPL",
-  "version": "clean",
-  "data": [
-    {
-      "date": "2024-01-02",
-      "rv_5min": 0.000043,
-      "bns_z": 1.872,
-      "amihud": 2.31e-12
-    }
-  ]
-}</code></pre>
+        <pre><code>curl -H "X-API-Key: YOUR_KEY" -o AAPL_variables.parquet \
+  "https://api.hfdatalibrary.com/v1/variables/AAPL?version=clean"</code></pre>
       </div>
     </div>
 
@@ -304,48 +281,49 @@
         <span class="method-badge method-get">GET</span>
         <span class="endpoint-path">/quality/{ticker}</span>
       </div>
-      <p>Daily data quality report: gap rate, observed bars, longest gap, bars since last trade.</p>
+      <p>Daily data-quality report — gap rate, observed bars, longest gap, bars since last
+         trade — as a Parquet file. Requires <code>X-API-Key</code>; takes the same single
+         <code>version</code> parameter.</p>
     </div>
 
-    <!-- GET /download/{ticker} -->
+    <!-- Signed-URL flow: other timeframes and CSV -->
     <div class="endpoint">
       <div class="endpoint-header">
         <span class="method-badge method-get">GET</span>
-        <span class="endpoint-path">/download/{ticker}</span>
+        <span class="endpoint-path">/download-token/{ticker}</span>
+        <span class="endpoint-path" style="opacity:.6;">&nbsp;then&nbsp;</span>
+        <span class="endpoint-path">/download/{ticker}?token=…</span>
       </div>
-      <p>Download full history for a ticker as a single parquet file. Served directly from R2.</p>
-      <h4>Parameters</h4>
+      <p>The two-step flow for <strong>any bar interval other than 1-minute</strong>, and for
+         <strong>CSV instead of Parquet</strong>. Step 1 authenticates with your
+         <code>X-API-Key</code> and returns a signed URL; step 2 fetches that URL (no header
+         needed) within 10 minutes.</p>
+      <h4>Parameters (step 1)</h4>
       <div class="table-wrap">
         <table class="param-table">
           <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
+            <tr><td>timeframe</td><td>string</td><td>1min</td><td><code>1min</code>, <code>5min</code>, <code>15min</code>, <code>30min</code>, <code>hourly</code>, <code>daily</code>, <code>weekly</code>, <code>monthly</code></td></tr>
+            <tr><td>format</td><td>string</td><td>parquet</td><td><code>parquet</code> or <code>csv</code></td></tr>
             <tr><td>version</td><td>string</td><td>clean</td><td><code>raw</code> or <code>clean</code></td></tr>
           </tbody>
         </table>
       </div>
-    </div>
+      <div class="response-example">
+        <pre><code># step 1 — ask for a signed URL (daily bars, CSV)
+curl -H "X-API-Key: YOUR_KEY" \
+  "https://api.hfdatalibrary.com/v1/download-token/AAPL?timeframe=daily&format=csv&version=clean"
 
-    <!-- GET /bulk/{package} -->
-    <div class="endpoint">
-      <div class="endpoint-header">
-        <span class="method-badge method-get">GET</span>
-        <span class="endpoint-path">/bulk/{package}</span>
-      </div>
-      <p>Download pre-packaged bundles.</p>
-      <div class="table-wrap">
-        <table class="param-table">
-          <thead><tr><th>Package</th><th>Contents</th></tr></thead>
-          <tbody>
-            <tr><td>sp500</td><td>All S&amp;P 500 constituents</td></tr>
-            <tr><td>nasdaq100</td><td>All Nasdaq 100 constituents</td></tr>
-            <tr><td>all</td><td>Complete dataset (all 1,391 tickers)</td></tr>
-            <tr><td>sector-tech</td><td>Technology sector</td></tr>
-            <tr><td>sector-healthcare</td><td>Healthcare sector</td></tr>
-            <tr><td>sector-financials</td><td>Financials sector</td></tr>
-            <tr><td>quintile-1</td><td>Q1 (least liquid)</td></tr>
-            <tr><td>quintile-5</td><td>Q5 (most liquid)</td></tr>
-          </tbody>
-        </table>
+{
+  "url": "https://api.hfdatalibrary.com/v1/download/AAPL?token=…",
+  "expires_at": "2026-08-08T22:10:00.000Z",
+  "version": "clean",
+  "timeframe": "daily",
+  "format": "csv"
+}
+
+# step 2 — fetch it (valid for 10 minutes, no header needed)
+curl -o AAPL_daily.csv "PASTE_THE_URL_HERE"</code></pre>
       </div>
     </div>
 
@@ -356,14 +334,21 @@
       <table>
         <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td class="mono">400</td><td>Bad request — invalid parameter (check date format, ticker name)</td></tr>
+          <tr><td class="mono">400</td><td>Bad request — an unsupported <code>version</code>, <code>format</code>, or <code>timeframe</code> value</td></tr>
           <tr><td class="mono">401</td><td>Unauthorized — missing or invalid API key</td></tr>
-          <tr><td class="mono">404</td><td>Not found — ticker doesn't exist in the dataset</td></tr>
+          <tr><td class="mono">403</td><td>Forbidden — email not verified, or profile incomplete (institution, country, role)</td></tr>
+          <tr><td class="mono">404</td><td>Not found — no such ticker in that version, or no such endpoint</td></tr>
           <tr><td class="mono">429</td><td>Rate limit exceeded — wait and retry (see Retry-After header)</td></tr>
           <tr><td class="mono">500</td><td>Server error — please report to admin@hfdatalibrary.com</td></tr>
         </tbody>
       </table>
     </div>
+    <p style="margin-top:1rem;">Every response this API returns — success or error — carries
+      <code>Content-Type: application/json</code> (or <code>application/octet-stream</code> for a
+      data file) and a body. If you receive a status with an <em>empty</em> body and no content
+      type, the response did not come from us: check for a proxy, VPN, or TLS-inspecting
+      appliance between you and the API. A genuine response from our edge always includes a
+      <code>cf-ray</code> header.</p>
 
   </div>
 </section>

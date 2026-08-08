@@ -225,7 +225,8 @@ collapse (sum) rv = log_return_sq, by(date)
 list in 1/10</code></pre>
 
       <p style="margin-top:1.5rem; color: var(--gray-500); font-size: 0.9rem;">
-        Note: Stata does not natively read parquet files. Use the API with <code>format=csv</code>,
+        Note: Stata does not natively read parquet files. Request CSV through the signed-URL flow
+        (<code>/v1/download-token/{ticker}?format=csv</code>, see the <a href="api">API reference</a>),
         or convert parquet to CSV using Python (<code>pd.read_parquet("file.parquet").to_csv("file.csv")</code>).
       </p>
     </div>
