@@ -34,6 +34,41 @@
     injectMaintenanceBanner();
   }
 
+  // ── Catch-up notice banner (data-driven, self-retiring) ──
+  // Shows on every page whenever the dataset's end_date has fallen more than
+  // CATCHUP_GAP_DAYS behind today (UTC). The worst NORMAL gap is ~5.5 days
+  // (Friday session, Monday holiday, viewed Wednesday before that day's run
+  // lands), so 6 fires only when sessions are genuinely missing — and the
+  // banner disappears on its own once catch-up restores currency, no code
+  // change needed to retire it. Called after metadata.json loads.
+  var CATCHUP_GAP_DAYS = 6;
+  function injectCatchupBanner(meta) {
+    try {
+      if (!meta || !meta.end_date) return;
+      if (sessionStorage.getItem('catchup-dismissed') === '1') return;
+      var gapDays = (Date.now() - Date.parse(meta.end_date + 'T00:00:00Z')) / 864e5;
+      if (!(gapDays > CATCHUP_GAP_DAYS)) return;
+      var through = formatDate(meta.end_date);
+      var bar = document.createElement('div');
+      bar.id = 'catchup-banner';
+      bar.style.cssText = 'background:#fef3c7;color:#92400e;border-bottom:1px solid #f59e0b;' +
+        'padding:0.6rem 2.2rem 0.6rem 1rem;font-size:0.88rem;line-height:1.45;' +
+        'text-align:center;position:relative;z-index:1500;';
+      bar.textContent = '⚠️ Service notice: a service error interrupted daily data ' +
+        'updates. It has been fixed and the archive is catching up automatically — data ' +
+        'currently runs through ' + through + ', and the remaining sessions are being restored ' +
+        'with each catch-up run. Existing data is unaffected.';
+      var x = document.createElement('button');
+      x.textContent = '×';
+      x.setAttribute('aria-label', 'Dismiss');
+      x.style.cssText = 'position:absolute;right:0.7rem;top:50%;transform:translateY(-50%);' +
+        'background:none;border:none;color:#92400e;font-size:1.1rem;cursor:pointer;';
+      x.onclick = function () { bar.remove(); sessionStorage.setItem('catchup-dismissed', '1'); };
+      bar.appendChild(x);
+      document.body.insertBefore(bar, document.body.firstChild);
+    } catch (e) { /* banner must never break the page */ }
+  }
+
   // Determine path to data/metadata.json relative to current page
   const isSubpage = window.location.pathname.includes('/pages/');
   const basePath = isSubpage ? '../data/metadata.json' : 'data/metadata.json';
@@ -459,6 +494,7 @@
       buildStatusBar(meta);
       populateData(meta);
       buildUpdateNotice(meta);
+      injectCatchupBanner(meta);
     })
     .catch(function (err) {
       console.warn('Could not load metadata.json:', err);
