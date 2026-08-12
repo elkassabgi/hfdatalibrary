@@ -48,7 +48,10 @@
       if (sessionStorage.getItem('catchup-dismissed') === '1') return;
       var gapDays = (Date.now() - Date.parse(meta.end_date + 'T00:00:00Z')) / 864e5;
       if (!(gapDays > CATCHUP_GAP_DAYS)) return;
-      var through = formatDate(meta.end_date);
+      // end_date is a bare date — format it in UTC, or viewers west of UTC
+      // see the previous day (formatDate renders in the viewer's timezone).
+      var through = new Date(meta.end_date + 'T00:00:00Z').toLocaleDateString('en-US',
+        { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
       var bar = document.createElement('div');
       bar.id = 'catchup-banner';
       bar.style.cssText = 'background:#fef3c7;color:#92400e;border-bottom:1px solid #f59e0b;' +
