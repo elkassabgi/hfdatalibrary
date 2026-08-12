@@ -46,7 +46,13 @@ import urllib.request
 
 import pandas as pd
 
-N_PROCESSES = 2            # GitHub Actions has 2 CPU cores
+# Worker processes for the per-ticker merge phase — the phase that is ~96% of a
+# day's wall clock (3h43m of ~3h55m measured on run 31466679128). The old
+# hardcoded 2 rested on "GitHub Actions has 2 CPU cores", stale since the
+# ubuntu-latest runners moved to 4 vCPU. PIPELINE_PROCESSES overrides.
+# (capped at 8: the phase is part R2-I/O, and a local run on a many-core
+# workstation must not open 100 concurrent full-history rewrites against R2)
+N_PROCESSES = int(os.environ.get("PIPELINE_PROCESSES", "0") or 0) or min(8, max(2, os.cpu_count() or 2))
 N_IO_THREADS = 16          # I/O concurrency within each process
 CONTEXT_BARS = 100         # Context window for incremental cleaning
 
@@ -689,6 +695,20 @@ def main():
     retention_cutoff = datetime.utcnow().date() - timedelta(days=350)
     max_days = int(os.environ.get("CATCHUP_MAX_DAYS", "5"))
 
+    # WALL-CLOCK BUDGET. GitHub-hosted runners hard-kill every job at 6 hours and
+    # mark it 'cancelled' — the workflow's timeout-minutes cannot raise that
+    # ceiling, and a cancelled job skips the metadata commit, discarding even
+    # COMPLETED days. Runs on Aug 1/4/5/6/7/8/11 2026 all died exactly there:
+    # a metadata regression queued two ~4h days into each run, the 6h kill threw
+    # the finished first day away, and the next run repeated it. The budget makes
+    # the day loop stop STARTING days it cannot finish: completed days keep their
+    # metadata, the remainder defers, and the ledger always advances.
+    budget_min = float(os.environ.get("CATCHUP_BUDGET_MIN", "300") or 300)
+    # Per-day estimate until this run has measured a real day; thereafter the
+    # costliest completed day this run is the estimate. ~4h measured at 2 worker
+    # processes; N_PROCESSES now scales with the runner's actual cores.
+    est_day_min = float(os.environ.get("CATCHUP_EST_DAY_MIN", "135") or 135)
+
     prior_missing: List[date] = []
     deferred: List[date] = []
     dropped_stale: List[date] = []
@@ -736,11 +756,26 @@ def main():
                    f"<h2>Daily update failed before processing</h2><pre>{tb}</pre>")
         return 1
 
-    for d in days:
+    deferred_by_budget: List[date] = []
+    for i, d in enumerate(days):
+        elapsed_min = (time.time() - start) / 60
+        real_costs = [r["elapsed_min"] for r in results if r["status"] == "ok"]
+        projected = max(real_costs + [est_day_min])
+        # The FIRST day always runs — a run that banks zero days can never
+        # converge, and one day alone fits the 6h cap (~4h worst measured).
+        if i > 0 and elapsed_min + projected > budget_min:
+            deferred_by_budget = list(days[i:])
+            print(f"\n[budget] {elapsed_min:.0f} min elapsed + ~{projected:.0f} min/day projected "
+                  f"exceeds CATCHUP_BUDGET_MIN={budget_min:.0f} — deferring "
+                  f"{len(deferred_by_budget)} day(s) to the next run: "
+                  f"{deferred_by_budget[0]}..{deferred_by_budget[-1]}", flush=True)
+            break
         print(f"\n--- Processing {d} ---")
         try:
             r = process_day(d, universe, dry_run=args.dry_run)
             results.append(r)
+            print(f"[{d}] {r['status']} in {r['elapsed_min']:.1f} min "
+                  f"({r['tickers']:,} tickers)", flush=True)
             if r["status"] == "ok":
                 new_missing.discard(d)
             else:
@@ -755,6 +790,10 @@ def main():
 
     if not args.dry_run:
         save_missing_days(sorted(new_missing))
+
+    # Budget-deferred days surface in the email exactly like max_days-deferred
+    # ones; both re-enter the queue next run (gap recompute + missing ledger).
+    deferred = sorted(set(deferred) | set(deferred_by_budget))
 
     # ── Summary email ──────────────────────────────────────────────────────
     elapsed = (time.time() - start) / 60

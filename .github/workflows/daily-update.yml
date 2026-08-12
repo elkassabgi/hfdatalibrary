@@ -18,10 +18,21 @@ on:
 permissions:
   contents: write
 
+# One update at a time: a long catch-up run must never overlap the next cron
+# fire (both would merge the same days and race the metadata push).
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    # GitHub-hosted runners hard-kill any job at 6 hours (360 min) and mark it
+    # 'cancelled' — a larger number here is not enforceable. 350 makes the step
+    # fail BEFORE that kill, so the commit/deploy steps below still run and
+    # completed days keep their metadata. The pipeline's own CATCHUP_BUDGET_MIN
+    # (300) should end every run well before either limit.
+    timeout-minutes: 350
     steps:
       - name: Free disk space (remove pre-installed tools we don't need)
         uses: jlumbroso/free-disk-space@main
@@ -71,6 +82,7 @@ jobs:
           R2_ENDPOINT:          ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET:            hfdatalibrary-data
           RESEND_API_KEY:       ${{ secrets.RESEND_API_KEY }}
+          CATCHUP_BUDGET_MIN:   "300"
         run: |
           ARGS=""
           if [ -n "${{ github.event.inputs.date }}" ]; then
@@ -83,9 +95,12 @@ jobs:
 
       - name: Commit and push metadata
         id: commit
-        # !cancelled(): run even if some catch-up days failed, so metadata
-        # (end_date + missing_days ledger) preserves the partial progress
-        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' }}
+        # always(): run on failure AND on cancellation. update_metadata() banks
+        # each completed day into data/metadata.json as it finishes, so even a
+        # runner-killed job has real progress on disk. The old !cancelled()
+        # guard discarded it — the Aug 2026 outage repeated the same two days
+        # for ten days because the 6h kill threw the finished first day away.
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
         run: |
           git config user.name "HF Data Library Bot"
           git config user.email "admin@hfdatalibrary.com"
@@ -104,9 +119,9 @@ jobs:
       # so deploy.yml won't fire on bot commits. Deploy inline here instead — the
       # checkout tree already has the committed metadata.
       - name: Deploy to Cloudflare Pages
-        # !cancelled(): if partial-failure metadata was committed, still deploy
-        # it so the site's "data through" stays truthful
-        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
+        # always(): whenever partial-progress metadata was committed, deploy it
+        # so the site's "data through" stays truthful — including after a kill
+        if: ${{ always() && github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
