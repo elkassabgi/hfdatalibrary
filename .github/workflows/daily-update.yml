@@ -17,6 +17,10 @@ on:
 
 permissions:
   contents: write
+  # actions: write lets the chain step below re-dispatch this workflow while a
+  # catch-up backlog remains (workflow_dispatch via GITHUB_TOKEN is one of the
+  # two event types exempt from GitHub's anti-recursion rule).
+  actions: write
 
 # One update at a time: a long catch-up run must never overlap the next cron
 # fire (both would merge the same days and race the metadata push).
@@ -130,3 +134,27 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy . --project-name=hfdatalibrary --branch=main
+
+      # Catch-up chaining: when a budget-bounded run ends with the dataset still
+      # behind, immediately queue the next run — back-to-back until current,
+      # no human dispatch needed. PROGRESS-GATED on committed=true: a run that
+      # advanced nothing leaves metadata untouched, so a permanently failing or
+      # no-data day cannot spin this loop. The concurrency group serializes the
+      # chained run behind anything already queued (e.g. the nightly cron).
+      - name: Chain the next catch-up run while still behind
+        if: ${{ always() && github.event.inputs.dry_run != 'true' && steps.commit.outputs.committed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BEHIND=$(python -c "
+          import sys, json
+          sys.path.insert(0, 'pipeline')
+          from trading_days import previous_trading_day
+          end = json.load(open('data/metadata.json')).get('end_date', '')
+          print('yes' if end and end < previous_trading_day().isoformat() else 'no')
+          ")
+          echo "end_date behind previous trading day: $BEHIND"
+          if [ "$BEHIND" = "yes" ]; then
+            gh workflow run daily-update.yml --ref main
+            echo "chained next catch-up run"
+          fi
