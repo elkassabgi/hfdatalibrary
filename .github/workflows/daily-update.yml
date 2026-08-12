@@ -82,7 +82,10 @@ jobs:
           R2_ENDPOINT:          ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET:            hfdatalibrary-data
           RESEND_API_KEY:       ${{ secrets.RESEND_API_KEY }}
-          CATCHUP_BUDGET_MIN:   "300"
+          # 340 fits TWO measured days (164.6 min each, run 31549958386) while
+          # staying under timeout-minutes 350; an overrun into day 2 is lossless
+          # because the always() commit below banks each completed day.
+          CATCHUP_BUDGET_MIN:   "340"
         run: |
           ARGS=""
           if [ -n "${{ github.event.inputs.date }}" ]; then
