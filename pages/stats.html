@@ -423,6 +423,19 @@ async function loadStats() {
       'National Chengchi University': 'www.nccu.edu.tw',
       'Abertay': 'abertay.ac.uk',
       'CMU': 'cmu.edu',
+      // added 2026-08-12: verified favicons for newly-registered institutions
+      'Abertay University': 'abertay.ac.uk',
+      'Rensselaer Polytechnic Institute': 'rpi.edu',
+      'University of Leeds': 'leeds.ac.uk',
+      'University of Calgary': 'ucalgary.ca',
+      'University of Windsor': 'uwindsor.ca',
+      'Edhec Business School': 'edhec.edu',
+      'Brigham Young University': 'byu.edu',
+      'Beihang University': 'buaa.edu.cn',
+      'Babson College': 'babson.edu',
+      'Tennessee Tech': 'tntech.edu',
+      'Arcadia High School': 'ausd.net',
+      'IBM': 'ibm.com',
     };
 
     // Only show an icon we can VERIFY: an explicit, checked entry in INST_DOMAINS.
@@ -528,13 +541,71 @@ async function loadStats() {
       'American Public University System': 360,
       'Kantonsschule Zug': 370,
       'College of Marin': 372,
+      // added 2026-08-12: ranks for newly-registered schools, same QS-flavored
+      // placement as above (specialty schools by domain reputation: EDHEC in
+      // finance, Babson in entrepreneurship).
+      'UCLA': 37,
+      'University of Leeds': 95,
+      'Boston University': 105,
+      'Rensselaer Polytechnic Institute': 155,
+      'Edhec Business School': 176,
+      'University of Calgary': 185,
+      'Babson College': 202,
+      'Beihang University': 242,
+      'Brigham Young University': 252,
+      'University of Windsor': 332,
+      'Tennessee Tech': 335,
+      'Arcadia High School': 373,
+      'Abertay University': 380,
       // real companies sink below universities (consistent with Creative Robots)
       'Amazon': 9000, 'NVIDIA': 9000, 'MBBANK': 9000, 'Soros Fund Management': 9000,
-      'Creative Robots': 9000,
+      'Creative Robots': 9000, 'IBM': 9000, 'StealthAI': 9000, 'Arancorp': 9000,
+      'Area Europa Trading Company': 9000, 'BOC': 9000,
     };
 
-    if (d.institutions && d.institutions.length > 0) {
-      var sorted = d.institutions.slice().sort(function(a, b) {
+    // Cleanup of the raw institutions feed, applied before sorting: junk
+    // placeholders users typed instead of a school disappear, and aliases /
+    // typos / casings of the same institution merge into ONE row. The API
+    // has the same two lists server-side (INSTITUTION_BLOCKLIST /
+    // INSTITUTION_ALIASES in api/src/index.js); these are the entries seen
+    // in live data since that worker last deployed — mirror them into the
+    // API on its next deploy so they stop consuming top-50 slots.
+    var INST_JUNK = {
+      '1': 1, '123': 1, 'ai': 1, 'ah': 1, 'academics': 1, 'bank': 1,
+      'personal research': 1, 'national university': 1,
+      'asesor independiente': 1,
+    };
+    var INST_ALIASES = {
+      'uca': 'University of Central Arkansas',
+      'nus': 'National University of Singapore',
+      'uiuc': 'University of Illinois',
+      'the hong kong university of science and technology': 'HKUST',
+      'university of maryland': 'University of Maryland, College Park',
+      'babson collage': 'Babson College',
+      'abertay': 'Abertay University',
+      'buaa': 'Beihang University',
+      'byu': 'Brigham Young University',
+      'ibm generative ai engineer': 'IBM',
+    };
+    var instByCanon = {};
+    var instClean = [];
+    (d.institutions || []).forEach(function (i) {
+      var raw = (i.institution || '').trim();
+      var lower = raw.toLowerCase();
+      if (!raw || INST_JUNK[lower]) return;
+      var canon = Object.prototype.hasOwnProperty.call(INST_ALIASES, lower)
+        ? INST_ALIASES[lower] : raw;
+      if (Object.prototype.hasOwnProperty.call(instByCanon, canon)) {
+        instByCanon[canon].users += (i.users || 0);
+        return;
+      }
+      var row = { institution: canon, users: i.users || 0 };
+      instByCanon[canon] = row;
+      instClean.push(row);
+    });
+
+    if (instClean.length > 0) {
+      var sorted = instClean.slice().sort(function(a, b) {
         var ar = INST_PRESTIGE[a.institution] || 9999;
         var br = INST_PRESTIGE[b.institution] || 9999;
         if (ar !== br) return ar - br;
