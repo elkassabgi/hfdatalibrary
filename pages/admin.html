@@ -172,6 +172,16 @@
           <span class="chip" data-filter="admin" onclick="setUserFilter('admin')">Admin</span>
           <span class="chip danger" data-filter="flagged" onclick="setUserFilter('flagged')">&#9888; Flagged</span>
         </div>
+        <!-- Fair use: filter to accounts above a 30-day volume, sorted heaviest first, so a
+             breach can be investigated and the account revoked from the row it appears in. -->
+        <div class="chips" style="margin-bottom:1rem; align-items:center;">
+          <span class="muted" style="font-size:0.78rem; margin-right:0.35rem;">Fair use &mdash; 30d volume:</span>
+          <span class="chip active" data-fairuse="0"   onclick="setFairUse(0)">Any</span>
+          <span class="chip" data-fairuse="1"   onclick="setFairUse(1)">&#8805; 1 GB</span>
+          <span class="chip" data-fairuse="10"  onclick="setFairUse(10)">&#8805; 10 GB</span>
+          <span class="chip" data-fairuse="50"  onclick="setFairUse(50)">&#8805; 50 GB</span>
+          <span class="chip danger" data-fairuse="100" onclick="setFairUse(100)">&#8805; 100 GB</span>
+        </div>
         <div id="users-flag-bar"></div>
         <div class="section-card" style="overflow-x:auto;">
           <table class="admin-table" id="users-table">
@@ -182,6 +192,7 @@
               <th class="sortable" data-sort="country" onclick="setUserSort('country')">Country</th>
               <th>Role</th>
               <th class="sortable" data-sort="downloads" onclick="setUserSort('downloads')">DL</th>
+              <th class="sortable" data-sort="bytes_30d" onclick="setUserSort('bytes_30d')" title="Data downloaded in the trailing 30 days — the fair-use window">30d vol.</th>
               <th class="sortable" data-sort="last_login" onclick="setUserSort('last_login')">Last login</th>
               <th>IP / Loc.</th>
               <th>Status</th>
@@ -456,7 +467,18 @@ function renderChannels(channels, channels7d, trackedSince) {
 }
 
 // ── Users (server-side search / sort / filter / paginate) ──
-let usersState = { q: '', sort: 'created_at', dir: 'desc', filter: '', offset: 0, limit: 50, totalMatching: 0 };
+let usersState = { q: '', sort: 'created_at', dir: 'desc', filter: '', offset: 0, limit: 50, totalMatching: 0, minGb30: 0 };
+
+// Fair use: show only accounts that pulled at least N GB in the trailing 30 days, and sort by
+// that column so the heaviest sit at the top. Picking a threshold re-sorts by volume — landing
+// on a filtered list still ordered by signup date would bury the account worth investigating.
+function setFairUse(gb) {
+  usersState.minGb30 = gb;
+  if (gb > 0 && usersState.sort !== 'bytes_30d') { usersState.sort = 'bytes_30d'; usersState.dir = 'desc'; }
+  usersState.offset = 0;
+  document.querySelectorAll('[data-fairuse]').forEach(c => c.classList.toggle('active', Number(c.dataset.fairuse) === gb));
+  loadUsers();
+}
 let searchTimer = null;
 
 function usersReset() { usersState.offset = 0; loadUsers(); }
@@ -476,24 +498,53 @@ function setUserSort(col) {
   usersState.offset = 0; loadUsers();
 }
 
+// Trailing-30-day volume for the users table. Decimal GB (1e9), matching the unit the user
+// detail panel already prints and the unit the fair-use box takes. The bands are deliberately
+// generous: at the 2026-08-01 distribution 129 accounts exceed 1 GB and 64 exceed 10 GB, so
+// colouring at those levels would paint most of an ordinary page red and train the eye to
+// ignore it. Amber starts at 50 GB (15 accounts) and red at 100 GB (9) — small enough sets to
+// actually look at. A zero renders as a dash, not "0.00 GB", so an idle account stays quiet.
+function fmtVol30(bytes, count) {
+  const b = Number(bytes || 0);
+  if (!b) return '<span class="muted">-</span>';
+  const gb = b / 1e9;
+  // Step up to TB past four digits of GB. The heaviest account on 2026-08-01 sits at
+  // 1,105 GB, and "1105.5 GB" is a number you have to stop and parse; "1.11 TB" is one you
+  // read. Same base (1e9/1e12) so the fair-use box and the column agree.
+  const txt = gb >= 1000 ? (b / 1e12).toFixed(2) + ' TB'
+            : gb >= 1    ? gb.toFixed(1) + ' GB'
+            : Math.round(b / 1e6) + ' MB';
+  const style = gb >= 100 ? 'color:#b91c1c; font-weight:700;'
+              : gb >= 50  ? 'color:#b45309; font-weight:600;' : '';
+  const title = (count || 0) + ' download' + (count === 1 ? '' : 's') + ' in the last 30 days';
+  return '<span style="' + style + '" title="' + title + '">' + txt + '</span>';
+}
+
 async function loadUsers() {
   try {
     const p = new URLSearchParams({
       q: usersState.q, sort: usersState.sort, dir: usersState.dir,
       filter: usersState.filter, limit: usersState.limit, offset: usersState.offset,
     });
+    if (usersState.minGb30 > 0) p.set('min_gb30', usersState.minGb30);
     const r = await fetch(API + '/v1/admin/users?' + p.toString(), { headers: authHeaders() });
     if (r.status === 403) { adminLogout(); return; }
     const d = await r.json();
     usersState.totalMatching = d.total_matching != null ? d.total_matching : (d.total || 0);
 
-    // Latin-only check matching the server-side validator (flag pre-validator records).
-    const isLatinish = s => !s || (/^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s));
-    const dirtyMark = (s) => isLatinish(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Non-Latin characters">' + esc(s || '(empty)') + '</span>';
+    // Mirrors isSafeName() in api/src/index.js. This used to flag any NON-LATIN value as suspect,
+    // which stopped being true on 2026-08-02: a user may write 北京大学 or Московский, and doing
+    // so is correct data, not a defect. Highlighting it amber taught the reader to distrust
+    // perfectly good rows — and the rows that DO deserve attention (invisible bidi/control
+    // characters, which can make a stored string display in an order that does not match its
+    // bytes) were sitting unflagged in the same column.
+    const isCleanField = s => !s || (!/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)
+      && /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s) && /[\p{L}]/u.test(s));
+    const dirtyMark = (s) => isCleanField(s) ? esc(s) : '<span style="background:#fef2f2; border:1px solid #fca5a5; padding:0 0.3em; border-radius:3px;" title="Contains symbols or invisible characters">' + esc(s || '(empty)') + '</span>';
 
     const html = (d.users || []).map(u => {
       const rowStyle = (u.shared_ip || u.disposable_email) ? 'background:#fef2f2; box-shadow:inset 3px 0 0 #dc2626;'
-        : (!isLatinish(u.name) || !isLatinish(u.institution) || !isLatinish(u.country) || !isLatinish(u.role)) ? 'background:#fffbeb; box-shadow:inset 3px 0 0 #f59e0b;' : '';
+        : (!isCleanField(u.name) || !isCleanField(u.institution) || !isCleanField(u.country) || !isCleanField(u.role)) ? 'background:#fffbeb; box-shadow:inset 3px 0 0 #f59e0b;' : '';
       const ipCell = u.last_login_ip
         ? '<code style="font-size:0.75rem;">' + esc(u.last_login_ip) + '</code>' +
           (u.shared_ip ? ' <span class="badge" style="background:#fee2e2; color:#b91c1c;" title="Shared by ' + u.shared_ip_count + ' accounts">&#9888; ' + u.shared_ip_count + '</span>' : '')
@@ -508,16 +559,17 @@ async function loadUsers() {
         '<td><strong>' + dirtyMark(u.name) + '</strong>' + (u.is_vip ? ' <span class="badge" style="background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332;">&#9733;</span>' : '') + '</td>' +
         '<td style="font-size:0.8rem;">' + esc(u.email) + dispBadge + '</td>' +
         '<td>' + dirtyMark(u.institution) + '</td>' +
-        '<td>' + (u.country ? (isLatinish(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
+        '<td>' + (u.country ? (isCleanField(u.country) ? fmtCountry(u.country) : dirtyMark(u.country)) : '<span class="muted">-</span>') + '</td>' +
         '<td>' + dirtyMark(u.role) + '</td>' +
         '<td class="mono">' + u.download_count + '</td>' +
+        '<td class="mono">' + fmtVol30(u.bytes_30d, u.downloads_30d) + '</td>' +
         '<td class="muted" style="font-size:0.78rem; white-space:nowrap;">' + (u.last_login_at ? fmtCT(u.last_login_at) : 'Never') + '</td>' +
         '<td>' + ipCell + (ipLoc ? '<br>' + ipLoc : '') + '</td>' +
         '<td>' + (u.is_admin ? '<span class="badge badge-admin">Admin</span> ' : '') +
           (u.is_active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>') + '</td>' +
       '</tr>';
     }).join('');
-    document.getElementById('users-list').innerHTML = html || '<tr><td colspan="9" class="muted" style="padding:1rem;">No users match.</td></tr>';
+    document.getElementById('users-list').innerHTML = html || '<tr><td colspan="10" class="muted" style="padding:1rem;">No users match.</td></tr>';
 
     // Flag bar — headline uses the same union the Flagged chip filters on.
     const fb = document.getElementById('users-flag-bar');
@@ -579,6 +631,8 @@ async function showUser(id) {
         '<div><strong>Last IP:</strong><br><code>' + esc(u.last_login_ip || '-') + '</code></div>' +
         '<div><strong>Logins:</strong><br>' + u.login_count + '</div>' +
         '<div><strong>Downloads:</strong><br>' + u.download_count + ' (' + (u.total_bytes_downloaded / 1e9).toFixed(2) + ' GB)</div>' +
+        '<div><strong>Last 30 days:</strong><br>' + fmtVol30(u.bytes_30d, u.downloads_30d) +
+          ' <span class="muted">in ' + (u.downloads_30d || 0) + ' dl</span></div>' +
       '</div>' +
       '<div style="margin-bottom:1rem;">' +
         '<button class="btn btn-sm btn-primary" onclick="saveUserProfile(' + u.id + ')">Save profile changes</button>' +
@@ -800,9 +854,41 @@ async function confirm2fa() {
   try {
     const r = await fetch(API + '/v1/auth/2fa/enable', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ code }) });
     const data = await r.json();
-    if (r.ok) load2faStatus();
+    if (r.ok) {
+      // Show the recovery codes, ONCE. The server returns them only on this response and stores
+      // nothing but their hashes, so if this panel does not render them they are gone — and 2FA
+      // here is now genuinely enforced on every door, with /2fa/disable itself demanding a
+      // working code. Without these a lost authenticator is a permanent lockout of this account
+      // and of every family site that authenticates through it.
+      //
+      // Rendered BEFORE load2faStatus() so that repaint cannot wipe them off the screen.
+      if (Array.isArray(data.backup_codes) && data.backup_codes.length) {
+        result.innerHTML =
+          '<div style="background:#fffbeb; border:2px solid #f59e0b; border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
+            '<p style="margin:0 0 0.5rem; color:#b45309; font-weight:700;">Save these recovery codes now</p>' +
+            '<p style="margin:0 0 0.75rem; font-size:0.85rem; color:#92400e;">' + esc(data.backup_codes_notice || '') + '</p>' +
+            '<div style="font-family:var(--font-mono); font-size:1rem; letter-spacing:0.05em; background:#fff; border:1px solid #fcd34d; border-radius:6px; padding:0.75rem; column-count:2;">' +
+              data.backup_codes.map(function (c) { return esc(c); }).join('<br>') +
+            '</div>' +
+            '<button class="btn btn-sm" style="margin-top:0.75rem;" onclick="copyBackupCodes(this)" data-codes="' + esc(data.backup_codes.join(String.fromCharCode(10))) + '">Copy to clipboard</button>' +
+          '</div>';
+      } else {
+        result.innerHTML = '';
+      }
+      load2faStatus();
+    }
     else result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Failed') + '</p>';
   } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
+}
+
+// Reads the codes off the button rather than closing over them, so nothing keeps a copy alive
+// in a variable after the panel is dismissed.
+function copyBackupCodes(btn) {
+  try {
+    navigator.clipboard.writeText(btn.getAttribute('data-codes') || '');
+    btn.textContent = 'Copied';
+    setTimeout(function () { btn.textContent = 'Copy to clipboard'; }, 2000);
+  } catch (e) { btn.textContent = 'Copy failed — select and copy manually'; }
 }
 
 async function disable2fa() {

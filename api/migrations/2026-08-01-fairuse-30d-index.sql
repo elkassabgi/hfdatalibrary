@@ -1,0 +1,37 @@
+-- Fair-use visibility: rank users by bytes downloaded in the last 30 days.
+--
+-- This file originally CREATED idx_download_log_fairuse(timestamp, user_id, bytes_served) on
+-- the theory that a timestamp-first covering index would turn the 30-day aggregate into a
+-- narrow range scan. That index was built against production and then MEASURED, and the
+-- theory was wrong. It is dropped here.
+--
+-- What the planner actually does with the admin query:
+--
+--   MATERIALIZE d30
+--   SCAN download_log USING INDEX idx_download_log_user      <- the EXISTING user_id index
+--   SCAN users USING COVERING INDEX idx_users_newsletter
+--   SEARCH d30 USING AUTOMATIC COVERING INDEX (user_id=?) LEFT-JOIN
+--
+-- SQLite prefers idx_download_log_user because it yields rows already grouped by user_id, so
+-- GROUP BY costs no sort at all; the timestamp predicate is applied as a filter during the
+-- scan. Forcing the new index with INDEXED BY was measured head to head:
+--
+--   planner's choice (idx_download_log_user)     367,676 rows read    82 ms
+--   forced (idx_download_log_fairuse)            381,577 rows read    69 ms
+--
+-- The forced plan reads MORE, not less: the 30-day window is 189,520 of 358,413 rows — over
+-- half the table — so the range scan saves little, and the grouping it can no longer get for
+-- free costs a temp B-tree that reads more than the range saved. An index that is never
+-- chosen is not free: download_log takes roughly 6,000 inserts a day and every one of them
+-- would have to maintain a fourth index for nothing.
+--
+-- So the aggregate stays a live query on the existing indexes. ~368k rows read per admin
+-- page load is acceptable at this scale — the page is opened a handful of times a day, and
+-- D1's paid allowance is billions of reads a month — and it has the property a cached or
+-- nightly-materialised table would not: the number is true at the moment it is read, which is
+-- the moment someone is deciding whether to revoke an account.
+--
+-- If this ever does need to be cheaper, the answer is a summary table refreshed by the
+-- existing 02:00 cron, NOT another index — the scan is inherent to aggregating a window
+-- across every user, and no index removes it.
+DROP INDEX IF EXISTS idx_download_log_fairuse;

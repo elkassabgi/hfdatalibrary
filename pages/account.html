@@ -193,6 +193,7 @@
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
+  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
 
 <script>
@@ -223,8 +224,14 @@ async function loadAccount() {
     document.getElementById('profile-role').value = currentUser.role || '';
     document.getElementById('profile-newsletter').checked = currentUser.newsletter_subscribed;
 
-    document.getElementById('stat-downloads').textContent = currentUser.download_count.toLocaleString();
-    document.getElementById('stat-data').textContent = (currentUser.total_bytes_downloaded / 1e9).toFixed(2) + ' GB';
+    // Defaulted, not asserted. These come from /v1/auth/me, whose FAMILY-token branch omits both
+    // fields — so the moment this page is wired for family SSO (econ's equivalent already is),
+    // `undefined.toLocaleString()` throws and takes the entire render down: no profile, no key,
+    // no sign-out, just a blank panel. It is safe today only because this page reads hfd_session
+    // exclusively. One `|| 0` is cheaper than the incident, and it makes the page honest about a
+    // number it does not have rather than dying on it.
+    document.getElementById('stat-downloads').textContent = (currentUser.download_count || 0).toLocaleString();
+    document.getElementById('stat-data').textContent = ((currentUser.total_bytes_downloaded || 0) / 1e9).toFixed(2) + ' GB';
     document.getElementById('stat-member-since').textContent = currentUser.created_at.split(' ')[0];
 
     // Unverified email — show the banner and the resend button. textContent, never
