@@ -186,6 +186,167 @@
 
   var EKD_READY = false, sdkSettled = false, paintGen = 0, paintedSignedIn = false, loggingOut = false;
 
+
+  // ── Camouflaged visitor counter ──
+  //
+  // Ahmed wanted the number present but not on display: readable if you select the text, and
+  // findable in the page source. Two mechanisms, because they are visible in different places:
+  //
+  //   1. A line in the footer coloured EXACTLY the footer background (#1a2332). Invisible while
+  //      unselected; drag across it and the selection highlight makes it readable. Deliberately
+  //      not `color:transparent` or `opacity:0` — several browsers keep transparent glyphs
+  //      transparent when selected, so the reveal would not work.
+  //   2. A comment node carrying the same numbers, so it shows in DevTools' element inspector.
+  //
+  // NOTE ON "VIEW SOURCE": view-source shows the raw HTML the server sent, and anything JS adds
+  // is NOT in it — it only appears in Inspect. The static comment baked into each page's footer
+  // at deploy time is what makes view-source work; this keeps the DOM copy current between
+  // deploys.
+  //
+  // Cost is nil: /v1/public-stats has been edge-cached for 5 minutes since 2026-08-01, so this
+  // is a cache hit for essentially every visitor and never touches D1.
+  function injectVisitorCounter() {
+    try {
+      var foot = document.querySelector('footer.footer .container') || document.querySelector('footer.footer');
+      if (!foot || document.getElementById('vc-line')) return;
+      fetch(API_BASE + '/v1/public-stats')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d || !foot) return;
+          var v = Number(d.total_visitors || 0).toLocaleString();
+          var pv = Number(d.total_page_views || 0).toLocaleString();
+          var c = Number(d.visitor_country_count || 0).toLocaleString();
+          var txt = 'Visitors: ' + v + '  ·  Page views: ' + pv + '  ·  Countries: ' + c;
+          var el = document.createElement('p');
+          el.id = 'vc-line';
+          // Same colour as the footer background = invisible until selected.
+          el.style.cssText = 'color:#1a2332; font-size:0.72rem; margin:1.25rem 0 0; letter-spacing:0.02em; user-select:text;';
+          el.textContent = txt;
+          foot.appendChild(el);
+          foot.appendChild(document.createComment(' ' + txt + ' '));
+        })
+        .catch(function () { /* cosmetic — never disturb the page */ });
+    } catch (e) {}
+  }
+  if (document.readyState !== 'loading') injectVisitorCounter();
+  else document.addEventListener('DOMContentLoaded', injectVisitorCounter);
+
+  // ── §SILENT-RESUME — ask the IdP once whether this browser already has a family session ──
+  //
+  // Sign in on econdatalibrary, open hfdatalibrary, and you were told "Sign in". Not because
+  // the session had ended, but because nothing here could see it: ekd_session is host-only on
+  // accounts.elkassabgidata.com, and the SDK's tokens live in localStorage, which is
+  // per-origin. EKD.getAccessToken() returns null off an empty ekd_rt WITHOUT ever contacting
+  // the IdP, so hf concluded "signed out" from its own ignorance. The IdP knew; nobody asked.
+  //
+  // This asks, exactly once per browser session, by navigating to /authorize?prompt=none. A
+  // TOP-LEVEL navigation is the point: ekd_session is SameSite=Lax, which a top-level GET
+  // carries and a hidden iframe does not — and an iframe would additionally be third-party,
+  // so Safari, Firefox and Chrome-incognito would strip the cookie and report a signed-in
+  // user as signed out. The redirect costs a flash; an iframe costs correctness.
+  //
+  // The IdP answers immediately either way and comes straight back to /auth/callback, which
+  // redeems the code and returns the user to this exact URL.
+  //
+  // LOOP SAFETY, which is the thing that makes this dangerous if done casually: the callback
+  // sets ekd_silent_done BEFORE it can fail, on every path including login_required and a
+  // failed exchange. This function refuses to start when that flag is present. So a
+  // signed-out visitor pays one bounce per browser session and never a second, and a broken
+  // IdP degrades to "signed out" rather than to an infinite redirect.
+  (function silentResume() {
+    try {
+      // Only when this origin genuinely has nothing. A stored credential means the normal
+      // paths already work and must not be disturbed.
+      if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
+      // An explicit logout this browser session means "stay out" — never auto-resume over it.
+      // Either store: sessionStorage is per-TAB, so a sign-out in one tab left every other
+      // tab (and any tab opened afterwards) unprotected — open the site in a new tab and the
+      // resume signed you straight back in. That only bites when server-side revocation did
+      // not land, which is exactly the case this marker exists to cover. localStorage is the
+      // durable copy; the sessionStorage read stays for tabs that predate this change.
+      if (sessionStorage.getItem('ekd_signed_out') || localStorage.getItem('ekd_signed_out')) return;
+      // Never bounce from the callback itself — that is the flow returning, not starting.
+      if (location.pathname.indexOf('/auth/callback') === 0) return;
+
+      // A "no session" ANSWER GOES STALE, so the flag has to re-arm.
+      //
+      // ekd_silent_done was a bare flag with no expiry: once a signed-out visit set it, this
+      // browser session never asked again. That produced exactly the sequence Ahmed reported on
+      // the econ side — log out of both, log back in to ONE, visit the OTHER, and be shown
+      // "Sign in" because the stale answer from before the sign-in was still on file.
+      //
+      // Re-armed on the two signals that mean the answer may have changed: arriving from a
+      // family site (the "I just signed in over there" case), and age (a bookmark, a typed
+      // address or an already-open tab carries no referrer). Bounded by a try counter so it can
+      // never run away — the clock decides responsiveness, the counter decides whether a loop is
+      // possible. Same division econ's older check settled on after the same bug.
+      // TEN minutes, not one. The time-based re-arm exists only for the case with NO referrer —
+      // a bookmark or typed address after signing in on another family site. The referrer check
+      // above handles the common case instantly and is unaffected by this number.
+      //
+      // At 60s it cost the majority of traffic real redirects: measured 2026-08-01, this library
+      // has 21,692 visitors against 603 accounts, so ~97% of arrivals are signed out and can
+      // never resume. Simulated over a 12-page, 10-minute visit, a 60s window produced THREE
+      // redirects; 10 minutes produces ONE — the unavoidable first ask. Making 97% of visitors
+      // pay three bounces to shorten a rare no-referrer case is the wrong trade.
+      var RESUME_RECHECK_MS = 10 * 60 * 1000, RESUME_MAX_TRIES = 3, TRIES_K = 'ekd_silent_tries';
+      var famRef = /^https:\/\/(www\.)?(econdatalibrary|elkassabgidata|ipdatalibrary)\.com(\/|$)/;
+      var doneAt = parseInt(sessionStorage.getItem('ekd_silent_done') || '0', 10) || 0;
+      var tries = parseInt(sessionStorage.getItem(TRIES_K) || '0', 10) || 0;
+      // '1' is what the first build wrote — treat as "checked, time unknown" and expire at once.
+      if (doneAt && tries < RESUME_MAX_TRIES &&
+          ((document.referrer && famRef.test(document.referrer)) || doneAt === 1 || (Date.now() - doneAt) > RESUME_RECHECK_MS)) {
+        sessionStorage.removeItem('ekd_silent_done');
+        doneAt = 0;
+      }
+      if (doneAt) return;
+      sessionStorage.setItem(TRIES_K, String(tries + 1));
+
+      // NEVER bounce a crawler. Googlebot renders JavaScript, so without this it would execute
+      // the redirect and be carried off hfdatalibrary.com to accounts.elkassabgidata.com on the
+      // first view of every page it visits — turning every indexable URL into a redirect to a
+      // noindex auth host. That is an SEO self-inflicted wound on a site whose whole purpose is
+      // being found, and it would be invisible in testing because a human browser is signed in
+      // or bounces once and forgets. A bot is never signed in, so it would pay it on every page,
+      // every crawl. navigator.webdriver additionally covers headless/automation.
+      var ua = (navigator.userAgent || '');
+      if (navigator.webdriver) return;
+      if (/bot|crawl|spider|slurp|bingpreview|duckduckbot|baiduspider|yandex|facebookexternalhit|embedly|quora link preview|showyoubot|outbrain|pinterest|slackbot|vkshare|w3c_validator|whatsapp|telegrambot|discordbot|googlebot|applebot|petalbot|semrush|ahrefs|mj12bot|dotbot|lighthouse|headless/i.test(ua)) return;
+      // PKCE needs SubtleCrypto, which needs a secure context. Without it, stay signed-out
+      // rather than start a flow that cannot be completed.
+      if (!(window.isSecureContext !== false && window.crypto && crypto.subtle && crypto.getRandomValues)) return;
+
+      var b64url = function (bytes) {
+        var s = '';
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      };
+      var rand = function () { return b64url(crypto.getRandomValues(new Uint8Array(32))); };
+
+      var verifier = rand(), state = rand();
+      crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (d) {
+        var challenge = b64url(new Uint8Array(d));
+        // Stored for the callback: the verifier it must present, the state it must match, and
+        // where to put the user back. sessionStorage (not localStorage) so a second tab cannot
+        // consume this tab's flow and the values die with the tab.
+        sessionStorage.setItem('ekd_silent_v', verifier);
+        sessionStorage.setItem('ekd_silent_s', state);
+        sessionStorage.setItem('ekd_silent_r', location.pathname + location.search + location.hash);
+
+        var redirectUri = location.origin + '/auth/callback';
+        var url = ACCOUNTS_BASE + '/authorize?response_type=code&prompt=none'
+          + '&client_id=' + encodeURIComponent(location.origin)
+          + '&redirect_uri=' + encodeURIComponent(redirectUri)
+          + '&state=' + encodeURIComponent(state)
+          + '&code_challenge=' + encodeURIComponent(challenge)
+          + '&code_challenge_method=S256';
+        // replace(), not assign(): the bounce must not become a history entry, or Back from
+        // the restored page would land the user right back in the redirect.
+        location.replace(url);
+      }).catch(function () {});
+    } catch (e) { /* storage blocked / crypto unavailable → stay signed-out, never throw */ }
+  })();
+
   // Load the SDK for site.js's OWN use; feature-detect everywhere. onerror / a 4 s timeout still
   // "settles" so the optimistic chip can never hang if accounts.* is blocked or slow.
   function settleSdk() { if (!sdkSettled) { sdkSettled = true; paintUserWidget(); } }
@@ -199,7 +360,19 @@
             EKD_READY = true;
             window.EKD.init();                                          // clientId = this origin, callback /auth/callback
             // D42: SDK events NEVER paint directly — they re-run the single nav owner.
-            window.EKD.on('login',  function () { safeDel('ekd_notice_demoted'); paintUserWidget(); });
+            window.EKD.on('login',  function (detail) {
+              // ONLY a DELIBERATE sign-in retires the "stay signed out" flag. This event ALSO
+              // fires for the automatic resume init() runs on every page load, and clearing the
+              // flag there defeated the whole suppression: sign out, reload, init() resumes,
+              // this handler wipes the flag, signed back in. The old comment here claimed it
+              // "suppresses only the AUTOMATIC path" - the code did exactly the opposite.
+              if (detail && detail.deliberate) {
+                try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
+                try { localStorage.removeItem('ekd_signed_out'); } catch (e) {}   // BOTH, or the
+                // durable copy outlives the sign-in and suppresses resume forever after.
+              }
+              safeDel('ekd_notice_demoted'); paintUserWidget();
+            });
             window.EKD.on('logout', function () { paintUserWidget(); });
           }
         } catch (e) {}
@@ -313,10 +486,47 @@
     // logout: clears BOTH the legacy session and the EKD family session.
     window.__hfdLogout = async function () {
       loggingOut = true;                                               // suppress the demotion notice on INTENTIONAL logout
+      // Suppress the silent resume for the rest of this browser session.
+      //
+      // The resume fires exactly WHEN there is no local credential, and logout's whole job is
+      // to create that state — so without this, signing out bounced to the IdP on the very next
+      // page load and signed the user straight back in. The server ends the IdP session too, but
+      // that is a network call that can be slow, fail, or be raced by the reload below, and
+      // "did my logout work" must not depend on winning a race. Belt and braces, deliberately.
+      //
+      // Only a DELIBERATE sign-in clears this again — the SDK's 'login' event carries
+      // `deliberate`, and the listener below gates on it. It used to clear on ANY 'login',
+      // including the automatic resume init() runs on every page load, which is precisely the
+      // path this flag exists to suppress. Ledger R228.
+      try { sessionStorage.setItem('ekd_signed_out', '1'); } catch (e) {}
+      try { localStorage.setItem('ekd_signed_out', '1'); } catch (e) {}   // survives into OTHER tabs
       var t = safeGet('hfd_session');
-      if (t) { try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {} }
+      // LOCAL CREDENTIALS GO FIRST, before any network call. safeDel used to sit AFTER the
+      // await, so a revocation that was merely slow — or accepted and never answered — left
+      // hfd_session in localStorage AND never reached the reload below: the visitor pressed
+      // Sign out and simply stayed signed in, on a page still showing their account. Revoking
+      // server-side is best effort and follows. Ledger R228.
       safeDel('hfd_session');
-      try { if (window.EKD) await window.EKD.logout(); } catch (e) {}
+      var revocations = [];
+      if (t) {
+        try {
+          revocations.push(fetch(API_BASE + '/v1/auth/logout', {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + t }
+          }).catch(function () {}));
+        } catch (e) {}
+      }
+      if (window.EKD) {
+        try { revocations.push(Promise.resolve(window.EKD.logout()).catch(function () {})); } catch (e) {}
+      }
+      // Bounded wait, matching econ's account page. Give the server a moment to hear about it,
+      // but never let a hung connection strand the visitor on a signed-in view whose credentials
+      // this function has already deleted.
+      try {
+        await Promise.race([
+          Promise.all(revocations),
+          new Promise(function (r) { setTimeout(r, 2500); })
+        ]);
+      } catch (e) {}
       window.location.reload();
     };
 

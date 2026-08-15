@@ -562,6 +562,7 @@
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
+  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
 
 <!-- Citation-agreement gate: shown once (per version) before the first download. -->
@@ -908,12 +909,21 @@ function resetTurnstile() {
   // still being served the old page. Whichever half lands first, sign-in fails
   // silently. Fix it as one coordinated change: land the fragment reader HERE with
   // the query fallback kept, confirm it is live, then move the worker in a later push.
-  const session = params.get('session');
-  const oauthSuccess = params.get('oauth_success');
-  const oauthError = params.get('oauth_error');
-  const oauthProvider = params.get('oauth_provider');
-  const oauthId = params.get('oauth_id');
-  const oauthName = params.get('oauth_name');
+  // STEP 1 of that coordinated change. This reader now accepts the callback values from the
+  // FRAGMENT as well as the query string, preferring the fragment. On its own it changes
+  // nothing observable — the worker still sends a query string, so `pick` falls through to the
+  // old source on every real sign-in today. That is exactly the point: it makes the page
+  // tolerant of BOTH shapes, so the worker can be switched afterwards without a window in
+  // which one half is dark. Step 2 is the worker change; this must be confirmed live first.
+  const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+  const pick = (k) => hashParams.get(k) || params.get(k);
+
+  const session = pick('session');
+  const oauthSuccess = pick('oauth_success');
+  const oauthError = pick('oauth_error');
+  const oauthProvider = pick('oauth_provider');
+  const oauthId = pick('oauth_id');
+  const oauthName = pick('oauth_name');
 
   if (oauthSuccess && session) {
     localStorage.setItem('hfd_session', session);
@@ -933,15 +943,71 @@ function resetTurnstile() {
       }, 3000);
     }, 100);
   }
+  // Google/ORCID sign-in on a 2FA-protected account. The worker no longer issues a session on
+  // those paths — it used to, skipping the second factor entirely — and instead mints a pending
+  // token and sends the browser back here to finish, exactly as the password flow does.
+  //
+  // Deferred with setTimeout, and that is load-bearing rather than style. This block is an IIFE
+  // that runs where it sits in the file, while `pendingTotpToken` is `let`-declared ~290 lines
+  // BELOW it: assigning to it from here directly is a temporal-dead-zone ReferenceError that
+  // would kill the whole handler, including the ordinary sign-in paths above it. A macrotask
+  // runs after the script body finishes, by which point the binding exists.
+  const totpRequired = pick('totp_required');
+  const totpPending = pick('pending_token');
+  if (totpRequired && totpPending) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setTimeout(function () {
+      try {
+        pendingTotpToken = totpPending;
+        const box = document.getElementById('login-result');
+        if (!box) return;
+        box.style.display = 'block';
+        box.innerHTML =
+          '<div style="background:var(--blue-pale); border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
+            '<p style="margin:0 0 0.75rem; color:var(--navy); font-weight:500;">Two-factor authentication is on for this account. Enter your 6-digit code:</p>' +
+            '<div style="display:flex; gap:0.5rem;">' +
+              '<input type="text" id="totp-code" placeholder="123456" maxlength="6" style="flex:1; padding:0.5rem; border:2px solid var(--gray-200); border-radius:6px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em; text-align:center;">' +
+              '<button class="btn btn-primary" style="padding:0.5rem 1rem;" onclick="submitTotp()">Verify</button>' +
+            '</div>' +
+            '<p id="totp-error" style="color:var(--red); margin:0.5rem 0 0; display:none;"></p>' +
+          '</div>';
+        const inp = document.getElementById('totp-code');
+        if (inp) inp.focus();
+      } catch (e) { /* never let this prompt break the rest of the page */ }
+    }, 0);
+  }
+
   if (oauthError) {
-    alert('Sign-in failed: ' + oauthError + '. Please try again or use email/password.');
+    // "Please try again" is right only for a TRANSIENT failure. Several of these are terminal
+    // by design — retrying reproduces them exactly — and telling someone to repeat an action
+    // that cannot succeed is worse than saying nothing, because it hides the real next step.
+    // Codes needing a different action get their own sentence; anything unrecognised keeps the
+    // generic retry text.
+    const OAUTH_ERRORS = {
+      account_link_conflict:
+        'This email address is already registered to a different Google account. That happens ' +
+        'when an address has been reassigned to a new owner. For your security we will not ' +
+        'transfer the existing account automatically — please sign in with the original Google ' +
+        'account, or contact us and we will sort it out.',
+      email_unverified:
+        'We could not confirm that you own this email address: Google reports it as unverified, ' +
+        'and the account already here has never been confirmed either. Verify the address with ' +
+        'Google, or register with a password and click the confirmation link we email you.',
+      account_deactivated:
+        'This account has been deactivated. If you think that is a mistake, reply to any email ' +
+        'from us and we will take a look.',
+      no_email:
+        'Your provider did not share an email address, and we need one to create an account. ' +
+        'Check the permissions you granted, or register with a password instead.',
+    };
+    alert(OAUTH_ERRORS[oauthError] || ('Sign-in failed: ' + oauthError + '. Please try again or use email/password.'));
     window.history.replaceState({}, document.title, window.location.pathname);
   }
   if (oauthProvider === 'orcid' && oauthId) {
     // User authorized via ORCID but has no account yet — pre-fill registration
     oauthPendingProvider = 'orcid';
     oauthPendingId = oauthId;
-    oauthPendingProof = params.get('orcid_prefill');
+    oauthPendingProof = pick('orcid_prefill');
     // Wait for DOM to be ready, then show banner and pre-fill
     setTimeout(() => {
       const nameField = document.getElementById('reg-name');
@@ -1281,11 +1347,21 @@ async function submitTotp() {
 async function requestReset() {
   const email = document.getElementById('login-email').value.trim();
   if (!email) { alert('Enter your email first, then click "Forgot password?"'); return; }
-  await fetch(API + '/v1/auth/reset-request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email })
-  });
+  // The neutral message is right for "does this address exist" and WRONG for 429. A 429 is a
+  // fact about the caller's own network, not about any account, so surfacing it leaks nothing —
+  // while hiding it tells someone to wait for an email that is never going to arrive.
+  let rr = null;
+  try {
+    rr = await fetch(API + '/v1/auth/reset-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+  } catch (e) { /* network failure → fall through to the neutral message */ }
+  if (rr && rr.status === 429) {
+    alert('Too many password-reset requests from your network in the last hour. Please wait and try again — if you share an internet connection (a university or office), someone else may have used the allowance.');
+    return;
+  }
   alert('If that email is registered, a reset link has been sent.');
 }
 
@@ -1410,12 +1486,19 @@ async function registerUser() {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Please fill in all fields.</p>';
     return;
   }
-  // Profile fields render publicly (stats page world map, institutions list).
-  // Reject non-Latin characters before submission — server enforces same rule.
-  const latinish = s => /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s);
-  if (!latinish(name) || !latinish(institution) || !latinish(country) || !latinish(role)) {
+  // Mirrors isSafeName() in api/src/index.js — keep the two in step. Any script is accepted;
+  // only invisible characters are refused (control codes, and the bidi overrides that make a
+  // string render in an order that does not match its bytes). ZWNJ/ZWJ are allowed, because
+  // Persian and several Indic scripts need them.
+  //
+  // This used to be a Latin-only test, and it mattered that it lived here: the server stopped
+  // refusing non-Latin values on 2026-08-02, but the form went on rejecting them in the browser,
+  // so the server change would have been invisible to every user typing 北京大学.
+  const safeField = s => !/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)
+    && /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s) && /[\p{L}]/u.test(s);
+  if (!safeField(name) || !safeField(institution) || !safeField(country) || !safeField(role)) {
     result.style.display = 'block';
-    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must use English/Latin letters only (e.g. write "China", not "中国").</p>';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must each contain at least one letter, and cannot contain symbols or invisible characters.</p>';
     return;
   }
   if (password.length < 8) {

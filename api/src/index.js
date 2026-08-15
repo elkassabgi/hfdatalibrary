@@ -120,10 +120,25 @@ const EDL_RT_TTL_HOURS = 720;  // refresh-token absolute cap = 30 days (G-H LOCK
 const CODE_TTL_SEC = 60;       // one-time authorization code
 const GESTURE_TTL_SEC = 300;   // consent gesture HMAC token, 5 min
 const RT_GRACE_SEC = 10;       // benign multi-tab refresh race window
-// §18 DO rate-limit ceilings (per minute); log-only shadow for the first soak.
-const AUTHZ_IP_MAX = 120;
-const EXCH_IP_MAX = 120;
-const EXCH_ACCT_MAX = 30;
+// §18 DO rate-limit ceilings (per minute). ENFORCING since 2026-08-02 (Ahmed) — no longer shadow.
+//
+// The three HUMAN buckets are 10/min at Ahmed's instruction. A person signing in touches
+// /authorize once and exchanges once, so 10 is ~10x a real sign-in and still stops password
+// guessing dead. Measured peak before enforcement was 5 logins/IP/min.
+//
+// KNOWN RISK, deliberately accepted: these are keyed on IP, and universities NAT their whole
+// campus behind a handful of addresses. Ten sign-ins a minute from one university gateway is
+// plausible at the start of a class, and everyone behind it would see the 429 together. If that
+// is ever reported, raise AUTHZ_IP_MAX / EXCH_IP_MAX — one constant and one deploy. The
+// per-ACCOUNT bucket has no such problem, since it follows the person rather than the network.
+const AUTHZ_IP_MAX = 10;
+const EXCH_IP_MAX = 10;
+const EXCH_ACCT_MAX = 10;
+// The refresh buckets are NOT 10. Refreshes are machine-driven, not human: every open tab renews
+// its 15-minute access token on its own schedule, and a browser restoring a dozen tabs refreshes
+// a dozen times in one second through no act of the user. Throttling that does not stop an
+// attacker — it signs a legitimate person out mid-session, which is the exact failure the limiter
+// exists to avoid causing. They stay high and now merely enforce.
 const RT_IP_MAX = 240;
 const RT_ACCT_MAX = 60;
 
@@ -384,7 +399,16 @@ const RATE_LIMITS = {
   // and raising this rule past 30 would just make it dead code.
   'api:register:burst': { max: 30, window: 3600 },
   'api:register': { max: 25, window: 3600 },    // 25 CREATED accounts per hour per IP (per /64 on IPv6)
-  'api:reset': { max: 3, window: 3600 },        // 3 password resets per hour per IP
+  // Raised from 3 and now charged only when a mail actually goes out (handleResetRequest peeks
+  // first, exactly as handleLogin does). At 3-charged-on-arrival, three colleagues behind one
+  // university egress exhausted the hour and the fourth was refused — the same lockout that had
+  // 'api:register' raised from 3 to 25 on 2026-07-31, which this rule was left behind by. A
+  // mistyped address or a double-click also each spent one.
+  'api:reset': { max: 10, window: 3600 },       // 10 password-reset EMAILS per hour per IP
+  // The per-IP budget bounds what one network can do and does nothing to stop one mailbox being
+  // flooded from many addresses, which is the abuse that reaches a person. Keyed on user id, the
+  // same unit 'api:resend' and 'api:2fa' use and for the same reason.
+  'api:reset_acct': { max: 3, window: 3600 },   // 3 password-reset emails per hour per ACCOUNT
   // Resend-verification, keyed per ACCOUNT (the request is authenticated, so the IP is the
   // wrong unit — a shared campus address would otherwise exhaust everyone's allowance).
   'api:resend': { max: 3, window: 3600 },       // 3 verification emails per hour per account
@@ -611,6 +635,10 @@ export default {
     // callers supply part of those keys. A full D1 refuses writes, which is a site outage
     // reached without a single exploit.
     ctx.waitUntil(pruneRateLimits(env));
+    // Same reasoning as pruneRateLimits, applied to the seven credential tables that have the
+    // identical unbounded-growth defect. See PRUNE_SWEEPS for why sso_refresh_tokens is swept
+    // on absolute_expires_at and why login_history / admin_audit_log are left alone.
+    ctx.waitUntil(pruneExpiredCredentials(env));
   }
 };
 
@@ -671,6 +699,77 @@ async function pruneRateLimits(env) {
   } catch {
     return null;   // housekeeping — the daily digest must still go out if this sweep fails
   }
+}
+
+// rate_limits was never the only unbounded table — it was just the one that got noticed.
+// EVERY short-lived credential table here has an expires_at and NONE of them were ever swept,
+// so each one grew for the life of the service. Measured before this sweep existed
+// (2026-08-01), expired rows as a share of each table:
+//
+//   download_tokens     149,203 rows   148,870 expired   99.8%   <- 10-minute tokens, ~15k/day
+//   sessions              1,702          1,148           67%
+//   password_resets         242            228           94%
+//   sso_codes               331            331          100%
+//   sso_oauth_state         164            162           99%
+//   totp_pending              7              7          100%
+//
+// D1 refuses WRITES when full, so this ends as an outage — logins, registrations and download
+// logging all stop — reached with no exploit at all, just time. The backlog above was cleared
+// by hand; this keeps it cleared.
+//
+// TWO THINGS THIS DELIBERATELY DOES NOT DO.
+//
+// 1. sso_refresh_tokens is pruned on absolute_expires_at, NEVER on expires_at. expires_at is
+//    the short access window; the row must outlive it. handleTokenRefresh looks the row up by
+//    token_hash and treats a PRESENT row with used=1 as token REUSE — the signal that a
+//    refresh token was stolen — and revokes the whole chain. Delete that row early and a
+//    replayed stolen token stops being detected theft and becomes an ordinary unknown-token
+//    rejection, silently disabling the defence. 1,001 of 1,016 rows are inside their absolute
+//    window, so pruning on the wrong column would have destroyed almost all of it.
+//
+// 2. login_history and admin_audit_log are not touched. They have no expires_at because they
+//    are the record of what happened, not credentials — they are what an investigation reads
+//    after an account is compromised, and a retention policy for them is Ahmed's call, not a
+//    side effect of a cleanup patch.
+//
+// The 24-hour grace exists so a row is never deleted out from under an in-flight request and
+// so a just-expired credential is still visible while debugging a login someone is reporting
+// right now. LIMIT-bounded because download_tokens turns over ~15k/day and an unbounded DELETE
+// on a table that once held 149k rows is a statement that can time out; 50k per run is over
+// three days of turnover, so it keeps up while staying bounded.
+const PRUNE_BATCH = 50000;
+const PRUNE_SWEEPS = [
+  // [table, primary key, expiry column]
+  ['download_tokens',    'token',      'expires_at'],
+  ['sessions',           'id',         'expires_at'],
+  // password_resets keys on id, not token — token is a UNIQUE column but the PK is id, and
+  // the batching subquery should select the actual key. Verified against pragma_table_info
+  // for all eight tables rather than inferred from column order.
+  ['password_resets',    'id',         'expires_at'],
+  ['sso_codes',          'code_hash',  'expires_at'],
+  ['sso_oauth_state',    'state',      'expires_at'],
+  ['oauth_state',        'state',      'expires_at'],
+  ['totp_pending',       'token',      'expires_at'],
+  ['sso_refresh_tokens', 'token_hash', 'absolute_expires_at'],   // see note 1 above
+];
+
+async function pruneExpiredCredentials(env) {
+  const out = {};
+  for (const [table, pk, col] of PRUNE_SWEEPS) {
+    // Per-table try/catch: one bad table must not abort the sweep of the other seven, for the
+    // same reason pruneRateLimits swallows its own error — housekeeping never takes the cron
+    // down with it.
+    try {
+      const r = await env.DB.prepare(
+        `DELETE FROM ${table} WHERE ${pk} IN (SELECT ${pk} FROM ${table} ` +
+        `WHERE datetime(${col}) < datetime('now','-1 day') LIMIT ${PRUNE_BATCH})`
+      ).run();
+      out[table] = (r && r.meta && r.meta.changes) || 0;
+    } catch (e) {
+      out[table] = 'error: ' + (e && e.message ? e.message : 'unknown');
+    }
+  }
+  return out;
 }
 
 // opts.charge === false asks "is this key already over the limit?" WITHOUT spending an
@@ -743,18 +842,43 @@ async function checkRateLimit(env, key, ruleName, opts) {
   return { ok: true };
 }
 
-// Profile fields are displayed publicly (stats page world map, institutions list,
-// admin emails). Restrict them to Latin script + digits + common punctuation so a
-// user submitting "中国" doesn't render Chinese characters under the world map.
-// Allows accented Latin (é, ü, ñ, etc.) for European institutions/names.
-function isLatinish(s) {
+// THE ONE charset rule for every user-supplied profile field: name, institution, country, role.
+//
+// There used to be a second validator here, isLatinish, that accepted only Latin script, and it
+// was applied to institution and country because those render publicly on the stats page. It was
+// removed on 2026-08-02 (Ahmed's decision) along with the whole two-validator split. Two reasons
+// it had to go:
+//
+//   * It never actually held. Google and ORCID auto-create copy the provider's values straight
+//     into these columns without passing any filter, so accounts already held Hangul, CJK and
+//     Cyrillic values. The rule therefore refused people at the password door whom the same
+//     service admitted through the Google button — the same person, the same string — and it
+//     stopped admin correcting a typo in anything the system itself had stored.
+//   * Two validators over four fields meant every new code path had to pick the right one, and
+//     three separate edit paths had each picked differently. One rule cannot be applied
+//     inconsistently.
+//
+// So: letters from ANY script are allowed. Do not read that as "allow everything". The characters
+// worth refusing are not scripts, they are the invisible ones:
+//   * control codes;
+//   * bidi overrides (U+202A-202E, U+2066-2069), which make a stored string render in an order
+//     that does not match its bytes — the trick behind "spoofed" display text. No name needs one.
+// ZWNJ/ZWJ (U+200C/U+200D) are deliberately ALLOWED: Persian and several Indic scripts require
+// them to render correctly, and excluding them would reintroduce the same defect one script over.
+function isSafeName(s) {
   if (typeof s !== 'string' || s.length === 0) return false;
-  return /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s)
-      && /[\p{Script=Latin}]/u.test(s); // require at least one actual letter
+  // Control and bidi characters are written as ESCAPES, never as literal bytes: an invisible
+  // byte in source does not survive a round-trip through an editor or a re-encode (ledger R196),
+  // and a reviewer cannot see what they are approving.
+  if (/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)) return false;
+  // \p{M} matters: many scripts compose a base letter plus combining marks.
+  // \u200C/\u200D are ZWNJ/ZWJ, allowed on purpose (see the note above the function).
+  return /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s)
+      && /[\p{L}]/u.test(s); // require at least one actual letter
 }
 
 // Gate for the EDIT forms (as opposed to registration): a submitted profile value only has
-// to clear isLatinish when the user is actually changing it.
+// to clear the charset check when the user is actually changing it.
 //
 // Why the distinction is necessary. Non-Latin text gets into these columns without ever
 // passing this filter — Google auto-create copies users.name straight out of Google's
@@ -776,11 +900,18 @@ function isLatinish(s) {
 // What this deliberately does NOT do is scrub a bad value that is already stored. Getting
 // junk out of a column is a data cleanup plus output escaping at the render sites; an
 // input validator only decides what may go in from here on.
-function latinOkOrUnchanged(submitted, stored) {
+// ONE charset rule for every profile field, as of 2026-08-02 (Ahmed's call). The split that
+// used to live here - Latin-only for the publicly rendered institution/country, any-script for
+// name - is gone: institution and country may now be written in the user's own script too. The
+// only thing still refused is the invisible characters isSafeName rejects.
+//
+// The `check` parameter is kept because callers pass it, but every caller now passes isSafeName
+// or nothing, and the default is isSafeName.
+function charsetOkOrUnchanged(submitted, stored, check) {
   const v = (submitted == null ? '' : String(submitted)).trim();
   if (v.length === 0) return true;
   if (v === (stored == null ? '' : String(stored)).trim()) return true;
-  return isLatinish(v);
+  return (check || isSafeName)(v);
 }
 
 function rateLimitResponse(retryAfter, cors) {
@@ -1294,6 +1425,40 @@ async function handleOrcidLinkInit(request, env, cors) {
   return res;
 }
 
+// A second factor has to guard EVERY door, not just the password one.
+//
+// handleLogin refuses to issue a session to a totp_enabled account until a code is verified.
+// Both OAuth callbacks did not consult totp_enabled at all — they went straight from resolving
+// the user to createSession — so an account whose owner had deliberately turned on 2FA was
+// enterable through "Sign in with Google" or "Sign in with ORCID" with no code. The factor was
+// enforced on the one door that already asks for a password, and skipped on the two that do not.
+//
+// Latent today (0 of 599 accounts have 2FA enabled, measured 2026-08-01) and it stops being
+// latent the moment anyone turns it on — which became possible for any verified user earlier
+// today. An unenforced second factor is worse than none: it is a promise of protection the
+// system does not keep, and the person most likely to enable it here is the owner of the admin
+// account.
+//
+// Mirrors handleLogin exactly: mint a 10-minute totp_pending row and hand the browser the
+// pending token. The user finishes at /v1/auth/2fa/verify-login — the same endpoint the password
+// flow uses, and the thing that actually mints the session. Nothing here writes last_login_at or
+// a success row in login_history, because a challenge is not a completed login and handleLogin
+// does not record one either.
+//
+// The pending token rides in the FRAGMENT, like every other credential-shaped value in this
+// file, so it stays out of the Pages access log, browser history and Referer.
+async function oauthTotpChallenge(env, user, ip, ua, provider, stateParam) {
+  const pendingToken = generateId();
+  const pendingExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare('INSERT INTO totp_pending (token, user_id, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
+    .bind(pendingToken, user.id, pendingExpires, ip, ua).run();
+  // §NONCE-CLEANUP: state consumed, cookie spent — as in every other terminal branch here.
+  return redirectExpiringOauthState(
+    `${SITE_URL}/pages/download#totp_required=1&pending_token=${pendingToken}`,
+    provider, stateParam
+  );
+}
+
 async function handleOrcidCallback(request, env, ip, ua, country) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
@@ -1468,6 +1633,11 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
     return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'orcid', stateParam);
   }
 
+  // A totp_enabled account must clear its second factor here too, not only on the
+  // password path. Placed BEFORE the last_login/login_history writes on purpose: a
+  // challenge is not a completed sign-in, and handleLogin does not record one either.
+  if (user.totp_enabled) return await oauthTotpChallenge(env, user, ip, ua, 'orcid', stateParam);
+
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
     .bind(ip, ua, user.id).run();
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)')
@@ -1482,30 +1652,27 @@ async function handleOrcidCallback(request, env, ip, ua, country) {
   // registration branch above orders its pair that way: if anything ever folds them
   // together, the one that must survive is the one that keeps the user signed in.
   const headers = new Headers({
-    // §SESSION-IN-QUERY — a known weakness, deliberately left in place for now.
+    // §SESSION-IN-FRAGMENT — the session id rides in the fragment. Fixed 2026-08-01.
     //
     // hfdatalibrary.com genuinely needs this value: the hfd_session cookie below is
     // host-only to api.hfdatalibrary.com, and download.html authenticates purely from
     // localStorage, so the redirect is the only channel that gets the id to the page.
-    // Carrying it as `?session=` writes a 30-day, full-scope bearer credential verbatim
-    // into the Cloudflare Pages access log and into browser history before the page can
-    // scrub the address bar, and it rides out in the Referer of anything that page loads.
-    // The fix is understood and is not in doubt: move it to the fragment
-    // (`#oauth_success=1&session=…`), which is never sent to any server, exactly as
-    // mintSsoCode already does for the family SSO code.
+    // It used to travel as `?session=`, which wrote a 30-day, full-scope bearer credential
+    // verbatim into the Cloudflare Pages access log and into browser history before the
+    // page could scrub the address bar, and sent it out in the Referer of anything that
+    // page loaded. A fragment is never transmitted to any server, so none of that happens
+    // — the same reason mintSsoCode has always used one for the family SSO code.
     //
-    // It is NOT applied here because it cannot be applied here alone. The Worker and the
-    // Pages site are two parallel jobs in .github/workflows/deploy.yml; they are not
-    // atomic and Pages propagation lags. A worker that redirects to a fragment while the
-    // live download.html still reads params.get('session') sends every Google (364 of 572
-    // users) and ORCID sign-in to the download page silently signed OUT, with no error
-    // shown — the cookie cannot rescue it because /v1/auth/me is fetched without
-    // credentials. Deploy order decides whether sign-in works, and we do not control it.
+    // This could not be flipped alone, and was not. The Worker and the Pages site deploy as
+    // two parallel jobs; a worker sending a fragment to a page that reads only the query
+    // string signs every Google and ORCID user OUT silently, and the reverse is equally
+    // dark. So it shipped in the documented order: download.html first, taught to read the
+    // fragment AND fall back to the query string (a no-op while the worker still sent a
+    // query string), confirmed live on hfdatalibrary.com, and only then this line.
     //
-    // Revisit as ONE coordinated change: ship a download.html that reads the fragment and
-    // falls back to the query string, wait for Pages to propagate and verify it live, and
-    // only then flip this line. Do not flip it in the same push.
-    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    // The page keeps its query-string fallback deliberately. It costs nothing, and it is
+    // what makes a rollback of this worker safe.
+    'Location': `${SITE_URL}/pages/download#oauth_success=1&session=${sessionId}`,
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store'
   });
@@ -1616,7 +1783,21 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   let user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
 
   if (!user) {
-    // Auto-create account — Google emails are already verified
+    // "Google emails are already verified" was an assumption, not a check.
+    //
+    // email_verified was the literal 1 in the INSERT below while profile.verified_email — the
+    // field that actually answers the question — was never read on this branch. It IS read 50
+    // lines down on the link branch (§GOOGLE-VERIFIED), so the same handler trusted Google's
+    // answer when attaching to an existing row and ignored it when creating one. Google does
+    // return verified_email:false for some accounts (notably Workspace identities whose
+    // primary address was never confirmed), and email_verified is a privilege flag here: the
+    // download gate reads it, and so does the admin console gate. Minting it from an
+    // assumption meant an unconfirmed mailbox could arrive pre-verified.
+    //
+    // Now bound from the profile. An account Google will not vouch for is created UNVERIFIED
+    // and takes the ordinary email-verification path, which is exactly what a
+    // password-registered account does.
+    const googleSaysVerified = (profile.verified_email === true || profile.verified_email === 'true') ? 1 : 0;
     const apiKey = 'hfd_' + generateId();
     const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
     const unsubscribeToken = generateId();
@@ -1626,11 +1807,11 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     const passwordHash = await hashPassword(randomPassword);
 
     await env.DB.prepare(
-      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, google_id, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, 0)'
+      'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, google_id, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0)'
     ).bind(
       name, email, passwordHash,
       '', country || '', '',
-      apiKey, apiKeyExpires, isAdmin,
+      apiKey, apiKeyExpires, isAdmin, googleSaysVerified,
       unsubscribeToken, ip, ua, profile.id
     ).run();
 
@@ -1739,6 +1920,30 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
       // pairing is visible, but change nothing else.
       await env.DB.prepare('UPDATE users SET google_id = ? WHERE id = ?')
         .bind(profile.id, user.id).run();
+    } else if (String(user.google_id) !== String(profile.id)) {
+      // A DIFFERENT Google identity presenting a matching address. Refuse.
+      //
+      // This chain had no terminal else, so the case fell through to createSession below and
+      // was handed a full 30-day session on an account bound to somebody else's Google `sub`.
+      // Matching on the email address alone is matching on the one field Google does not
+      // promise is stable: an address is reassignable, a `sub` is not. It happens without any
+      // attacker at all — a Workspace domain lapses and is re-registered, or a deleted account
+      // is recreated — and the new owner of the address then inherits the previous owner's
+      // library account, its API key and its download history.
+      //
+      // The accounts.elkassabgidata.com twin already fails closed on precisely this, returning
+      // account_link_conflict rather than auto-merging (see the "Unverified same-email row ...
+      // OR one bound to a DIFFERENT google_id" branch). Two handlers, same question, opposite
+      // answers — and the weaker one was reachable from the public download page. This makes
+      // them agree.
+      //
+      // Deliberately NOT auto-relinking: overwriting google_id here would let anyone who can
+      // obtain a Google account at a matching address silently take over a verified row, which
+      // is the takeover this is meant to stop. The legitimate cases — a genuinely new owner of
+      // a reassigned address — need a human decision, so they get a clear error and can
+      // register or contact us.
+      // §NONCE-CLEANUP: state consumed, cookie spent.
+      return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_link_conflict`, 'google', stateParam);
     }
   }
 
@@ -1746,6 +1951,11 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
     // §NONCE-CLEANUP: state consumed, cookie spent.
     return redirectExpiringOauthState(`${SITE_URL}/pages/download?oauth_error=account_deactivated`, 'google', stateParam);
   }
+
+  // A totp_enabled account must clear its second factor here too, not only on the
+  // password path. Placed BEFORE the last_login/login_history writes on purpose: a
+  // challenge is not a completed sign-in, and handleLogin does not record one either.
+  if (user.totp_enabled) return await oauthTotpChallenge(env, user, ip, ua, 'google', stateParam);
 
   await env.DB.prepare('UPDATE users SET last_login_at = datetime("now"), last_login_ip = ?, last_login_ua = ?, login_count = login_count + 1 WHERE id = ?')
     .bind(ip, ua, user.id).run();
@@ -1758,12 +1968,12 @@ async function handleGoogleCallback(request, env, ip, ua, country) {
   // holds only one per name; session first, spent nonce second, so the cookie that keeps
   // the user signed in is the one that survives if they are ever folded together.
   const headers = new Headers({
-    // §SESSION-IN-QUERY — see handleOrcidCallback for the full reasoning. Short form:
-    // `?session=` leaks a 30-day full-scope credential into the Pages access log, browser
-    // history and any outgoing Referer, and the fragment is the right place for it — but
-    // the Worker and Pages deploy in parallel, so moving it before the live download.html
-    // can read a fragment signs 364 Google users out with no error. Move both together.
-    'Location': `${SITE_URL}/pages/download?oauth_success=1&session=${sessionId}`,
+    // §SESSION-IN-FRAGMENT — see handleOrcidCallback for the full reasoning. Short form:
+    // `?session=` leaked a 30-day full-scope credential into the Pages access log, browser
+    // history and any outgoing Referer; a fragment is never sent to a server. Moved
+    // 2026-08-01, after download.html had shipped a fragment reader with a query-string
+    // fallback and that page was confirmed live — not in the same push.
+    'Location': `${SITE_URL}/pages/download#oauth_success=1&session=${sessionId}`,
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store'
   });
@@ -1840,15 +2050,105 @@ async function generateTotp(secret, timestamp) {
   return String(code % 1000000).padStart(6, '0');
 }
 
-async function verifyTotp(secret, userCode) {
+// CONSUMES the code, it does not merely check it.
+//
+// The ±1 window is standard and stays — clocks drift. What was missing is that a matching code
+// was accepted every time it was presented, so the same six digits remained valid for the whole
+// 90-second span. Anyone who observes one (a glance at a screen, a share, a code read aloud, a
+// proxy that logs form bodies) could replay it until it rolled. A second factor is meant to be a
+// ONE-TIME password; without consumption it was a 90-second password.
+//
+// The consume is a CONDITIONAL UPDATE, not a read-then-write. `totp_last_step < ?` inside the
+// statement means the database decides the race: two requests presenting the same code at the
+// same instant both compute the same step, both attempt the update, and exactly one reports
+// changes === 1. A SELECT-then-compare-then-UPDATE would let both through, which is the shape of
+// the very attack being closed.
+//
+// Strictly-newer also closes the drift side of the hole: after accepting a code, neither it nor
+// the previous window's code can be used again, so tolerating drift no longer means tolerating
+// replay of anything inside it.
+//
+// env/userId are optional so the function keeps working for a pure "is this code shaped right"
+// check, but every real call site passes them — a caller that omits them verifies without
+// consuming, which is the pre-existing behaviour and must never be the default for a login path.
+async function verifyTotp(secret, userCode, env, userId) {
   if (!userCode || !/^\d{6}$/.test(userCode)) return false;
   const now = Date.now();
   // Allow ±1 window (30s drift)
   for (let i = -1; i <= 1; i++) {
-    const expected = await generateTotp(secret, now + i * 30000);
-    if (expected === userCode) return true;
+    const t = now + i * 30000;
+    const expected = await generateTotp(secret, t);
+    if (expected === userCode) {
+      if (!env || !userId) return true;                       // shape-only check, no consumption
+      const step = Math.floor(t / 30000);
+      try {
+        const r = await env.DB.prepare(
+          'UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)'
+        ).bind(step, userId, step).run();
+        // 0 rows changed = this step was already spent (a replay) or an older window was
+        // presented after a newer one. Both are refusals.
+        return !!(r && r.meta && r.meta.changes === 1);
+      } catch (e) {
+        // A failed consume must FAIL CLOSED. Returning true here would restore the replay hole
+        // exactly when the database is unhealthy.
+        return false;
+      }
+    }
   }
   return false;
+}
+
+// ── 2FA recovery codes ──
+//
+// Issued once when 2FA is enabled and shown once. Without these, the 2FA hardening shipped on
+// 2026-08-01 (enrolment gated on a verified email, the factor enforced on the OAuth doors, codes
+// consumed so they cannot be replayed) turned a lost phone into a permanent lockout of the
+// account and of every family site that authenticates through it. Hardening a factor without a
+// recovery path does not make people safer, it makes them locked out.
+const BACKUP_CODE_COUNT = 10;
+
+// Formatted in two dash-separated halves because these get written down and read back by a human
+// under stress. Lowercase hex only: no case to get wrong, and no characters that look alike.
+function generateBackupCodes(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const b = crypto.getRandomValues(new Uint8Array(4));
+    const hex = Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
+    out.push(hex.slice(0, 4) + '-' + hex.slice(4));
+  }
+  return out;
+}
+
+// Replaces any existing set: enabling 2FA again must not leave codes from a previous enrolment
+// alive, or disabling and re-enabling would silently keep old credentials valid.
+async function issueBackupCodes(env, userId) {
+  const codes = generateBackupCodes(BACKUP_CODE_COUNT);
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
+  for (const c of codes) {
+    await env.DB.prepare('INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (?, ?)')
+      .bind(userId, await sha256Hex(c)).run();
+  }
+  return codes;                      // plaintext returned ONCE, never stored
+}
+
+// Spend a recovery code. Returns true only if this exact code was unused for this user.
+//
+// The consume is a CONDITIONAL UPDATE for the same reason verifyTotp's is: `used = 0` inside the
+// statement means the database settles a race, so two simultaneous presentations of one code
+// cannot both succeed. Normalised on the way in because someone typing a written-down code will
+// add spaces, capitals, or a unicode dash their phone substituted for the hyphen.
+async function consumeBackupCode(env, userId, raw) {
+  if (!raw) return false;
+  const norm = String(raw).trim().toLowerCase().replace(/[\s‐-―]/g, '-');
+  if (!/^[0-9a-f]{4}-[0-9a-f]{4}$/.test(norm)) return false;
+  try {
+    const r = await env.DB.prepare(
+      "UPDATE totp_backup_codes SET used = 1, used_at = datetime('now') WHERE user_id = ? AND code_hash = ? AND used = 0"
+    ).bind(userId, await sha256Hex(norm)).run();
+    return !!(r && r.meta && r.meta.changes === 1);
+  } catch (e) {
+    return false;                    // fail closed, exactly as verifyTotp does
+  }
 }
 
 // ══════════════════════════════════════
@@ -2156,6 +2456,10 @@ function adminNotificationEmail(user, ip, ua, country) {
 // ── Daily Activity Digest (cron) ──
 // ══════════════════════════════════════
 
+// Fair-use alert threshold, GB of downloads in a trailing 30 days, decimal (1e9) to match the
+// admin console's column and threshold chips. See the query below for why 50 and not 1 or 10.
+const FAIRUSE_ALERT_GB = 50;
+
 async function sendDailyDigest(env) {
   // Gather everything in a single Promise.all for speed.
   const [
@@ -2168,6 +2472,7 @@ async function sendDailyDigest(env) {
     topTickers,
     topUsers,
     topInstitutions,
+    fairUse,
   ] = await Promise.all([
     env.DB.prepare(
       "SELECT name, email, institution, country, role, created_at FROM users WHERE created_at > datetime('now', '-1 day') ORDER BY created_at DESC"
@@ -2196,6 +2501,29 @@ async function sendDailyDigest(env) {
     env.DB.prepare(
       "SELECT u.institution, COUNT(*) as c FROM download_log dl LEFT JOIN users u ON dl.user_id = u.id WHERE dl.timestamp > datetime('now', '-1 day') AND u.institution IS NOT NULL AND u.institution != '' GROUP BY u.institution ORDER BY c DESC LIMIT 5"
     ).all(),
+    // Fair use. The digest's existing "top users" block is 24 hours ranked by COUNT, which is
+    // the wrong shape for a fair-use breach twice over: a breach is about VOLUME, and it builds
+    // over weeks, so a steady 40 GB/day never stands out on any single day. This is the same
+    // trailing-30-day window and the same decimal-GB unit the admin console ranks on, so the
+    // email and the console cannot disagree about who the heavy accounts are.
+    //
+    // FAIRUSE_ALERT_GB = 50 GB / 30 days. Chosen from the measured distribution on 2026-08-01:
+    // 129 accounts exceed 1 GB and 64 exceed 10 GB, so alerting at those levels would mail a
+    // list nobody reads; 15 exceed 50 GB and 9 exceed 100 GB. Ten rows is a list that gets
+    // looked at. is_active = 1 because an account already revoked is not news every night.
+    env.DB.prepare(
+      // STILL ACTIVE, not merely heavy. Measured on production 2026-08-01: 14 accounts sit over
+      // the threshold in the trailing 30 days and exactly ONE downloaded anything in the last 24
+      // hours. The other 13 did one large pull weeks ago and stopped. Mailing the same 13 names
+      // nightly for a month is how an alert becomes wallpaper, and the night the fourteenth
+      // appears is the night nobody reads it. Both figures are shown because "412 GB this month,
+      // 38 GB today" and "412 GB this month, nothing today" call for different responses.
+      "SELECT u.id, u.name, u.email, u.institution, COUNT(*) as c, COALESCE(SUM(dl.bytes_served), 0) as bytes, " +
+      "  COALESCE(SUM(CASE WHEN dl.timestamp > datetime('now','-1 day') THEN dl.bytes_served ELSE 0 END), 0) as bytes_24h " +
+      "FROM download_log dl JOIN users u ON dl.user_id = u.id " +
+      "WHERE dl.timestamp > datetime('now', '-30 days') AND u.is_active = 1 " +
+      "GROUP BY dl.user_id HAVING bytes >= ? AND bytes_24h > 0 ORDER BY bytes_24h DESC LIMIT 10"
+    ).bind(FAIRUSE_ALERT_GB * 1e9).all(),
   ]);
 
   const stats = {
@@ -2211,6 +2539,8 @@ async function sendDailyDigest(env) {
     top_tickers: topTickers.results || [],
     top_users: topUsers.results || [],
     top_institutions: topInstitutions.results || [],
+    fair_use: fairUse.results || [],
+    fair_use_gb: FAIRUSE_ALERT_GB,
   };
 
   const subject = `HF Data Library — daily digest (${stats.date_ct})`;
@@ -2274,6 +2604,22 @@ function dailyDigestEmail(s) {
           <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}">${fmtBytes(u.bytes)}</td></tr>`).join('')}
       </table>`;
 
+  // Fair use. Rendered ONLY when an active account is over the threshold, and omitted entirely
+  // otherwise — a section that appears every night saying "nobody" is a section that stops being
+  // read, and this one exists to be noticed on the night it is not empty. The row carries the
+  // account id because the next action is opening that user in the console.
+  const fairUseSection = (!s.fair_use || s.fair_use.length === 0)
+    ? ''
+    : `<div style="border:2px solid #f59e0b; background:#fffbeb; border-radius:6px; padding:0.75rem 1rem; margin:1.25rem 0;">
+         <h3 style="margin:0 0 0.25rem; color:#b45309;">Fair use — ${s.fair_use.length} active account${s.fair_use.length === 1 ? '' : 's'} over ${s.fair_use_gb} GB in 30 days</h3>
+         <p style="margin:0 0 0.5rem; font-size:0.82rem; color:#78716c;">Over the fair-use window AND still downloading in the last 24 hours, ranked by recent volume. Dormant accounts are omitted; the admin console lists every heavy account — the same window and unit as the admin console.</p>
+         <table style="width:100%; border-collapse:collapse; margin:0.25rem 0 0;">
+          <tr><th style="${cellHead}">User</th><th style="${cellHead}">Institution</th><th style="${cellHead}">Downloads</th><th style="${cellHead}">30-day volume</th><th style="${cellHead}">Last 24h</th></tr>
+          ${s.fair_use.map(u => `
+            <tr><td style="${cell}">${escapeHtml(u.name || '?')}<br><span style="font-size:0.8rem; color:#9ca3af;">${escapeHtml(u.email || '')} &middot; id ${u.id}</span></td><td style="${cell}">${escapeHtml(u.institution || '-')}</td><td style="${cell}">${u.c}</td><td style="${cell}"><strong>${fmtBytes(u.bytes)}</strong></td><td style="${cell}"><strong>${fmtBytes(u.bytes_24h || 0)}</strong></td></tr>`).join('')}
+         </table>
+       </div>`;
+
   const institutionsLine = s.top_institutions.length === 0
     ? ''
     : `<p><strong>Active institutions:</strong> ${s.top_institutions.map(i => `${escapeHtml(i.institution)} (${i.c})`).join(', ')}</p>`;
@@ -2291,6 +2637,7 @@ function dailyDigestEmail(s) {
       <h2 style="color:#1a2332; margin-bottom:0.25rem;">Daily activity — ${s.date_ct}</h2>
       <p style="color:#6b7280; margin-top:0;">24-hour summary for HF Data Library.</p>
       ${statsCards}
+      ${fairUseSection}
       <h3 style="margin-top:1.5rem;">New registrations (${s.new_users.length})</h3>
       ${newUsersSection}
       <h3 style="margin-top:1.5rem;">Top tickers downloaded</h3>
@@ -2795,10 +3142,16 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) {
     return jsonRes({ error: 'One or more fields exceed length limits' }, 400, cors);
   }
-  // Latin/English characters only — these strings render publicly on the stats page
-  // (world map, institutions list) and in admin emails. Reject CJK, Cyrillic, Arabic, etc.
-  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) {
-    return jsonRes({ error: 'Name, institution, country, and role must use English/Latin letters only.' }, 400, cors);
+  // institution/country/role render publicly on the stats page (world map, institutions list),
+  // so they stay Latin-only. `name` does NOT render publicly — it is absent from the
+  // /v1/public-stats payload entirely — and Google/ORCID sign-in already stores non-Latin names
+  // unchecked, so gating it here only refused people at the password door whom the Google door
+  // admits. It gets isSafeName instead: letters from any script, no invisible characters.
+  if (!isSafeName(name)) {
+    return jsonRes({ error: 'Please enter your name.' }, 400, cors);
+  }
+  if (!isSafeName(institution) || !isSafeName(userCountry) || !isSafeName(role)) {
+    return jsonRes({ error: 'Institution, country, and role contain characters that are not allowed.' }, 400, cors);
   }
   // Normalize country to ISO-2 if recognized — "United States" / "USA" / "us" all
   // become "US". Falls back to original (trimmed) for unrecognized free-text so we
@@ -2858,6 +3211,21 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     return jsonRes({ error: 'That ORCID confirmation has already been used. Please sign in with ORCID again.' }, 409, cors);
   }
 
+  // The duplicate checks above are READ-THEN-WRITE and cannot be authoritative on their own:
+  // two registrations carrying the same email or the same verified ORCID iD can both pass their
+  // SELECT before either INSERT lands. What actually settles it is the database — a UNIQUE index
+  // on email and the partial UNIQUE idx_users_orcid on orcid_id (which existed in production and
+  // in no migration until 2026-08-01; see that file for why it is load-bearing rather than an
+  // optimisation).
+  //
+  // Unhandled, that arrived as an exception and a 500: the loser of the race was told the server
+  // was broken, when the truthful answer is the same 409 the SELECT would have produced a
+  // millisecond earlier. Rare, but it is exactly the moment a user is most likely to retry, and a
+  // 500 invites them to retry a request that will never succeed.
+  //
+  // Matching on the message rather than a code because D1 surfaces SQLite's text; anything that
+  // is NOT a constraint violation is re-thrown untouched, so this cannot swallow a real fault.
+  try {
   await env.DB.prepare(
     'INSERT INTO users (name, email, password_hash, institution, country, role, api_key, api_key_expires_at, is_admin, email_verified, newsletter_subscribed, unsubscribe_token, last_login_ip, last_login_ua, orcid_id, orcid_profile_json, profile_complete) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
   // email_verified is 0 for EVERYONE, admins included. It used to be `isAdmin ? 1 : 0`, so
@@ -2867,6 +3235,18 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // rows for them already exist (a duplicate email 409s above) — one deleted row and the
   // console was open to whoever registered first. Admins verify by email like everyone else.
   ).bind(name, email.toLowerCase(), passwordHash, institution, normalizedCountry, role, apiKey, apiKeyExpires, isAdmin, 0, newsletter, unsubscribeToken, ip, ua, orcidFromOauth, orcidProfileJson).run();
+  } catch (e) {
+    const msg = String((e && e.message) || '');
+    if (/UNIQUE constraint failed|constraint failed/i.test(msg)) {
+      // Which constraint decides which answer the loser gets. Naming the wrong one would send
+      // someone to "log in with ORCID" for an address collision, or vice versa.
+      if (/orcid/i.test(msg)) {
+        return jsonRes({ error: 'That ORCID iD is already linked to an account. Please log in.' }, 409, cors);
+      }
+      return jsonRes({ error: 'Email already registered. Please log in.' }, 409, cors);
+    }
+    throw e;   // not a constraint problem — must not be disguised as one
+  }
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
 
@@ -2874,15 +3254,31 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)')
     .bind(user.id, ip, ua, userCountry).run();
 
+  // Declared in the FUNCTION scope, not inside the block below, because the response object is
+  // built after that block closes. Assigning an undeclared name would be a ReferenceError under
+  // module strict mode — a runtime failure that no syntax check or esbuild build would catch.
+  let verifyMailSent = true;
+
   // Send verification email (skip for admins — auto-verified)
   {
     // Sent to EVERYONE now, admins included. Admin rows are no longer born verified, so an
     // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString(); // 24 hours
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-      .bind(user.id, verifyToken, verifyExpires).run();
-    await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+      .bind(user.id, verifyToken, verifyExpires, 'verify').run();
+    // NON-FATAL. The users row was inserted well above this line, so a throw here returned 500
+    // for a registration that had ALREADY SUCCEEDED: the address was permanently taken, the
+    // person saw an error, retried, and got "Email already registered. Please log in." with no
+    // verification mail ever sent. A transient Resend outage or rate limit was enough. The two
+    // accounts.* twins already wrapped this; only the api.* one did not.
+    //
+    // The response now reports it, so the UI can point at "resend verification" instead of
+    // leaving someone to guess why nothing arrived.
+    try {
+      await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+    } catch (e) { verifyMailSent = false; }
+
   }
 
   // Send admin notification for every new registration
@@ -2906,7 +3302,11 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     message: isAdmin ? 'Registration successful' : 'Registration successful. Please check your email to verify your account.',
     api_key: apiKey,
     session: sessionId,
-    email_verified: isAdmin ? true : false
+    email_verified: isAdmin ? true : false,
+    // False only when Resend actually refused. The account exists and is usable either way, so
+    // this is informational, not an error — it lets the page point at "resend verification"
+    // rather than leaving someone to wonder why no mail arrived.
+    verification_email_sent: verifyMailSent
   };
   // Additive, and only when the caller actually tried to bring an ORCID iD. An older page
   // ignores unknown keys, so this can never break one; a page that knows them renders the
@@ -2993,7 +3393,30 @@ async function handleLogin(request, env, cors, ip, ua, country) {
 
 async function handleLogout(request, env, cors) {
   const cookie = request.headers.get('cookie') || '';
-  const sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
+  let sessionId = readCookie(cookie, 'hfd_session', '[a-f0-9]+');
+  // Accept the Bearer session too, mirroring getSessionUser.
+  //
+  // This read the cookie ONLY, while both callers in the repo authenticate by header:
+  // pages/admin.html:375 sends authHeaders() (Authorization: Bearer <session id>) and
+  // js/site.js:279 sends an explicit Bearer. admin.html is served from hfdatalibrary.com and
+  // the cookie is scoped to api.hfdatalibrary.com, so it is not attached to that fetch at all.
+  // The handler therefore found no session id, deleted nothing, cleared a cookie the browser
+  // never had, and returned 200 "Logged out" — the console showed a successful sign-out while
+  // the session stayed valid in D1 for its full 30 days. That session id is exactly what
+  // /v1/auth/sso hands an api_key out for, so "log out" on the admin console left the highest
+  // -privilege credential on the machine.
+  //
+  // Same precedence as getSessionUser (cookie first, then Bearer) so a browser carrying both
+  // behaves identically on both paths.
+  if (!sessionId) {
+    const auth = request.headers.get('authorization') || '';
+    if (auth.startsWith('Bearer ')) {
+      const bearer = auth.slice(7).trim();
+      // Same shape check the cookie gets. generateId() is lowercase hex, so anything else was
+      // never a session id we issued and must not reach the DELETE as a bind value.
+      if (/^[a-f0-9]+$/.test(bearer)) sessionId = bearer;
+    }
+  }
   if (sessionId) {
     await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
   }
@@ -3075,11 +3498,56 @@ async function handleMe(request, env, cors) {
 
 // ── 2FA handlers ──
 
+// Enrolling a second factor requires a VERIFIED mailbox.
+//
+// handleLogin does not check email_verified, so registering with an address you do not own
+// still yields a working session. From there, enrolling TOTP set totp_enabled = 1, and
+// handleLogin's `if (user.totp_enabled)` then demands a code from EVERY subsequent login —
+// including the real owner's, once they verify or reset their password. There is no backup
+// code, no admin reset, and disable itself requires a working code, so the mailbox owner was
+// permanently locked out of their own address by someone who never proved they could read it.
+//
+// Requiring verification to enrol closes it at the only point where the squatter has to
+// demonstrate something they cannot fake. It costs a legitimate user nothing: they verify by
+// email anyway, and 2FA is opt-in and set up later.
+function require2faEnrolmentEligible(user, cors) {
+  if (!user.email_verified) {
+    return jsonRes({
+      error: 'Verify your email address before enabling two-factor authentication.',
+    }, 403, cors);
+  }
+  return null;
+}
+
 async function handle2faSetup(request, env, cors) {
   const user = await getSessionUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
+  const ineligible = require2faEnrolmentEligible(user, cors);
+  if (ineligible) return ineligible;
 
   const userId = user.user_id || user.id;
+
+  // Re-enrolment on an ALREADY-ENABLED account has to go through disable first.
+  //
+  // This handler's UPDATE sets totp_enabled = 0, and its only gate was "has a session". Two
+  // doors down, handle2faDisable requires BOTH the password and a currently-valid TOTP code
+  // before it will turn the second factor off. So the strong gate was bypassable by calling
+  // the weak endpoint: anyone holding a session — a borrowed browser, a stolen cookie, the
+  // session id that /v1/auth/sso hands out — could POST /v1/auth/2fa/setup and the victim's
+  // second factor was off in one request, no password, no code. Whatever protection
+  // handle2faDisable was providing, it was providing to nobody.
+  //
+  // Blocking only when totp_enabled = 1 keeps every legitimate flow: a user with no 2FA
+  // enrols normally, and one who ran setup but never confirmed (secret present,
+  // totp_enabled = 0) can re-run setup to get a fresh QR code. Changing authenticators means
+  // disable-then-setup, which is the path that already asks for the password and a code.
+  const existing = await env.DB.prepare('SELECT totp_enabled FROM users WHERE id = ?').bind(userId).first();
+  if (existing && existing.totp_enabled) {
+    return jsonRes({
+      error: 'Two-factor authentication is already enabled. Disable it first (which requires your password and a current code) before setting up a new authenticator.',
+    }, 409, cors);
+  }
+
   const secret = generateTotpSecret();
   const otpauthUrl = `otpauth://totp/HF%20Data%20Library:${encodeURIComponent(user.email)}?secret=${secret}&issuer=HF%20Data%20Library`;
 
@@ -3096,6 +3564,12 @@ async function handle2faSetup(request, env, cors) {
 async function handle2faEnable(request, env, cors) {
   const user = await getSessionUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
+  // Checked here as well as in setup, not only there. These are two independently routed
+  // endpoints and enable is the one that actually writes totp_enabled = 1 — a guard that
+  // lives only on the step before it is a guard on the wrong statement, and would be bypassed
+  // by anyone posting straight to /2fa/enable with a secret from an earlier eligible moment.
+  const ineligible = require2faEnrolmentEligible(user, cors);
+  if (ineligible) return ineligible;
 
   let body;
   try { body = await request.json(); } catch { return jsonRes({ error: 'Invalid JSON' }, 400, cors); }
@@ -3107,15 +3581,25 @@ async function handle2faEnable(request, env, cors) {
   const dbUser = await env.DB.prepare('SELECT totp_secret FROM users WHERE id = ?').bind(userId).first();
   if (!dbUser || !dbUser.totp_secret) return jsonRes({ error: 'Run setup first' }, 400, cors);
 
-  const valid = await verifyTotp(dbUser.totp_secret, code);
+  const valid = await verifyTotp(dbUser.totp_secret, code, env, userId);
   if (!valid) return jsonRes({ error: 'Invalid code. Check your authenticator app and try again.' }, 400, cors);
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').bind(userId).run();
 
+  // Issued at the moment the factor becomes real, and returned exactly once. Everything that
+  // hardened 2FA today also made a lost authenticator terminal: /2fa/disable requires a working
+  // code, there is no admin reset, and the factor is now enforced on the OAuth doors too. These
+  // are the only way back in.
+  const backupCodes = await issueBackupCodes(env, userId);
+
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   await auditLog(env, user, 'enable_2fa', userId, user.email, 'TOTP enabled', ip);
 
-  return jsonRes({ message: '2FA enabled successfully' }, 200, cors);
+  return jsonRes({
+    message: '2FA enabled successfully',
+    backup_codes: backupCodes,
+    backup_codes_notice: 'Save these now — each works once, and this is the only time they are shown. Without them a lost authenticator locks you out permanently.',
+  }, 200, cors);
 }
 
 async function handle2faDisable(request, env, cors) {
@@ -3134,10 +3618,18 @@ async function handle2faDisable(request, env, cors) {
   const passwordOk = await verifyPassword(password, dbUser.password_hash);
   if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
 
-  const codeOk = await verifyTotp(dbUser.totp_secret, code);
+  // A recovery code is accepted here too. Someone who has LOST their authenticator is exactly
+  // the person who needs to turn 2FA off, and requiring the device they no longer have was the
+  // circular lock that made this a permanent lockout.
+  const codeOk = (await verifyTotp(dbUser.totp_secret, code, env, userId))
+    || (await consumeBackupCode(env, userId, code));
   if (!codeOk) return jsonRes({ error: 'Invalid 2FA code' }, 401, cors);
 
   await env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').bind(userId).run();
+  // The recovery codes belong to THIS enrolment and must not outlive it. Leaving them would mean
+  // a set printed months ago still opens the account after 2FA was deliberately turned off, and
+  // would silently carry over into a later re-enrolment.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
 
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   await auditLog(env, user, 'disable_2fa', userId, user.email, 'TOTP disabled', ip);
@@ -3180,7 +3672,10 @@ async function handle2faVerifyLogin(request, env, cors, ip, ua, country) {
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
   if (!user || !user.totp_secret) return jsonRes({ error: 'Invalid state' }, 400, cors);
 
-  const valid = await verifyTotp(user.totp_secret, code);
+  // A recovery code stands in for the authenticator here. This is the path a locked-out person
+  // actually reaches: they have their password, the pending token, and a code on paper.
+  const valid = (await verifyTotp(user.totp_secret, code, env, user.id))
+    || (await consumeBackupCode(env, user.id, code));
   if (!valid) {
     await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)')
       .bind(user.id, ip, ua, country).run();
@@ -3262,11 +3757,18 @@ async function handleDeleteAccount(request, env, cors) {
   if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
 
   // Delete all user data (personal info removed; anonymized counts remain in aggregated queries)
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+  // Same as the accounts.* twin: everything, not just sessions.
+  await revokeAllUserCredentials(env, userId);
   await env.DB.prepare('DELETE FROM login_history WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(userId).run();
+  // Recovery codes are login credentials in their own right; a deleted account must not
+  // leave a usable set behind. Added ONLY here and in the other delete handler - not
+  // beside every totp_pending clear, because three of those five sites run on SUCCESSFUL
+  // login or on a revocation that deliberately preserves the user's authenticator, and
+  // wiping their codes there would destroy the recovery path this work exists to create.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
   // sso_refresh_tokens, sso_codes and newsletter_prefs also FK->users; without clearing them the
   // users DELETE fails with a FOREIGN KEY constraint for any user who has logged in via the popup
   // (sso_codes/sso_refresh_tokens) or set newsletter prefs at registration. Surfaced live
@@ -3312,14 +3814,14 @@ async function handleUpdateProfile(request, env, cors) {
   // So: trim, cap the length, and require the charset. The typeof guard is not cosmetic
   // either — `{"name": 42}` threw on .length and surfaced as a 500.
   //
-  // The charset check goes through latinOkOrUnchanged and NOT isLatinish directly. The
-  // first version of this loop called isLatinish on every submitted field, and account.html
+  // The charset check goes through charsetOkOrUnchanged and NOT isSafeName directly. The
+  // first version of this loop called the validator on every submitted field, and account.html
   // prefills all four inputs from the stored row and posts all four on every save, so a
   // Google user whose stored name is Chinese/Cyrillic/Arabic got
   // "Name must use English/Latin letters only." on the very save that was meant to fill in
   // their institution — profile_complete could never reach 1 and they could never download
   // again. Only a value that DIFFERS from what is already stored is a value the user is
-  // introducing; the reasoning is written out at latinOkOrUnchanged. `user` comes from
+  // introducing; the reasoning is written out at charsetOkOrUnchanged. `user` comes from
   // getSessionUser, which SELECTs u.*, so user.name/institution/country/role are this
   // request's own read of the row — no extra query.
   //
@@ -3334,7 +3836,9 @@ async function handleUpdateProfile(request, env, cors) {
     if (typeof body[field] !== 'string') return jsonRes({ error: `${label} must be a string` }, 400, cors);
     const v = body[field].trim();
     if (v.length > (field === 'institution' ? 200 : 100)) return jsonRes({ error: `${label} too long` }, 400, cors);
-    if (!latinOkOrUnchanged(v, user[field])) return jsonRes({ error: `${label} must use English/Latin letters only.` }, 400, cors);
+    if (!charsetOkOrUnchanged(v, user[field])) {
+      return jsonRes({ error: `${label} contains characters that are not allowed.` }, 400, cors);
+    }
     updates.push(`${field} = ?`); values.push(v);
   }
   if (body.newsletter_subscribed !== undefined) {
@@ -3444,7 +3948,14 @@ async function handleVerifyEmail(request, env, cors) {
   // §EXPIRY-COMPARE: datetime() on both sides. Written with toISOString(), so a
   // verification link stamped 24 hours was honoured for up to 48.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
+    // purpose is checked, and NULL is still accepted HERE only.
+    // Confirming an email address is the harmless half of this pair: the worst a wrong-purpose
+    // token can do at this endpoint is mark an address verified that its owner was going to
+    // verify anyway. NULL means "minted before the purpose column existed" (2026-08-01), and at
+    // migration time exactly one unused, unexpired row existed — refusing it would strand that
+    // person for no security gain. Those NULLs cannot be created any more: all five writers now
+    // set a value, so this clause drains itself within 24 hours and can then be tightened.
+    "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND (purpose = 'verify' OR purpose IS NULL)"
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired verification link' }, 400, cors);
@@ -3475,17 +3986,36 @@ async function handleResendVerification(request, env, cors) {
   }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-    .bind(userId, verifyToken, verifyExpires).run();
-  await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+    .bind(userId, verifyToken, verifyExpires, 'verify').run();
+  // NON-FATAL, matching the accounts.* twin. The token row is already written by the time this
+  // runs, so a throw turned a successful mint into a 500 and invited a retry that just burns
+  // another one. Reported in the response instead.
+  let resendMailSent = true;
+  try {
+    await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+  } catch (e) { resendMailSent = false; }
 
-  return jsonRes({ message: 'Verification email sent. Check your inbox.' }, 200, cors);
+  return jsonRes({
+    message: resendMailSent
+      ? 'Verification email sent. Check your inbox.'
+      : 'We could not send the email just now. Please try again in a few minutes.',
+    sent: resendMailSent,
+  }, resendMailSent ? 200 : 502, cors);
 }
 
 async function handleResetRequest(request, env, cors) {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  const rl = await checkRateLimit(env, rlIpKey(ip), 'api:reset');
-  if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
+  // PEEK, do not charge yet — the same shape handleLogin uses so that only a real event costs.
+  //
+  // This charged an attempt at the top, BEFORE the body was parsed and before anyone knew
+  // whether the address even exists. On a shared egress — a university, a department, a
+  // conference wifi — three colleagues resetting in an hour exhausted the budget and the fourth
+  // was refused, which is an availability bug wearing a security badge. It is the identical
+  // lockout that had `api:register` raised from 3 to 25 on 2026-07-31; this rule was left
+  // behind at 3, and a typo'd address or a double-click spent one of them.
+  const peek = await checkRateLimit(env, rlIpKey(ip), 'api:reset', { charge: false });
+  if (!peek.ok) return rateLimitResponse(peek.retryAfter, cors);
 
   let body;
   try { body = await request.json(); } catch { return jsonRes({ error: 'Invalid JSON' }, 400, cors); }
@@ -3497,12 +4027,33 @@ async function handleResetRequest(request, env, cors) {
 
   // Always return success to avoid email enumeration
   if (user) {
-    const token = generateId();
-    const expires = new Date(Date.now() + 3600000).toISOString(); // 1 hour
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)')
-      .bind(user.id, token, expires).run();
-    const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
-    await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+    // A PER-ACCOUNT cap as well as the per-IP one. The IP budget bounds how much one network can
+    // do; it does nothing to stop a mailbox being flooded from many addresses, which is the
+    // abuse that actually reaches a person. Keyed on user id, mirroring 'api:2fa' — and checked
+    // only inside the `user` branch, so an unknown address can never spend a real account's
+    // budget, and the response stays identical either way so nothing is enumerable.
+    const perAcct = await checkRateLimit(env, 'rst:u' + user.id, 'api:reset_acct');
+    if (perAcct.ok) {
+      // Charge the IP only now, when a mail is actually going out. A request that produced no
+      // email cost nothing, which is what makes the raised cap safe.
+      await checkRateLimit(env, rlIpKey(ip), 'api:reset');
+      const token = generateId();
+      const expires = new Date(Date.now() + 3600000).toISOString(); // 1 hour
+      await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+        .bind(user.id, token, expires, 'reset').run();
+      const u = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(user.id).first();
+      // NON-FATAL, and this one is a SECURITY fix rather than a robustness one. sendEmail is
+      // reached ONLY inside `if (user)` — a non-existent address never gets here. So an
+      // exception produced a 500 exclusively for addresses that DO exist, while unknown ones
+      // returned the neutral 200. That difference is an account-enumeration oracle, and it
+      // defeats the entire point of the constant response this function is built around.
+      // Swallowing it keeps both cases identical.
+      try {
+        await sendEmail(env, email.toLowerCase(), 'Reset your HF Data Library password', resetEmail(u.name, token));
+      } catch (e) { /* stay indistinguishable from the unknown-address path */ }
+    }
+    // Over the per-account cap: silently skip the send. Saying so would confirm the address is
+    // registered, which is exactly what the constant-response above exists to hide.
   }
 
   return jsonRes({ message: 'If that email is registered, a reset link has been sent.' }, 200, cors);
@@ -3522,7 +4073,18 @@ async function handleReset(request, env, cors) {
   // but bare, the link stayed redeemable until midnight UTC, up to a 24× widening of
   // the window an intercepted reset mail can be used to take the account over.
   const reset = await env.DB.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime("now")'
+    // purpose = 'reset' EXACTLY. No NULL grace, unlike handleVerifyEmail.
+    // This endpoint replaces a password, and until now it accepted any row in this table —
+    // including the 24-hour EMAIL-VERIFICATION tokens that four other writers mint. A
+    // verification link is the least-guarded URL the service sends (it goes out on every sign-up
+    // and every resend, and lives 24x longer than a reset token), so a forwarded welcome email
+    // or a mailbox someone else can read was a full account takeover. A token that proves "you
+    // can read this mailbox" must not also mean "replace this account's password".
+    //
+    // Refusing NULL costs at most one person clicking "forgot password" a second time — one
+    // unused row existed at migration time. Granting a grace period would keep the takeover open
+    // for another 24 hours, which is the wrong trade on the dangerous side of the pair.
+    "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND purpose = 'reset'"
   ).bind(token).first();
 
   if (!reset) return jsonRes({ error: 'Invalid or expired reset token' }, 400, cors);
@@ -3646,6 +4208,11 @@ async function revokeAllUserCredentials(env, userId, opts) {
   if (o.clearTotp) {
     await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?')
       .bind(userId).run();
+    // The recovery codes go with the secret. This branch runs on the hostile-handover path,
+    // where the point is that NOTHING the previous holder kept still works — and a set of
+    // backup codes they wrote down is a login credential exactly like the secret being cleared.
+    // Leaving them would hand back the account this branch exists to take away.
+    await db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(userId).run();
   }
 }
 
@@ -4001,8 +4568,36 @@ async function handleDownload(ticker, request, env, cors, ip) {
   } else {
     version = url.searchParams.get('version') || 'clean';
     timeframe = url.searchParams.get('timeframe') || '1min';
+    // Validate the DIRECT branch with the same whitelists the token branch was validated by.
+    //
+    // handleDownloadToken checks all three inputs before it will mint a link — version against
+    // ['raw','clean'], format against ['parquet','csv'], timeframe against VALID_TIMEFRAMES —
+    // so anything arriving via a token is already known-good. This branch took the same three
+    // values straight from the query string and interpolated two of them into the R2 key
+    // (`${version}/${ticker}.parquet`, `${version}/${timeframe}/${ticker}.parquet`, and the csv/
+    // equivalents). Same bucket, same key template, one path checked and the other not.
+    //
+    // The consequence is not path traversal — R2 keys are opaque strings and `ticker` is already
+    // constrained to [A-Z0-9.-] by the route regex, so no `/` can be injected through it — it is
+    // that an authenticated caller chose an arbitrary key PREFIX and could address objects the
+    // catalogue never offers, by asking for a version or timeframe that is not a real one.
+    //
+    // Rejecting rather than silently coercing: a caller who asks for something that does not
+    // exist should be told, not quietly handed a different file than the one requested.
+    if (!['raw', 'clean'].includes(version)) {
+      return jsonRes({ error: "Invalid version. Use: raw, clean" }, 400, cors);
+    }
+    if (!VALID_TIMEFRAMES.includes(timeframe)) {
+      return jsonRes({ error: 'Invalid timeframe. Use: ' + VALID_TIMEFRAMES.join(', ') }, 400, cors);
+    }
   }
   const format = tokenRecord ? tokenRecord.format : ((url.searchParams.get('format') || 'parquet').toLowerCase());
+  // format selects between two fixed key templates rather than being interpolated, so it cannot
+  // shape a key — but an unknown value silently fell into the parquet branch and returned a
+  // parquet file to someone who asked for something else. Same whitelist as the mint path.
+  if (!tokenRecord && !['parquet', 'csv'].includes(format)) {
+    return jsonRes({ error: "Invalid format. Use: parquet, csv" }, 400, cors);
+  }
 
   const key = dataObjectKey(ticker, version, timeframe, format);
   const filename = format === 'csv'
@@ -4093,13 +4688,49 @@ async function handleAdmin(path, request, env, cors, ip) {
     const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
     const q = (url.searchParams.get('q') || '').trim();
     const filter = url.searchParams.get('filter') || '';   // vip|admin|revoked|active|flagged
+    // Fair-use threshold in GB over the trailing 30 days. Parsed as a float so 0.5 works.
+    //
+    // The clamp is finite on BOTH ends, not just at zero. `Math.max(0, parseFloat(x) || 0)`
+    // handles the obvious junk — "abc", "", "-10" and "NaN" all collapse to 0, i.e. no filter —
+    // but it happily passes Infinity through: parseFloat('1e400') is Infinity, Infinity || 0 is
+    // Infinity, and Math.max(0, Infinity) is Infinity. That then reaches D1 as a bound
+    // parameter of Infinity, which is not a value SQLite has. `?min_gb30=1e400` is a one-word
+    // query string, so the ceiling is not optional.
+    //
+    // MAX_GB30 is 9e6 GB (9 PB in a 30-day window — absurd by four orders of magnitude against
+    // the real maximum of 1.1 TB, so it can never clip a genuine query). It is chosen so
+    // MAX_GB30 * 1e9 = 9e15 stays under Number.MAX_SAFE_INTEGER (~9.007e15) and the bound value
+    // is always an exact integer: without it, "9007199254740993" binds 9.007e24 as a float.
+    // Unparseable input and a huge number are NOT the same request and must not get the same
+    // answer. "abc" expresses no threshold, so it means no filter. "1e400" expresses a
+    // threshold that simply nobody meets, so it must filter to NOTHING — rejecting it into
+    // "no filter" would answer "who is over 10^400 GB?" with the entire user list, which is
+    // the exact inversion of what was asked. Math.min clamps Infinity to the ceiling for free,
+    // and `NaN > 0` is already false, so no isFinite test is needed to separate them.
+    const MAX_GB30 = 9e6;
+    const rawGb30 = parseFloat(url.searchParams.get('min_gb30') || '0');
+    const minGb30 = rawGb30 > 0 ? Math.min(rawGb30, MAX_GB30) : 0;
     // Sort whitelist — never interpolate raw input into SQL.
     const SORT_COLS = {
       created_at: 'created_at', name: 'name COLLATE NOCASE', email: 'email COLLATE NOCASE',
       institution: 'institution COLLATE NOCASE', country: 'country COLLATE NOCASE',
       downloads: 'download_count', logins: 'login_count', last_login: 'last_login_at',
+      // Fair use: trailing-30-day volume, the two columns this console is judged on.
+      bytes_30d: 'bytes_30d', downloads_30d: 'downloads_30d',
     };
-    const sortCol = SORT_COLS[url.searchParams.get('sort')] || SORT_COLS.created_at;
+    // hasOwnProperty, not a bare lookup. SORT_COLS is an object literal, so it inherits from
+    // Object.prototype and a bare `SORT_COLS[input] || default` is not actually a whitelist:
+    // ?sort=constructor resolves to Object's constructor, ?sort=toString and ?sort=valueOf to
+    // native functions, ?sort=__proto__ to an object — all truthy, so none fall through to the
+    // default, and each is then string-interpolated straight into ORDER BY, producing e.g.
+    // `ORDER BY function Object() { [native code] } DESC`. The comment one line above says
+    // "never interpolate raw input into SQL", which is exactly what this did for four inputs.
+    // Behind the admin gate, so the reachable damage is a 500 rather than injection — but a
+    // whitelist that admits four keys nobody put in it is not a whitelist.
+    const sortKey = url.searchParams.get('sort') || '';
+    const sortCol = Object.prototype.hasOwnProperty.call(SORT_COLS, sortKey)
+      ? SORT_COLS[sortKey]
+      : SORT_COLS.created_at;
     const dir = (url.searchParams.get('dir') || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     // Abuse signals computed across ALL users (needed for row enrichment, the
@@ -4135,21 +4766,54 @@ async function handleAdmin(path, request, env, cors, ip) {
         .map(Number).filter(Number.isInteger);
       where.push('id IN (' + (ids.length ? ids.join(',') : '-1') + ')');
     }
+    // Fair-use filter. Pushed LAST so its bound parameter lands after the ones `q` pushed —
+    // D1 binds positionally, and an arg appended out of order silently filters on the wrong
+    // column rather than erroring. GB here is decimal (1e9), the convention for transfer
+    // volume and the same base the console formats with, so the number typed into the box is
+    // the number rendered in the column.
+    if (minGb30 > 0) {
+      where.push('COALESCE(d30.b, 0) >= ?');
+      args.push(Math.round(minGb30 * 1e9));
+    }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    // Trailing-30-day download volume per user, as a CTE rather than a correlated subquery.
+    // A correlated subquery would re-walk every row of the heaviest account (45,204 of them)
+    // once per rendered row — up to 500 rows a page. This aggregates the window ONCE.
+    //
+    // Cost is measured, not assumed: ~368k rows read, ~82 ms, via a full scan on the existing
+    // idx_download_log_user, which SQLite prefers because it returns rows already grouped by
+    // user_id and so makes GROUP BY free. A purpose-built (timestamp, user_id, bytes_served)
+    // index was built, forced with INDEXED BY, and measured SLOWER in rows read (381,577);
+    // it was dropped by the 2026-08-01 migration, which records the numbers. The scan is
+    // inherent to aggregating a window across every user — if this needs to get cheaper the
+    // answer is a summary table on the existing 02:00 cron, not another index.
+    //
+    // LEFT JOIN because a user with no downloads in the window must still appear — at 0,
+    // not missing.
+    const D30_CTE =
+      "WITH d30 AS (SELECT user_id, SUM(bytes_served) AS b, COUNT(*) AS c FROM download_log " +
+      "WHERE timestamp > datetime('now','-30 days') GROUP BY user_id) ";
+    const D30_JOIN = ' FROM users LEFT JOIN d30 ON d30.user_id = users.id ';
 
     // ip_country: geolocation (Cloudflare cf-ipcountry) of the user's last-login
     // IP, resolved from login_history — distinct from self-declared users.country.
     const users = await env.DB.prepare(
+      D30_CTE +
       'SELECT id, name, email, institution, country, role, api_key, is_active, is_admin, is_vip, newsletter_subscribed, created_at, last_login_at, last_login_ip, last_login_ua, login_count, download_count, total_bytes_downloaded, notes, ' +
       '(SELECT lh.country FROM login_history lh WHERE lh.ip_address = users.last_login_ip ' +
       'AND lh.country IS NOT NULL AND lh.country != "" AND lh.country != "unknown" ' +
-      'ORDER BY lh.id DESC LIMIT 1) AS ip_country ' +
-      'FROM users ' + whereSql + ` ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`
+      'ORDER BY lh.id DESC LIMIT 1) AS ip_country, ' +
+      'COALESCE(d30.b, 0) AS bytes_30d, COALESCE(d30.c, 0) AS downloads_30d' +
+      D30_JOIN + whereSql + ` ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`
     ).bind(...args, limit, offset).all();
 
     const totalAll = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
+    // The count carries the SAME cte + join as the page query. It has to: whereSql can now
+    // contain a d30 predicate, and a count that quietly dropped the fair-use filter would
+    // report "1 of 442 shown" while the pager believed there were 442 pages to walk.
     const totalMatch = whereSql
-      ? await env.DB.prepare('SELECT COUNT(*) as count FROM users ' + whereSql).bind(...args).first()
+      ? await env.DB.prepare(D30_CTE + 'SELECT COUNT(*) as count' + D30_JOIN + whereSql).bind(...args).first()
       : totalAll;
 
     const usersOut = users.results.map(u => ({
@@ -4179,6 +4843,18 @@ async function handleAdmin(path, request, env, cors, ip) {
     const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first();
     if (!u) return jsonRes({ error: 'User not found' }, 404, cors);
 
+    // Same trailing-30-day window the list column ranks on. The detail panel is where a
+    // fair-use case is actually decided, so it must show the figure that put the account on
+    // the list — a panel showing only the all-time total would make a month-old 1 TB burst
+    // and a steady 1 TB over two years look identical. Single user, so a direct aggregate is
+    // correct here; the CTE above exists only because the list needs all of them at once.
+    const vol30 = await env.DB.prepare(
+      "SELECT COALESCE(SUM(bytes_served), 0) AS b, COUNT(*) AS c FROM download_log " +
+      "WHERE user_id = ? AND timestamp > datetime('now','-30 days')"
+    ).bind(uid).first();
+    u.bytes_30d = vol30 ? vol30.b : 0;
+    u.downloads_30d = vol30 ? vol30.c : 0;
+
     const logins = await env.DB.prepare(
       'SELECT * FROM login_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 20'
     ).bind(uid).all();
@@ -4197,7 +4873,17 @@ async function handleAdmin(path, request, env, cors, ip) {
         created_at: u.created_at, last_login_at: u.last_login_at, last_login_ip: u.last_login_ip, last_login_ua: u.last_login_ua,
         login_count: u.login_count, download_count: u.download_count, total_bytes_downloaded: u.total_bytes_downloaded,
         notes: u.notes,
-        hide_institution: u.hide_institution ? true : false
+        hide_institution: u.hide_institution ? true : false,
+        // Computed above, then dropped on the floor. This handler returns an explicit field
+        // list rather than spreading `u`, so assigning u.bytes_30d / u.downloads_30d put them
+        // on an object the response never serialises. The list branch DOES spread, which is
+        // why the column worked and hid this: the panel rendered fmtVol30(undefined) as "-"
+        // and "in 0 dl" for every account, including the 1.10 TB one. That is not a blank, it
+        // is an affirmative statement of zero — on the one screen whose entire purpose is
+        // deciding whether a volume warrants revoking, directly contradicting the row it was
+        // opened from. The aggregate query was already running; only its result was lost.
+        bytes_30d: u.bytes_30d,
+        downloads_30d: u.downloads_30d
       },
       recent_logins: logins.results,
       recent_downloads: downloads.results
@@ -4225,8 +4911,11 @@ async function handleAdmin(path, request, env, cors, ip) {
       if (typeof body[f] === 'string') {
         let v = body[f].trim();
         if (v.length === 0) continue; // skip empty (don't wipe field)
-        if (!isLatinish(v)) {
-          return jsonRes({ error: `${f} must use English/Latin letters only.` }, 400, cors);
+        // Admin edits these to fix typos and unify naming. `name` takes the any-script rule —
+        // otherwise admin could not correct a misspelling in a name the system itself stored
+        // via Google or ORCID.
+        if (!isSafeName(v)) {
+          return jsonRes({ error: `${f} contains characters that are not allowed.` }, 400, cors);
         }
         if (f === 'country') v = normalizeCountry(v) || v;
         updates.push(`${f} = ?`);
@@ -4363,7 +5052,64 @@ async function handleAdmin(path, request, env, cors, ip) {
 
 // ── Status ──
 
+// Cached for PUBLIC_STATS_TTL. This route is unauthenticated, has no rate limit — it is not even
+// passed `ip`, so it could not have one without a signature change — and every single call ran
+// TEN full-table D1 aggregates (COUNT over users, COUNT and SUM over download_log, day and week
+// windows, a DISTINCT-user country CTE, institutions, top tickers, by-version, registration
+// trend) plus an outbound Cloudflare GraphQL request. Anyone with curl could hold the database
+// at full scan indefinitely, and D1 refuses WRITES when it is saturated, so the failure lands on
+// logins and download logging rather than on this endpoint.
+//
+// A cache is the right control here rather than a limiter: the answer is identical for every
+// caller, so there is nothing to throttle per-client — the work simply should not be repeated.
+// Five minutes is far fresher than the numbers need (they move by single-digit counts a day) and
+// turns any volume of traffic into at most 12 computations an hour.
+//
+// ONLY THE BODY IS CACHED, never the Response. CORS headers are per-origin here (corsDecision
+// returns a different Access-Control-Allow-Origin for each registered family site), so storing a
+// whole Response would serve one origin's CORS headers to another the moment a second site asked
+// — a caching bug that presents as an intermittent CORS failure and is miserable to diagnose.
+// Re-wrapping the cached JSON with the CURRENT request's cors object makes that impossible.
+const PUBLIC_STATS_TTL = 300;
+
+// Title-case an institution ONLY when the user typed it entirely in lower case. Anything
+// containing an uppercase letter is left exactly as written, so acronyms and deliberate
+// capitalisation survive untouched.
+const INST_SMALL_WORDS = new Set(['of', 'the', 'and', 'at', 'for', 'in', 'de', 'la', 'du', 'von', 'van']);
+function titleCaseInstitution(name) {
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw || /[A-Z]/.test(raw)) return raw;          // has caps -> author's choice, leave it
+  return raw.split(/\s+/).map(function (w, i) {
+    if (i > 0 && INST_SMALL_WORDS.has(w)) return w;   // "of", "the" stay lowercase mid-name
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(' ');
+}
+
 async function handlePublicStats(env, cors) {
+  let cache = null;
+  const cacheKey = new Request('https://api.hfdatalibrary.com/__cache/public-stats', { method: 'GET' });
+  try {
+    cache = caches.default;
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      const body = await hit.text();
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+          'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL,
+          'X-Cache': 'HIT',
+          ...cors,
+        },
+      });
+    }
+  } catch (e) {
+    cache = null;   // Cache API unavailable (e.g. workers.dev) → compute, exactly as before
+  }
+
   // Public stats — no auth required. All data is aggregated, no PII exposed.
   // Total registered accounts (all rows, incl. deactivated) — matches the admin "Total Users" count.
   const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
@@ -4412,6 +5158,50 @@ async function handlePublicStats(env, cors) {
     'privat', 'perso', 'persoonlijk', 'full-time employee', 'company', 'exploring',
     'university', 'labs', 'new in fin', 'test university', 'rebel', 'myass',
     '1qaz2wsx', 'gz', 'berln',
+    // added 2026-08-01, every one observed in the LIVE list: placeholders that read as
+    // institutions, and numeric/near-empty junk. 'academics', 'research' and
+    // 'personal research' describe what someone does, not where they are.
+    'personal research', 'academics', 'academic', 'research', 'researcher',
+    'finance', 'trading', 'quant', 'ah', 'aa', 'abc', 'qwerty', 'asd',
+    // Observed in the live list on 2026-08-01. 'university of example' is a placeholder that
+    // reads as a real school, which is worse than obvious junk; 'bank' and 'business' name a
+    // sector, not an employer.
+    'university of example', 'example university', 'bank', 'business', 'consumer/nerd',
+    'his', 'own', 'ddd', 'top 5 stocks', 'isv3c99vet7dbng',
+    // THE BLOCKLIST WAS MONOLINGUAL. Every placeholder above is English, so the same word in
+    // another language sailed through: 个人 is Chinese for 'personal/individual',
+    // sitting in the live list exactly as 'Personal' would have. Users write this field in
+    // their own language and the filter only spoke one.
+    //
+    // Non-ASCII is NOT a signal of junk and must never be treated as one - the same list
+    // contains Universidad de Jaén, University of Wrocław, École de
+    // Technologie Supérieure, Università Degli Studi and Dr. Franjo Tuđman,
+    // all real. Only the specific placeholder word is blocked, never the script.
+    '个人',
+    // added 2026-08-02, every one read off the LIVE list. Three groups:
+    //   * role/status answers to a "where" question - a job title is not an employer;
+    //   * explicit refusals ("no school", "no university") - the user answered honestly, it is
+    //     still not an institution;
+    //   * junk, including 'hfddatalibraty', which is a misspelling of this site.
+    'professional', 'supervisor', 'school', 'my self', 'indivisual',
+    'independent research', 'independent studies', 'independent researcher / self-employed',
+    'self-employed', 'self empoyed trader', 'self-employed-as-a-hobby',
+    'no school', 'no university', 'no special institute', 'no ord', 'other company',
+    'dsfsdf', 'hfddatalibraty', 'limitedincorporated', 'university of deez',
+    // Chinese for "court". Generic like 个人 above - it names a kind of body, not one
+    // institution, exactly as the already-blocked 'university' and 'bank' do in English.
+    '法院',
+    // added 2026-08-02 after web-verifying all 249 live entries (18 agents, 516 searches).
+    // Only these four survived a second agent whose job was to PROVE each one real: no
+    // company registry, university listing, domain or search engine had any record. Three
+    // others the first pass wanted to delete were RESCUED by that second pass and kept -
+    // 'Maolei' is a registered Chinese bearing company, 'Rmuut' is a real Thai university.
+    'backtesting platform', 'maingonav', 'sergio moura', 'zisnjk inc.',
+    // DELIBERATELY NOT BLOCKED, having checked:
+    //   'usa'  - looks like a country, but the University of South Alabama officially goes by
+    //            USA. Blocking it would delete a real school to tidy a placeholder.
+    //   'aix', 'seoul', 'ntu', 'cmu', 'iit', 'ucl' - real institutions abbreviate to each of
+    //            these and more than one does, so neither blocking nor aliasing is safe.
   ];
   // Canonical names so the SAME school typed different ways (alias / typo /
   // locale / casing) merges into ONE row instead of splitting its count across
@@ -4429,29 +5219,166 @@ async function handlePublicStats(env, cors) {
     'oxford university': 'University of Oxford',
     'old dominion university': 'Old Dominion University',
     'fordham': 'Fordham University',
+    // added 2026-08-01. Each of these was splitting ONE school across several rows in the
+    // live list: uca / Uca / University of Central Arkansas were three entries totalling 8
+    // users while each looked like 2-4. Added only where the abbreviation is unambiguous,
+    // and for uca and nus the full name already appears in the data beside the acronym, so
+    // the merge is evidenced rather than assumed.
+    'uca': 'University of Central Arkansas',
+    'nus': 'National University of Singapore',
+    'uiuc': 'University of Illinois',
+    'ucla': 'University of California, Los Angeles',
+    'hkust': 'Hong Kong University of Science and Technology',
+    'cuhk': 'Chinese University of Hong Kong',
+    'nyu': 'New York University',
+    'mit': 'Massachusetts Institute of Technology',
+    'lse': 'London School of Economics',
+    'babson collage': 'Babson College',   // unambiguous misspelling of a real school
+    // Renders as "University of bath" in the visible top 20. titleCaseInstitution cannot fix
+    // it - that only touches strings with NO uppercase at all, and this one has a capital U -
+    // but the alias map is keyed on the LOWERCASED value, so it matches and corrects it.
+    'university of bath': 'University of Bath',
+    // added 2026-08-02. Each of these was a SECOND row for a school already in the live list,
+    // so the merge is evidenced by the data rather than assumed: the canonical spelling is
+    // sitting right there beside the variant.
+    'the university of hong kong': 'University of Hong Kong',
+    'hku': 'University of Hong Kong',
+    'the hong kong university of science and technology': 'Hong Kong University of Science and Technology',
+    'the university of edinburgh': 'University of Edinburgh',
+    'mcgil university': 'McGill University',
+    'hanyang': 'Hanyang University',
+    'edhec': 'Edhec Business School',
+    // Typos and casing that titleCaseInstitution cannot reach, because each already contains
+    // an uppercase letter. Unambiguous - one real school each.
+    'univerity of bucharest': 'University of Bucharest',
+    'istanbul technical universtiy': 'Istanbul Technical University',
+    'university of alabama': 'University of Alabama',
+    'texas a&m international university': 'Texas A&M International University',
+    'singapore university of technology and design': 'Singapore University of Technology and Design',
+    'new horizon college of engineering, india': 'New Horizon College of Engineering, India',
+    'yonsei univ.': 'Yonsei University',
+    'johns hopkins': 'Johns Hopkins University',
+    'purdue': 'Purdue University',
+    // added 2026-08-02 from the 249-entry verification sweep. ONLY genuine defects are
+    // renamed: misspellings, joined or missing words, broken casing, and acronyms a reader
+    // cannot resolve. The sweep also proposed ~60 renames that were REJECTED because the
+    // stored value was already the institution's recognisable name - adding 'Inc.', 'The',
+    // a legal long form or a native-language parenthetical makes the page longer and worse.
+    // 'USA' is deliberately NOT renamed: it is a real abbreviation of the University of
+    // South Alabama, but someone typing it almost certainly means the country, and guessing
+    // would invent an affiliation. 'Postech' is left alone - already recognisable, and
+    // renaming it would orphan its rank and icon.
+    // Rescued from deletion by the adversarial pass and kept as-is: Maolei, Rmuut (renamed
+    // to its full name below), Policand Institution, University of Sweden.
+    "grittith": "Griffith University",
+    "burgndy": "Burgundy School of Business",
+    "conitive cartography": "Cognitive Cartography",
+    "yanan university": "Yan’an University",
+    "university north texas": "University of North Texas",
+    "university of california irvine": "University of California, Irvine",
+    "abertay": "Abertay University",
+    "bowling green": "Bowling Green State University",
+    "murdoch": "Murdoch University",
+    "saxion": "Saxion University of Applied Sciences",
+    "sogang": "Sogang University",
+    "ottawa u": "University of Ottawa",
+    "dauphine": "Université Paris Dauphine",
+    "distrital": "Universidad Distrital Francisco José de Caldas",
+    "op jindal": "O.P. Jindal Global University",
+    "tennessee tech": "Tennessee Tech University",
+    "windesheim": "Windesheim University of Applied Sciences",
+    "jedha": "Jedha Bootcamp",
+    "rmuut": "Rajamangala University of Technology Thanyaburi",
+    "buaa": "Beihang University",
+    "cuit": "Chengdu University of Information Technology",
+    "iiitb": "International Institute of Information Technology Bangalore",
+    "iiitg": "Indian Institute of Information Technology Guwahati",
+    "iit m": "Indian Institute of Technology Madras",
+    "kamk": "Kajaani University of Applied Sciences",
+    "ncku": "National Cheng Kung University",
+    "scnu": "South China Normal University",
+    "tamu": "Texas A&M University",
+    "tum": "Technical University of Munich",
+    "ubc": "University of British Columbia",
+    "ucl": "University College London",
+    "uncw": "University of North Carolina Wilmington",
+    "unifi": "University of Florence",
+    "uq": "University of Queensland",
+    "usyd": "University of Sydney",
+    "usiu": "United States International University - Africa",
+    "ute": "Universidad UTE",
+    "vdu": "Vytautas Magnus University",
+    "escuela superior politecnica de chimborazo": "Escuela Superior Politécnica de Chimborazo",
+    "ies ventura moron": "IES Ventura Morón",
+    "univerza v ljubljani, fakulteta za elektrotehniko": "University of Ljubljana, Faculty of Electrical Engineering",
+    "guangzhoujuchuang": "Guangzhou Juchuang",
+    "cicc": "China International Capital Corporation",
+    "msd": "MSD",
+    "nanhua future": "Nanhua Futures",
+    "riotinto": "Rio Tinto",
+    "quant house": "QuantHouse",
+    "zidle msg": "Zidle Macro Strategy Group",
+    "wroclaw university of technology": "Wrocław University of Science and Technology",
+    "top gradnja d.o.o.": "Top Gradnja d.o.o.",
+    "sharq": "Eastern Petrochemical Company (SHARQ)",
+    "sdic trust": "SDIC Taikang Trust",
+    "true alpha": "True Alpha",
+    // NOT aliased on purpose: 'grittith' is probably Griffith University, but "probably" is how
+    // a wrong school ends up on the page. 'university of maryland' is left separate from
+    // 'University of Maryland, College Park' - Maryland has several campuses. 'Wroclaw
+    // University of Technology' and 'University of Wroclaw' are two different universities.
   };
-  const instPlaceholders = INSTITUTION_BLOCKLIST.map(() => '?').join(',');
+  // The blocklist is applied in JS, NOT as bound SQL parameters. It used to be
+  // `LOWER(TRIM(institution)) NOT IN (?,?,?...)` with one variable per entry, which meant the
+  // list had a hard ceiling: D1 caps a statement at 100 bound variables, so growing the
+  // blocklist from 82 to 103 entries on 2026-08-02 made every call fail with
+  // "too many SQL variables" and took the public stats endpoint down on every family site at
+  // once. A junk-word list is exactly the kind of thing that only ever grows, so it must not
+  // live anywhere that has a size limit. Filtering here costs nothing: the query already
+  // fetches every row without a LIMIT and re-aggregates in JS below.
+  const instBlocked = new Set(INSTITUTION_BLOCKLIST.map((x) => x.toLowerCase().trim()));
   // Fetch ALL non-junk institutions (no LIMIT) so aliases can merge BEFORE the
   // top-N cut, then canonicalize + re-aggregate in JS (same approach as the
   // country normalization below). ~150 distinct values, so no LIMIT is fine.
   const instRaw = await env.DB.prepare(
     'SELECT institution, COUNT(*) as users FROM users ' +
     'WHERE is_active = 1 AND TRIM(institution) != "" AND COALESCE(hide_institution, 0) = 0 ' +
-    'AND LOWER(TRIM(institution)) NOT IN (' + instPlaceholders + ') ' +
     'GROUP BY institution'
-  ).bind(...INSTITUTION_BLOCKLIST).all();
+  ).all();
   const instMerged = {};
   for (const row of (instRaw.results || [])) {
     const name = (row.institution || '').trim();
     if (!name) continue;
-    const canon = INSTITUTION_ALIASES[name.toLowerCase()] || name;
+    // Case is canonicalised BEFORE merging, which is what surfaces schools typed in lowercase.
+    // "university of chicago" was sitting in the live list looking like junk and sorting among
+    // the placeholders; it is a real university that a real person typed in lower case.
+    //
+    // Only strings with NO uppercase at all are touched. That protects legitimate acronyms —
+    // CUIT, HKUST, EDHEC keep their shape — while fixing the free-text entries that browsers
+    // and phones lowercase. Small words stay lowercase except in first position, so it reads
+    // "University of Chicago", not "University Of Chicago".
+    //
+    // It also MERGES case variants for free: "cornell university" and "Cornell University" now
+    // produce the same key instead of two rows splitting one school's count.
+    // Drop values that cannot be an institution's name whatever the spelling: pure digits
+    // ('1', '123') and one-character entries. A literal blocklist cannot cover these — there
+    // are infinitely many — so they are filtered by SHAPE here instead.
+    if (/^[0-9\s.,\-]+$/.test(name) || name.trim().length < 2) continue;
+    // Placeholder filter, moved off the SQL statement — see the note on instBlocked above.
+    if (instBlocked.has(name.toLowerCase())) continue;
+    const canon = INSTITUTION_ALIASES[name.toLowerCase()] || titleCaseInstitution(name);
     instMerged[canon] = (instMerged[canon] || 0) + row.users;
   }
   const institutions = {
     results: Object.keys(instMerged)
       .map((institution) => ({ institution, users: instMerged[institution] }))
       .sort((a, b) => b.users - a.users)
-      .slice(0, 50),
+      // No longer truncated at 50. Ahmed asked to see newly-registered schools and one of them
+      // (University of Chicago, 1 user) was simply below the cut - the data was fine, the list
+      // was short. The stats page already renders long lists well: 20 shown, the remainder behind
+      // an "Other schools" toggle, so more entries do not make the page heavier to read. ~280
+      // rows is a few KB on an endpoint that has been edge-cached for 5 minutes since today.
+      .slice(0, 500),
   };
 
   // Top downloaded tickers
@@ -4516,7 +5443,7 @@ async function handlePublicStats(env, cors) {
     // Analytics fetch failed — return stats without visitor data
   }
 
-  return jsonRes({
+  const payload = ({
     total_users: totalUsers?.c || 0,
     total_downloads: totalDownloads?.c || 0,
     total_bytes_served: totalBytes?.s || 0,
@@ -4534,7 +5461,28 @@ async function handlePublicStats(env, cors) {
     by_version: byVersion.results,
     registration_trend: regTrend.results,
     generated_at: new Date().toISOString(),
-  }, 200, cors);
+  });
+  const body = JSON.stringify(payload, null, 2);
+  // Store the BODY only — see the note above on why a whole Response would leak per-origin CORS.
+  if (cache) {
+    try {
+      await cache.put(cacheKey, new Response(body, {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL },
+      }));
+    } catch (e) { /* caching is an optimisation; never fail the request for it */ }
+  }
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Cache-Control': 'public, max-age=' + PUBLIC_STATS_TTL,
+      'X-Cache': 'MISS',
+      ...cors,
+    },
+  });
 }
 
 async function handleStatus(env, cors) {
@@ -4799,6 +5747,44 @@ async function handleAuthorizeGet(request, env, url) {
     return new Response('<h1>Redirect URI mismatch</h1>', { status: 400, headers: secHeaders });
   }
   const user = await getIdpSessionUser(request, env);
+
+  // §PROMPT-NONE — silent cross-site resume.
+  //
+  // THE PROBLEM THIS SOLVES. ekd_session is host-only on accounts.elkassabgidata.com, and the
+  // SDK's tokens live in localStorage, which is per-origin. So signing in on econdatalibrary
+  // leaves hfdatalibrary with an empty localStorage: EKD.getAccessToken() returns null without
+  // ever asking the IdP, js/site.js paints "Sign in", and the user who just signed in one tab
+  // ago is told they are a stranger. The IdP knew all along — nobody asked it.
+  //
+  // Nothing could ask it silently. GET /authorize with a live session renders a CONSENT PAGE
+  // that needs a click, and EKD.login() opens a popup that needs a click. prompt=none is the
+  // missing third door: same validation, no UI, answer immediately either way.
+  //
+  // WHY SKIPPING CONSENT IS SOUND HERE. The consent page and its gesture token defend the POST
+  // against cross-site form submission. There is no POST on this path — it mints a code bound
+  // to (user, client_id, redirect_exact, state, code_challenge) and 303s it to the client's
+  // OWN pre-registered callback. A hostile site can start this flow, but the code lands on
+  // hfdatalibrary.com/auth/callback, not on the attacker, and redeeming it needs the PKCE
+  // verifier that never left the initiating page. What an attacker does learn is one bit —
+  // whether this browser has a family session — which is why it is confined to clients already
+  // in the registry with status active and an exact redirect match, all checked above. These
+  // are Ahmed's own sites sharing one account by design; asking a user to re-consent to
+  // hfdatalibrary on every visit is friction that buys nothing.
+  //
+  // The error goes in the FRAGMENT, not the query string, for the same reason the success code
+  // does: a fragment is not sent to the server, so it stays out of Cloudflare's access log,
+  // out of Referer, and out of anything downstream of the callback.
+  if (q.get('prompt') === 'none') {
+    if (!user) {
+      const dest = redirectUri + '#error=login_required&state=' + encodeURIComponent(state);
+      return new Response(null, {
+        status: 303,
+        headers: { 'Location': dest, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
+      });
+    }
+    return await mintCodeAndRedirect(env, user.id, clientId, redirectUri, state, codeChallenge, 303);
+  }
+
   if (!user) {
     // No IdP session → the real login/register auth page (M2b-2a). Uses the
     // Turnstile-permitting CSP; on submit, /login or /register sets ekd_session
@@ -4837,7 +5823,7 @@ async function handleAuthorizePost(request, env, ip, ua) {
   if (origin !== IDP_ORIGIN || (sfs && sfs !== 'same-origin')) {
     return new Response('cross_site_blocked', { status: 403 });
   }
-  const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, false);
+  const rl = await rateLimit(env, 'authz_ip', ip, AUTHZ_IP_MAX, 60, true);
   if (!rl.ok) return new Response('rate_limited', { status: 429 });
 
   let body;
@@ -4892,7 +5878,7 @@ async function mintCodeAndRedirect(env, userId, clientOrigin, redirectExact, sta
 
 // ── POST /token/exchange — cookieless, no-store ──
 async function handleTokenExchange(request, env, ip, ua, cors) {
-  const rlIp = await rateLimit(env, 'exch_ip', ip, EXCH_IP_MAX, 60, false);
+  const rlIp = await rateLimit(env, 'exch_ip', ip, EXCH_IP_MAX, 60, true);
   if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   let body;
   try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
@@ -4919,7 +5905,7 @@ async function handleTokenExchange(request, env, ip, ua, cors) {
   const u = await env.DB.prepare("SELECT id,is_active FROM users WHERE id=?").bind(row.user_id).first();
   if (!u || !u.is_active) return jsonNoStore({ error: 'user_inactive' }, 401, cors);
 
-  const rlAcct = await rateLimit(env, 'exch_acct', String(row.user_id), EXCH_ACCT_MAX, 60, false);
+  const rlAcct = await rateLimit(env, 'exch_acct', String(row.user_id), EXCH_ACCT_MAX, 60, true);
   if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   const t = await mintFamilyTokens(env, row.user_id, client_origin, ip, ua, null);
   return jsonNoStore({ access_token: t.access_token, refresh_token: t.refresh_token, token_type: 'Bearer', expires_in: t.expires_in }, 200, cors);
@@ -4927,7 +5913,7 @@ async function handleTokenExchange(request, env, ip, ua, cors) {
 
 // ── POST /token/refresh — rotating single-use, reuse→chain revoke ──
 async function handleTokenRefresh(request, env, ip, ua, cors) {
-  const rlIp = await rateLimit(env, 'rt_ip', ip, RT_IP_MAX, 60, false);
+  const rlIp = await rateLimit(env, 'rt_ip', ip, RT_IP_MAX, 60, true);
   if (!rlIp.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
   let body;
   try { body = await request.json(); } catch { return jsonNoStore({ error: 'invalid_request' }, 400, cors); }
@@ -4954,7 +5940,7 @@ async function handleTokenRefresh(request, env, ip, ua, cors) {
   ).bind(rtHash).run();
 
   if (claim.meta && claim.meta.changes === 1) {
-    const rlAcct = await rateLimit(env, 'rt_acct', String(rt.user_id), RT_ACCT_MAX, 60, false);
+    const rlAcct = await rateLimit(env, 'rt_acct', String(rt.user_id), RT_ACCT_MAX, 60, true);
     if (!rlAcct.ok) return jsonNoStore({ error: 'rate_limited' }, 429, cors);
     const t = await mintFamilyTokens(env, rt.user_id, client_origin, ip, ua, {
       chainId: rt.chain_id, generation: rt.generation, parentHash: rtHash, absoluteExpiresAt: rt.absolute_expires_at,
@@ -5000,8 +5986,31 @@ async function handleAccountsLogout(request, env, cors) {
   }
   if (body && body.refresh_token) {
     const rtHash = await sha256Hex(body.refresh_token);
-    const rt = await env.DB.prepare("SELECT chain_id FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
-    if (rt) await revokeChain(env, rt.chain_id);
+    const rt = await env.DB.prepare("SELECT chain_id, user_id FROM sso_refresh_tokens WHERE token_hash=?").bind(rtHash).first();
+    if (rt) {
+      await revokeChain(env, rt.chain_id);
+      // END THE IdP SESSION TOO, resolved from the refresh token rather than from the cookie.
+      //
+      // The cookie branch above is dead code from this caller and always has been: the SDK's
+      // logout() is a CROSS-ORIGIN fetch from the client site to accounts.elkassabgidata.com,
+      // and postJson sets no `credentials`, so the browser sends no cookies at all. rawEkd is
+      // therefore null on every real call, the idp_master DELETE never runs, and the Set-Cookie
+      // that clears ekd_session is equally inert cross-origin. Signing out revoked the refresh
+      // chain and left the 30-day family session untouched.
+      //
+      // That was a latent inconsistency until today. It is not latent now: the silent resume
+      // added this morning bounces to /authorize?prompt=none precisely WHEN there is no local
+      // credential — which is the state logout creates. A live ekd_session then mints a fresh
+      // code and signs the user straight back in, so "log out" undid itself on the next page
+      // load. The feature turned a dormant bug into a broken control.
+      //
+      // Resolving the user from the refresh token needs no cookie and no credentialed CORS
+      // (which the token endpoints deliberately do not allow — they are non-credentialed by
+      // design). Deleting by user_id also means this cannot miss a session whose kind or id we
+      // failed to guess, the same reasoning that put every other revocation path through
+      // revokeAllUserCredentials.
+      await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND kind = 'idp_master'").bind(rt.user_id).run();
+    }
   }
   const clear = 'ekd_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
   return new Response(JSON.stringify({ ok: true }), {
@@ -5167,10 +6176,29 @@ async function handleAccountLogout(request, env) {
   if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
   const user = await getIdpSessionUser(request, env);
   if (user) {
-    // Log out EVERYWHERE: drop the SSO session + every live family access token,
-    // and revoke every refresh chain for this account.
-    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND kind IN ('idp_master','family_access')").bind(user.id).run();
-    await env.DB.prepare("UPDATE sso_refresh_tokens SET revoked = 1 WHERE user_id = ?").bind(user.id).run();
+    // Log out EVERYWHERE means EVERY session, not an enumerated subset.
+    //
+    // This read `kind IN ('idp_master','family_access')`. Legacy web sessions carry
+    // kind = NULL — the column was added by 2026-07-17-m1-sso.sql with no default and
+    // createSession has never set it — and SQL `IN` cannot match NULL. So the control that
+    // exists to end every session silently skipped the largest group of them. Measured
+    // against production on 2026-08-01: 384 live NULL-kind sessions versus 164 idp_master
+    // and 3 family_access. Both the Google callback and the ORCID callback create them and
+    // set hfd_session on api.hfdatalibrary.com, so this is the ordinary state for most of
+    // the 364 Google and 16 ORCID users.
+    //
+    // What that cost: someone who loses a laptop clicks "log out everywhere", is told it
+    // worked, and their session lives its full 30 days. /v1/auth/sso authenticates from
+    // exactly that cookie, so the next person to use that browser gets their api_key and
+    // their name handed to econdatalibrary — and for an is_admin row, the admin console.
+    //
+    // Routed through the ONE helper rather than a hand-rolled pair of statements. Deleting
+    // sessions and revoking chains still leaves live download tokens, pending-2FA rows,
+    // unspent SSO codes and outstanding password-reset links — each of them a way back into
+    // the account this button promises to close. revokeAllUserCredentials is the only place
+    // that knows the full list, it deletes sessions by user_id with no kind predicate (so
+    // the NULL-blindness above cannot recur), and five other call sites already use it.
+    await revokeAllUserCredentials(env, user.id);
   } else {
     // No valid session — still clear whatever ekd_session cookie is present.
     const cookie = request.headers.get('cookie') || '';
@@ -5204,18 +6232,18 @@ async function handleAccountUpdateProfile(request, env) {
   // emails print, so whatever is stored here is displayed to strangers and to the owner. Same
   // check as handleRegister and the api.* handleUpdateProfile twin.
   //
-  // Via latinOkOrUnchanged, for the same reason as that twin: renderAccountPage writes the
+  // Via charsetOkOrUnchanged, for the same reason as that twin: renderAccountPage writes the
   // stored row back into these four inputs, so every save re-posts values the user did not
   // touch — including a name that Google supplied in a non-Latin script and that no filter
   // ever saw. Checking those unconditionally made the Save button impossible to satisfy for
   // those users, and this handler is the only thing on accounts.* that sets
   // profile_complete = 1, so it took their downloads with it. A value identical to the one
   // in the column is not something the user is introducing; a changed one still has to pass.
-  // `name` stays optional — latinOkOrUnchanged treats blank as fine, and institution,
+  // `name` stays optional — charsetOkOrUnchanged treats blank as fine, and institution,
   // country and role are already required non-blank by the check above.
-  if (!latinOkOrUnchanged(name, user.name) || !latinOkOrUnchanged(institution, user.institution) ||
-      !latinOkOrUnchanged(country, user.country) || !latinOkOrUnchanged(role, user.role)) {
-    return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must use English/Latin letters only.' }), { status: 200, headers: accountPageHeaders });
+  if (!charsetOkOrUnchanged(name, user.name) || !charsetOkOrUnchanged(institution, user.institution) ||
+      !charsetOkOrUnchanged(country, user.country) || !charsetOkOrUnchanged(role, user.role)) {
+    return new Response(renderAccountPage(user, { notice: 'Name, institution, country and role must each contain at least one letter, and cannot contain symbols or invisible characters.' }), { status: 200, headers: accountPageHeaders });
   }
   await env.DB.prepare('UPDATE users SET name = ?, institution = ?, country = ?, role = ?, profile_complete = 1 WHERE id = ?')
     .bind(name || user.name || '', institution, country, role, user.id).run();
@@ -5285,7 +6313,7 @@ async function handleAccountResendVerification(request, env) {
   }
   const verifyToken = generateId();
   const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)').bind(user.id, verifyToken, verifyExpires, 'verify').run();
   try { await sendEmail(env, user.email, 'Verify your ElkassabgiData account', verificationEmail(user.name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) {}
   return new Response(renderAccountPage(user, { notice: 'Verification email sent — check your inbox (and spam).' }), { status: 200, headers: accountPageHeaders });
 }
@@ -5305,12 +6333,21 @@ async function handleAccountDelete(request, env) {
     return new Response(renderAccountPage(user, { notice: 'Incorrect password — your account was NOT deleted.' }), { status: 200, headers: accountPageHeaders });
   }
   // Remove every trace: family sessions/tokens + api.* rows + the user.
-  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+  // Deleting the account must revoke everything it could still be reached by, not just its
+  // sessions: a live download token or an unspent password-reset link outliving the account
+  // is the same defect as a session doing so.
+  await revokeAllUserCredentials(env, user.id);
   await env.DB.prepare('DELETE FROM sso_refresh_tokens WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM login_history WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM download_log WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id).run();
   await env.DB.prepare('DELETE FROM totp_pending WHERE user_id = ?').bind(user.id).run();
+  // Recovery codes are login credentials in their own right; a deleted account must not
+  // leave a usable set behind. Added ONLY here and in the other delete handler - not
+  // beside every totp_pending clear, because three of those five sites run on SUCCESSFUL
+  // login or on a revocation that deliberately preserves the user's authenticator, and
+  // wiping their codes there would destroy the recovery path this work exists to create.
+  await env.DB.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').bind(user.id).run();
   // sso_codes (one per popup login) + newsletter_prefs (one per registration) also FK->users;
   // without clearing them the final users DELETE hits a FOREIGN KEY constraint and fails for any
   // real user (surfaced live 2026-07-20 during the throwaway delete test). The api.* handler
@@ -5436,6 +6473,33 @@ async function brokerLoginRedirect(env, userId, st, ip, ua) {
   const reg = await getRegistry(env);
   const client = reg.get(st.client_origin);
   if (!client || client.status !== 'active' || !client.redirect_exact) return oauthErrorPage('client_unavailable');
+
+  // THIRD instance of the same defect, found by enumerating rather than stopping at the two the
+  // finding named. handleAccountsLogin (password) already refuses to mint an IdP session for a
+  // totp_enabled account until a code is verified; this broker — the Google/ORCID path on the
+  // accounts host — did not consult totp_enabled at all. So the second factor was enforced on
+  // the password door and skipped on both provider doors, exactly as it was on api.*.
+  //
+  // No new UI is required: renderTwoFactorPage and POST /login/2fa already exist for the
+  // password flow, and handleAccounts2faVerify reads the authorize params back out of the form
+  // that page embeds and then performs the very redirect this function would have done.
+  // Rebuilding `p` from the stashed OAuth state is the whole join — clientId, redirectUri,
+  // state and codeChallenge are the same four values either flow carries.
+  const brokerUser = await env.DB.prepare('SELECT totp_enabled FROM users WHERE id = ?').bind(userId).first();
+  if (brokerUser && brokerUser.totp_enabled) {
+    const pendingToken = generateId();
+    const pendingExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await env.DB.prepare('INSERT INTO totp_pending (token, user_id, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
+      .bind(pendingToken, userId, pendingExpires, ip, ua).run();
+    return new Response(renderTwoFactorPage(pendingToken, {
+      clientId: st.client_origin,
+      redirectUri: client.redirect_exact,
+      state: st.family_state,
+      codeChallenge: st.family_code_challenge,
+      method: 'S256',
+    }, ''), { status: 200, headers: authPageHeaders });
+  }
+
   const idp = await createIdpSession(env, userId, ip, ua);
   const resp = await mintCodeAndRedirect(env, userId, st.client_origin, client.redirect_exact, st.family_state, st.family_code_challenge, 303);
   resp.headers.append('Set-Cookie', idp.cookie);
@@ -5820,12 +6884,15 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
       const rawInst = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].organization) || '';
       const rawRole = (profile && profile.currentEmployment && profile.currentEmployment[0] && profile.currentEmployment[0].role) || '';
       const rawCtry = (profile && profile.country) || country || '';
-      const inst = isLatinish(rawInst) ? rawInst.trim().slice(0, 200) : '';
-      const role = isLatinish(rawRole) ? rawRole.trim().slice(0, 100) : '';
-      const ctry = isLatinish(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
+      const inst = isSafeName(rawInst) ? rawInst.trim().slice(0, 200) : '';
+      const role = isSafeName(rawRole) ? rawRole.trim().slice(0, 100) : '';
+      const ctry = isSafeName(rawCtry) ? rawCtry.trim().slice(0, 100) : '';
       const emailLocal = profEmail.split('@')[0];
-      const safeName = isLatinish(name) ? name.trim().slice(0, 100)
-        : (isLatinish(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
+      // ORCID supplies the researcher's own name, and discarding a Hangul or Cyrillic one in
+      // favour of their email local-part renamed real people to a mail prefix. institution,
+      // role and country above now use the same rule — there is only one charset rule left.
+      const safeName = isSafeName(name) ? name.trim().slice(0, 100)
+        : (isSafeName(emailLocal) ? emailLocal.slice(0, 100) : 'ORCID User');
       const profileJson = profile ? JSON.stringify(profile) : null;
       const apiKey = 'hfd_' + generateId();
       const apiKeyExpires = new Date(Date.now() + API_KEY_DAYS * 86400000).toISOString();
@@ -5878,7 +6945,7 @@ async function handleAccountsOrcidCallback(request, env, ip, ua, country) {
   await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 1)').bind(user.id, ip, ua, country).run();
   return await brokerLoginRedirect(env, user.id, st, ip, ua);
 }
-const EKD_SDK_JS = "/* ElkassabgiData family SSO SDK \u2014 served from https://accounts.elkassabgidata.com/sdk/ekd-sso.js\n * One universal ElkassabgiData account across HF / Econ / IP / portal.\n * Popup + PKCE (S256) + opaque family tokens. No third-party deps.\n *\n * Usage on a site:\n *   <script src=\"https://accounts.elkassabgidata.com/sdk/ekd-sso.js\"></script>\n *   <script>\n *     EKD.init();                     // clientId defaults to location.origin\n *     document.querySelector('#login').onclick = () => EKD.login();\n *     EKD.on('login',  u => ...);     // signed in (has a fresh access token)\n *     EKD.on('logout', () => ...);\n *     const at = await EKD.getAccessToken();  // for Authorization: Bearer <at>; null if signed out\n *   </script>\n *\n * The site must also serve a callback page at <origin>/auth/callback (see the\n * per-site callback snippet) whose exact URL is registered as this client's\n * redirect_exact in the IdP registry.\n */\n(function () {\n  'use strict';\n  if (window.EKD && window.EKD.__ready) return;\n\n  var ACCOUNTS = 'https://accounts.elkassabgidata.com';\n  var CALLBACK_PATH = '/auth/callback';\n  var LS_RT = 'ekd_rt';                 // refresh token (localStorage, shared across tabs)\n  var LS_AT = 'ekd_at';                 // shared access token {t,e} \u2014 lets tabs reuse one refresh\n  var AT_SKEW_MS = 30000;               // refresh this many ms before expiry\n\n  var cfg = { clientId: null, accounts: ACCOUNTS, callbackPath: CALLBACK_PATH };\n  var at = null;                        // in-memory access token\n  var atExp = 0;                        // in-memory access-token expiry (ms epoch)\n  var listeners = { login: [], logout: [] };\n  var loginInFlight = null;             // single-flight login (coalesces concurrent calls)\n  var refreshInFlight = null;           // per-tab single-flight refresh\n\n  // \u2500\u2500 small helpers \u2500\u2500\n  function b64url(bytes) {\n    var s = '';\n    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);\n    return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');\n  }\n  function randToken() { return b64url(crypto.getRandomValues(new Uint8Array(32))); } // 43 chars\n  async function s256(v) {\n    var d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));\n    return b64url(new Uint8Array(d));\n  }\n  function emit(ev, arg) { (listeners[ev] || []).forEach(function (f) { try { f(arg); } catch (e) {} }); }\n  function getRt() { try { return localStorage.getItem(LS_RT) || null; } catch (e) { return null; } }\n  function setRt(v) { try { v ? localStorage.setItem(LS_RT, v) : localStorage.removeItem(LS_RT); } catch (e) {} }\n  function readSharedAt() { try { var j = JSON.parse(localStorage.getItem(LS_AT) || 'null'); if (j && j.t && j.e) return j; } catch (e) {} return null; }\n  function writeSharedAt(t, e) { try { localStorage.setItem(LS_AT, JSON.stringify({ t: t, e: e })); } catch (e) {} }\n  function clearSharedAt() { try { localStorage.removeItem(LS_AT); } catch (e) {} }\n  function adoptAt(t, e) { at = t; atExp = e; }\n\n  // Never throws \u2014 a network/CORS failure becomes a not-ok result, so callers get\n  // the documented \"token or null\" behaviour instead of an exception.\n  async function postJson(path, body) {\n    try {\n      var r = await fetch(cfg.accounts + path, {\n        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),\n      });\n      var data = null; try { data = await r.json(); } catch (e) {}\n      return { ok: r.ok, status: r.status, data: data };\n    } catch (e) {\n      return { ok: false, status: 0, data: null };\n    }\n  }\n\n  // \u2500\u2500 token lifecycle \u2500\u2500\n  function storeTokens(d) {\n    if (!d) return;\n    if (d.access_token) { var e = Date.now() + (Number(d.expires_in || 900) * 1000); adoptAt(d.access_token, e); writeSharedAt(d.access_token, e); }\n    if (d.refresh_token) setRt(d.refresh_token);   // grace responses omit refresh_token \u2014 keep the shared one\n  }\n  function clearLocal() { at = null; atExp = 0; setRt(null); clearSharedAt(); }\n\n  // Serialize refresh across tabs (Web Locks) so only one tab ever spends a given\n  // rt; other tabs, once inside the lock, adopt the just-rotated shared token.\n  function withLock(fn) {\n    try {\n      if (navigator.locks && navigator.locks.request) return navigator.locks.request('ekd_refresh', { mode: 'exclusive' }, fn);\n    } catch (e) {}\n    return fn(); // no Web Locks \u2192 rely on per-tab single-flight + server grace window\n  }\n\n  async function refreshOnce(force) {\n    if (!force) {                              // force=true skips the cache to VALIDATE against the server\n      var shared = readSharedAt();             // another tab may have refreshed while we waited for the lock\n      if (shared && Date.now() < shared.e - AT_SKEW_MS) { adoptAt(shared.t, shared.e); return at; }\n    }\n    var rt = getRt();\n    if (!rt) return null;\n    var res = await postJson('/token/refresh', { refresh_token: rt, client_origin: cfg.clientId });\n    if (res.ok && res.data && res.data.access_token) { storeTokens(res.data); return at; }\n    if (res.status === 401) { clearLocal(); emit('logout'); }  // revoked/reuse/invalid_grant \u2192 chain dead, fail closed\n    return null;                                                // transient (status 0) \u2192 no token, keep the rt\n  }\n\n  // Returns a valid access token or null. Never throws.\n  async function getAccessToken() {\n    if (at && Date.now() < atExp - AT_SKEW_MS) return at;\n    var shared = readSharedAt();\n    if (shared && Date.now() < shared.e - AT_SKEW_MS) { adoptAt(shared.t, shared.e); return at; }\n    if (refreshInFlight) return refreshInFlight;\n    refreshInFlight = Promise.resolve(withLock(function () { return refreshOnce(false); })).catch(function () { return null; }).finally(function () { refreshInFlight = null; });\n    return refreshInFlight;\n  }\n\n  // Page-load session validation: force a server refresh (ignore the cached token)\n  // so a server-side \"log out everywhere\" is detected promptly \u2014 the revoked rt\n  // returns 401 \u2192 refreshOnce clears local state + emits logout. A transient\n  // failure (status 0) keeps the session (returns null without clearing).\n  async function validateSession() {\n    if (!getRt()) return null;\n    if (refreshInFlight) return refreshInFlight;\n    refreshInFlight = Promise.resolve(withLock(function () { return refreshOnce(true); })).catch(function () { return null; }).finally(function () { refreshInFlight = null; });\n    return refreshInFlight;\n  }\n\n  // \u2500\u2500 popup login \u2500\u2500\n  function login(opts) {\n    if (loginInFlight) return loginInFlight;   // coalesce double-clicks / concurrent callers\n    opts = opts || {};\n    loginInFlight = new Promise(function (resolve, reject) {\n      (async function () {\n        if (!(window.isSecureContext !== false && typeof crypto !== 'undefined' && crypto.subtle)) throw new Error('insecure_context');\n        var verifier = randToken();\n        var challenge = await s256(verifier);\n        var state = randToken();\n\n        var redirectUri = cfg.clientId + cfg.callbackPath;\n        var url = cfg.accounts + '/authorize?response_type=code'\n          + '&client_id=' + encodeURIComponent(cfg.clientId)\n          + '&redirect_uri=' + encodeURIComponent(redirectUri)\n          + '&state=' + encodeURIComponent(state)\n          + '&code_challenge=' + encodeURIComponent(challenge)\n          + '&code_challenge_method=S256'\n          + (opts.tab === 'register' ? '&hint=register' : '');\n\n        var w = 480, h = 640, x = 0, y = 0;\n        try { // window.top can throw if framed cross-origin; fall back to screen center\n          var bw = window.outerWidth || screen.width, bh = window.outerHeight || screen.height;\n          x = (window.screenX || 0) + (bw - w) / 2;\n          y = (window.screenY || 0) + (bh - h) / 2;\n        } catch (e) {}\n        var popup = window.open(url, 'ekd_login_' + state.slice(0, 8),\n          'width=' + w + ',height=' + h + ',left=' + Math.max(0, x | 0) + ',top=' + Math.max(0, y | 0));\n        if (!popup) throw new Error('popup_blocked');\n\n        var done = false, accepted = false, poll = 0, bc = null;\n        function teardown() {\n          window.removeEventListener('message', onMsg);\n          if (poll) { clearInterval(poll); poll = 0; }\n          if (bc) { try { bc.close(); } catch (e) {} }\n        }\n        function settle(fn, arg) { if (done) return; done = true; teardown(); fn(arg); }\n\n        // Exactly-once handoff: the first valid, state-matched message wins; the\n        // popup-closed poll is disarmed BEFORE the exchange await so a poll tick\n        // during the network round-trip can't reject a login that is succeeding.\n        async function handleAuth(code, st) {\n          if (accepted) return;\n          if (!code || st !== state) return;         // wrong/missing state \u2192 keep listening\n          accepted = true;\n          if (poll) { clearInterval(poll); poll = 0; }\n          try { popup.close(); } catch (e) {}\n          try {\n            var res = await postJson('/token/exchange', { code: code, code_verifier: verifier, client_origin: cfg.clientId });\n            if (res.ok && res.data && res.data.access_token) {\n              storeTokens(res.data);\n              emit('login', { access_token: at });\n              settle(resolve, { access_token: at });\n            } else {\n              settle(reject, new Error((res.data && res.data.error) || 'exchange_failed'));\n            }\n          } catch (e) { settle(reject, e instanceof Error ? e : new Error('exchange_error')); }\n        }\n\n        function onMsg(ev) {\n          if (ev.origin !== cfg.clientId) return;    // only our own callback origin\n          if (ev.source && ev.source !== popup) return; // ...and only from our popup\n          var m = ev.data;\n          if (!m || m.type !== 'ekd_auth') return;\n          handleAuth(m.code, m.state);\n        }\n        window.addEventListener('message', onMsg);\n        // COOP fallback (opener severed): same-origin BroadcastChannel, state-guarded.\n        try { bc = new BroadcastChannel('ekd_auth'); bc.onmessage = function (ev) { var m = ev.data; if (m && m.type === 'ekd_auth') handleAuth(m.code, m.state); }; } catch (e) {}\n\n        poll = setInterval(function () { if (!accepted && popup.closed) settle(reject, new Error('popup_closed')); }, 500);\n      })().catch(function (e) { reject(e); });\n    }).finally(function () { loginInFlight = null; });\n    return loginInFlight;\n  }\n\n  async function logout() {\n    var rt = getRt();\n    await postJson('/logout', rt ? { refresh_token: rt } : {});\n    clearLocal();\n    emit('logout');\n  }\n\n  function on(ev, fn) { if (listeners[ev] && typeof fn === 'function') listeners[ev].push(fn); }\n  function isLoggedIn() { return !!getRt() || !!at; }\n\n  // Cross-tab: another tab cleared the refresh token (logout / dead chain).\n  window.addEventListener('storage', function (e) {\n    if (e.key === LS_RT && !e.newValue) { at = null; atExp = 0; emit('logout'); }\n  });\n\n  function init(options) {\n    options = options || {};\n    cfg.clientId = options.clientId || location.origin;\n    if (options.accounts) cfg.accounts = options.accounts;\n    if (options.callbackPath) cfg.callbackPath = options.callbackPath;\n    // On load, VALIDATE the stored session against the server (not the cached\n    // token) so a cross-origin \"log out everywhere\" is reflected here promptly:\n    // a still-valid session warms a token + fires on('login'); a revoked one 401s\n    // \u2192 clears local state + fires on('logout').\n    if (getRt() && !options.noAutoResume) {\n      validateSession().then(function (tok) { if (tok) emit('login', { access_token: tok }); }).catch(function () {});\n    }\n    return window.EKD;\n  }\n\n  window.EKD = {\n    __ready: true,\n    init: init,\n    login: login,\n    logout: logout,\n    getAccessToken: getAccessToken,\n    isLoggedIn: isLoggedIn,\n    on: on,\n    get clientId() { return cfg.clientId; },\n  };\n})();\n";
+const EKD_SDK_JS = "/* ElkassabgiData family SSO SDK \u2014 served from https://accounts.elkassabgidata.com/sdk/ekd-sso.js\n * One universal ElkassabgiData account across HF / Econ / IP / portal.\n * Popup + PKCE (S256) + opaque family tokens. No third-party deps.\n *\n * Usage on a site:\n *   <script src=\"https://accounts.elkassabgidata.com/sdk/ekd-sso.js\"></script>\n *   <script>\n *     EKD.init();                     // clientId defaults to location.origin\n *     document.querySelector('#login').onclick = () => EKD.login();\n *     EKD.on('login',  u => ...);     // signed in (has a fresh access token)\n *     EKD.on('logout', () => ...);\n *     const at = await EKD.getAccessToken();  // for Authorization: Bearer <at>; null if signed out\n *   </script>\n *\n * The site must also serve a callback page at <origin>/auth/callback (see the\n * per-site callback snippet) whose exact URL is registered as this client's\n * redirect_exact in the IdP registry.\n */\n(function () {\n  'use strict';\n  if (window.EKD && window.EKD.__ready) return;\n\n  var ACCOUNTS = 'https://accounts.elkassabgidata.com';\n  var CALLBACK_PATH = '/auth/callback';\n  var LS_RT = 'ekd_rt';                 // refresh token (localStorage, shared across tabs)\n  var LS_AT = 'ekd_at';                 // shared access token {t,e} \u2014 lets tabs reuse one refresh\n  var AT_SKEW_MS = 30000;               // refresh this many ms before expiry\n\n  var cfg = { clientId: null, accounts: ACCOUNTS, callbackPath: CALLBACK_PATH };\n  var at = null;                        // in-memory access token\n  var atExp = 0;                        // in-memory access-token expiry (ms epoch)\n  var listeners = { login: [], logout: [] };\n  var loginInFlight = null;             // single-flight login (coalesces concurrent calls)\n  var refreshInFlight = null;           // per-tab single-flight refresh\n\n  // \u2500\u2500 small helpers \u2500\u2500\n  function b64url(bytes) {\n    var s = '';\n    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);\n    return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');\n  }\n  function randToken() { return b64url(crypto.getRandomValues(new Uint8Array(32))); } // 43 chars\n  async function s256(v) {\n    var d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));\n    return b64url(new Uint8Array(d));\n  }\n  function emit(ev, arg) { (listeners[ev] || []).forEach(function (f) { try { f(arg); } catch (e) {} }); }\n  function getRt() { try { return localStorage.getItem(LS_RT) || null; } catch (e) { return null; } }\n  function setRt(v) { try { v ? localStorage.setItem(LS_RT, v) : localStorage.removeItem(LS_RT); } catch (e) {} }\n  function readSharedAt() { try { var j = JSON.parse(localStorage.getItem(LS_AT) || 'null'); if (j && j.t && j.e) return j; } catch (e) {} return null; }\n  function writeSharedAt(t, e) { try { localStorage.setItem(LS_AT, JSON.stringify({ t: t, e: e })); } catch (e) {} }\n  function clearSharedAt() { try { localStorage.removeItem(LS_AT); } catch (e) {} }\n  function adoptAt(t, e) { at = t; atExp = e; }\n\n  // Never throws \u2014 a network/CORS failure becomes a not-ok result, so callers get\n  // the documented \"token or null\" behaviour instead of an exception.\n  async function postJson(path, body) {\n    try {\n      var r = await fetch(cfg.accounts + path, {\n        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),\n      });\n      var data = null; try { data = await r.json(); } catch (e) {}\n      return { ok: r.ok, status: r.status, data: data };\n    } catch (e) {\n      return { ok: false, status: 0, data: null };\n    }\n  }\n\n  // \u2500\u2500 token lifecycle \u2500\u2500\n  function storeTokens(d) {\n    if (!d) return;\n    if (d.access_token) { var e = Date.now() + (Number(d.expires_in || 900) * 1000); adoptAt(d.access_token, e); writeSharedAt(d.access_token, e); }\n    if (d.refresh_token) setRt(d.refresh_token);   // grace responses omit refresh_token \u2014 keep the shared one\n  }\n  function clearLocal() { at = null; atExp = 0; setRt(null); clearSharedAt(); }\n\n  // Serialize refresh across tabs (Web Locks) so only one tab ever spends a given\n  // rt; other tabs, once inside the lock, adopt the just-rotated shared token.\n  function withLock(fn) {\n    try {\n      if (navigator.locks && navigator.locks.request) return navigator.locks.request('ekd_refresh', { mode: 'exclusive' }, fn);\n    } catch (e) {}\n    return fn(); // no Web Locks \u2192 rely on per-tab single-flight + server grace window\n  }\n\n  async function refreshOnce(force) {\n    if (!force) {                              // force=true skips the cache to VALIDATE against the server\n      var shared = readSharedAt();             // another tab may have refreshed while we waited for the lock\n      if (shared && Date.now() < shared.e - AT_SKEW_MS) { adoptAt(shared.t, shared.e); return at; }\n    }\n    var rt = getRt();\n    if (!rt) return null;\n    var res = await postJson('/token/refresh', { refresh_token: rt, client_origin: cfg.clientId });\n    if (res.ok && res.data && res.data.access_token) { storeTokens(res.data); return at; }\n    if (res.status === 401) { clearLocal(); emit('logout'); }  // revoked/reuse/invalid_grant \u2192 chain dead, fail closed\n    return null;                                                // transient (status 0) \u2192 no token, keep the rt\n  }\n\n  // Returns a valid access token or null. Never throws.\n  async function getAccessToken() {\n    if (at && Date.now() < atExp - AT_SKEW_MS) return at;\n    var shared = readSharedAt();\n    if (shared && Date.now() < shared.e - AT_SKEW_MS) { adoptAt(shared.t, shared.e); return at; }\n    if (refreshInFlight) return refreshInFlight;\n    refreshInFlight = Promise.resolve(withLock(function () { return refreshOnce(false); })).catch(function () { return null; }).finally(function () { refreshInFlight = null; });\n    return refreshInFlight;\n  }\n\n  // Page-load session validation: force a server refresh (ignore the cached token)\n  // so a server-side \"log out everywhere\" is detected promptly \u2014 the revoked rt\n  // returns 401 \u2192 refreshOnce clears local state + emits logout. A transient\n  // failure (status 0) keeps the session (returns null without clearing).\n  async function validateSession() {\n    if (!getRt()) return null;\n    if (refreshInFlight) return refreshInFlight;\n    refreshInFlight = Promise.resolve(withLock(function () { return refreshOnce(true); })).catch(function () { return null; }).finally(function () { refreshInFlight = null; });\n    return refreshInFlight;\n  }\n\n  // \u2500\u2500 popup login \u2500\u2500\n  function login(opts) {\n    if (loginInFlight) return loginInFlight;   // coalesce double-clicks / concurrent callers\n    opts = opts || {};\n    loginInFlight = new Promise(function (resolve, reject) {\n      (async function () {\n        if (!(window.isSecureContext !== false && typeof crypto !== 'undefined' && crypto.subtle)) throw new Error('insecure_context');\n        var verifier = randToken();\n        var challenge = await s256(verifier);\n        var state = randToken();\n\n        var redirectUri = cfg.clientId + cfg.callbackPath;\n        var url = cfg.accounts + '/authorize?response_type=code'\n          + '&client_id=' + encodeURIComponent(cfg.clientId)\n          + '&redirect_uri=' + encodeURIComponent(redirectUri)\n          + '&state=' + encodeURIComponent(state)\n          + '&code_challenge=' + encodeURIComponent(challenge)\n          + '&code_challenge_method=S256'\n          + (opts.tab === 'register' ? '&hint=register' : '');\n\n        var w = 480, h = 640, x = 0, y = 0;\n        try { // window.top can throw if framed cross-origin; fall back to screen center\n          var bw = window.outerWidth || screen.width, bh = window.outerHeight || screen.height;\n          x = (window.screenX || 0) + (bw - w) / 2;\n          y = (window.screenY || 0) + (bh - h) / 2;\n        } catch (e) {}\n        var popup = window.open(url, 'ekd_login_' + state.slice(0, 8),\n          'width=' + w + ',height=' + h + ',left=' + Math.max(0, x | 0) + ',top=' + Math.max(0, y | 0));\n        if (!popup) throw new Error('popup_blocked');\n\n        var done = false, accepted = false, poll = 0, bc = null;\n        function teardown() {\n          window.removeEventListener('message', onMsg);\n          if (poll) { clearInterval(poll); poll = 0; }\n          if (bc) { try { bc.close(); } catch (e) {} }\n        }\n        function settle(fn, arg) { if (done) return; done = true; teardown(); fn(arg); }\n\n        // Exactly-once handoff: the first valid, state-matched message wins; the\n        // popup-closed poll is disarmed BEFORE the exchange await so a poll tick\n        // during the network round-trip can't reject a login that is succeeding.\n        async function handleAuth(code, st) {\n          if (accepted) return;\n          if (!code || st !== state) return;         // wrong/missing state \u2192 keep listening\n          accepted = true;\n          if (poll) { clearInterval(poll); poll = 0; }\n          try { popup.close(); } catch (e) {}\n          try {\n            var res = await postJson('/token/exchange', { code: code, code_verifier: verifier, client_origin: cfg.clientId });\n            if (res.ok && res.data && res.data.access_token) {\n              storeTokens(res.data);\n              emit('login', { access_token: at, deliberate: true });\n              settle(resolve, { access_token: at });\n            } else {\n              settle(reject, new Error((res.data && res.data.error) || 'exchange_failed'));\n            }\n          } catch (e) { settle(reject, e instanceof Error ? e : new Error('exchange_error')); }\n        }\n\n        function onMsg(ev) {\n          if (ev.origin !== cfg.clientId) return;    // only our own callback origin\n          if (ev.source && ev.source !== popup) return; // ...and only from our popup\n          var m = ev.data;\n          if (!m || m.type !== 'ekd_auth') return;\n          handleAuth(m.code, m.state);\n        }\n        window.addEventListener('message', onMsg);\n        // COOP fallback (opener severed): same-origin BroadcastChannel, state-guarded.\n        try { bc = new BroadcastChannel('ekd_auth'); bc.onmessage = function (ev) { var m = ev.data; if (m && m.type === 'ekd_auth') handleAuth(m.code, m.state); }; } catch (e) {}\n\n        poll = setInterval(function () { if (!accepted && popup.closed) settle(reject, new Error('popup_closed')); }, 500);\n      })().catch(function (e) { reject(e); });\n    }).finally(function () { loginInFlight = null; });\n    return loginInFlight;\n  }\n\n  async function logout() {\n    var rt = getRt();\n    // Local state is cleared FIRST and unconditionally. This used to run only AFTER the\n    // network call resolved, so any failure - offline, blocked by an extension, a 5xx, or\n    // a connection accepted and never answered - left ekd_rt sitting in localStorage.\n    // The page then reloaded, init() refreshed from that surviving token, emitted 'login',\n    // and the visitor was signed straight back in with their API key on screen a moment\n    // after pressing Sign out. Whether a sign-out HOLDS must never depend on reaching the\n    // network; revoking server-side is a best effort that follows.\n    clearLocal();\n    emit('logout');\n    try { await postJson('/logout', rt ? { refresh_token: rt } : {}); } catch (e) {}\n  }\n\n  function on(ev, fn) { if (listeners[ev] && typeof fn === 'function') listeners[ev].push(fn); }\n  function isLoggedIn() { return !!getRt() || !!at; }\n\n  // Cross-tab: another tab cleared the refresh token (logout / dead chain).\n  window.addEventListener('storage', function (e) {\n    if (e.key === LS_RT && !e.newValue) { at = null; atExp = 0; emit('logout'); }\n  });\n\n  function init(options) {\n    options = options || {};\n    cfg.clientId = options.clientId || location.origin;\n    if (options.accounts) cfg.accounts = options.accounts;\n    if (options.callbackPath) cfg.callbackPath = options.callbackPath;\n    // On load, VALIDATE the stored session against the server (not the cached\n    // token) so a cross-origin \"log out everywhere\" is reflected here promptly:\n    // a still-valid session warms a token + fires on('login'); a revoked one 401s\n    // \u2192 clears local state + fires on('logout').\n    if (getRt() && !options.noAutoResume) {\n      validateSession().then(function (tok) { if (tok) emit('login', { access_token: tok, deliberate: false }); }).catch(function () {});\n    }\n    return window.EKD;\n  }\n\n  window.EKD = {\n    __ready: true,\n    init: init,\n    login: login,\n    logout: logout,\n    getAccessToken: getAccessToken,\n    isLoggedIn: isLoggedIn,\n    on: on,\n    get clientId() { return cfg.clientId; },\n  };\n})();\n";
 // GET /sdk/ekd-sso.js — the family SSO client SDK (M2b-3). Immutable per deploy;
 // short cache so worker updates propagate. Loaded via <script src> (no CORS).
 async function handleSdkAsset(path) {
@@ -6203,7 +7270,12 @@ async function handleAccounts2faVerify(request, env, ip, ua, country) {
     return new Response(renderAuthPage(v.row, p, { tab: 'login', error: 'Too many attempts — please sign in again.' }), { status: 200, headers: authPageHeaders });
   }
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pending.user_id).first();
-  if (!user || !user.totp_secret || !(await verifyTotp(user.totp_secret, code))) {
+  // Same recovery path as the api.* twin — a locked-out person must not depend on which host
+  // they happened to start from.
+  const accountsCodeOk = user && user.totp_secret
+    && ((await verifyTotp(user.totp_secret, code, env, user.id))
+        || (await consumeBackupCode(env, user.id, code)));
+  if (!accountsCodeOk) {
     if (user) await env.DB.prepare('INSERT INTO login_history (user_id, ip_address, user_agent, country, success) VALUES (?, ?, ?, ?, 0)').bind(user.id, ip, ua, country).run();
     return new Response(renderTwoFactorPage(pendingToken, p, 'Invalid 2FA code'), { status: 200, headers: authPageHeaders });
   }
@@ -6246,7 +7318,11 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
   if (!name || !email || !password || !institution || !role || !userCountry) return rerr('All fields are required.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rerr('Invalid email address.');
   if (name.length > 100 || institution.length > 200 || role.length > 100 || userCountry.length > 100) return rerr('One or more fields exceed length limits.');
-  if (!isLatinish(name) || !isLatinish(institution) || !isLatinish(userCountry) || !isLatinish(role)) return rerr('Name, institution, country, and role must use English/Latin letters only.');
+  // Same split as /v1/auth/register: name accepts any script (isSafeName), the publicly
+  // rendered fields stay Latin-only. Both registration doors must agree — this is the family
+  // IdP, so a rule that differs here produces "it let me in on one site" bug reports.
+  if (!isSafeName(name)) return rerr('Please enter your name.');
+  if (!isSafeName(institution) || !isSafeName(userCountry) || !isSafeName(role)) return rerr('Institution, country, and role contain characters that are not allowed.');
   const normalizedCountry = normalizeCountry(userCountry) || userCountry.trim();
   const pw = checkPasswordStrength(password);
   if (!pw.ok) return rerr(pw.error);
@@ -6307,7 +7383,7 @@ async function handleAccountsRegister(request, env, ip, ua, country) {
     // admin who is never emailed a link is one nobody can prove owns the address it names.
     const verifyToken = generateId();
     const verifyExpires = new Date(Date.now() + 86400000).toISOString();
-    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').bind(user.id, verifyToken, verifyExpires).run();
+    await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)').bind(user.id, verifyToken, verifyExpires, 'verify').run();
     try { await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData'); } catch (e) { /* non-blocking */ }
   }
   try { await sendEmail(env, ADMIN_NOTIFY, `New registration: ${name} (${institution})`, adminNotificationEmail({ name, email: email.toLowerCase(), institution, country: userCountry, role }, ip, ua, country)); } catch (e) { /* non-blocking */ }
