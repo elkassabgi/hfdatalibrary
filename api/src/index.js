@@ -4402,6 +4402,7 @@ async function handleBars(ticker, request, env, cors, ip) {
   try {
     await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(userId, user.api_key, ticker, version, '/v1/bars', channel, ip, obj.size).run();
+    await bumpStatsCounters(env, ticker, version, obj.size);
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
@@ -4434,6 +4435,7 @@ async function handleDerived(ticker, kind, request, env, cors, ip) {
   try {
     await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(userId, user.api_key, ticker, version, `/v1/${kind}`, channel, ip, obj.size).run();
+    await bumpStatsCounters(env, ticker, version, obj.size);
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
@@ -4635,6 +4637,7 @@ async function handleDownload(ticker, request, env, cors, ip) {
   try {
     await env.DB.prepare('INSERT INTO download_log (user_id, api_key, ticker, version, endpoint, channel, ip_address, bytes_served) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(userId, user.api_key, ticker, version, '/v1/download', channel, ip, obj.size).run();
+    await bumpStatsCounters(env, ticker, version, obj.size);
   } catch (e) { console.error('download_log insert failed:', e.message); }
 
   return new Response(obj.body, {
@@ -4963,11 +4966,21 @@ async function handleAdmin(path, request, env, cors, ip) {
   if (path === '/v1/admin/stats') {
     const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
     const activeUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_active = 1').first();
-    const totalDownloads = await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
-    const totalBytes = await env.DB.prepare('SELECT SUM(bytes_served) as s FROM download_log').first();
+    // Totals/top-tickers from the maintained counters (task #134) — the full
+    // scans they replace are the same R430 query-shape class that hit econ.
+    // Fail-open to the scans until migrate_stats_counters.sql is applied.
+    let adminTotals = null;
+    try { adminTotals = await env.DB.prepare('SELECT downloads as c, bytes as s FROM stats_totals WHERE id = 1').first(); } catch (e) { /* not migrated yet */ }
+    const totalDownloads = adminTotals ? { c: adminTotals.c || 0 }
+      : await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
+    const totalBytes = adminTotals ? { s: adminTotals.s || 0 }
+      : await env.DB.prepare('SELECT SUM(bytes_served) as s FROM download_log').first();
     const todayLogins = await env.DB.prepare("SELECT COUNT(*) as c FROM login_history WHERE timestamp > datetime('now', '-1 day') AND success = 1").first();
     const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
-    const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 10').all();
+    let topTickers = null;
+    try { topTickers = await env.DB.prepare('SELECT ticker, downloads FROM stats_ticker_counts ORDER BY downloads DESC LIMIT 10').all(); } catch (e) { /* not migrated yet */ }
+    if (!topTickers || !topTickers.results || topTickers.results.length === 0)
+      topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 10').all();
     const recentUsers = await env.DB.prepare('SELECT name, email, institution, country, role, created_at FROM users ORDER BY created_at DESC LIMIT 10').all();
 
     // Download channel breakdown (api / web / mcp). `channel` is captured at
@@ -5085,6 +5098,25 @@ function titleCaseInstitution(name) {
   }).join(' ');
 }
 
+// Task #134 (R430 class): maintain the pre-aggregated counters that the stats
+// surfaces read instead of full-scanning download_log (~440M rows/day measured
+// 2026-08-17 at ~$0.44/day). Called inside each download_log insert's existing
+// try/catch — stats bookkeeping must never block a download the user earned.
+// Tables are created + backfilled by api/migrate_stats_counters.sql (run it
+// BEFORE deploying this code, and once after to absorb the deploy gap).
+async function bumpStatsCounters(env, ticker, version, bytes) {
+  // Own try/catch (not the caller's): before migrate_stats_counters.sql has
+  // been applied these tables don't exist, and that must neither block the
+  // download nor pollute the caller's 'download_log insert failed' log line.
+  try {
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO stats_totals (id, downloads, bytes) VALUES (1, 1, ?) ON CONFLICT(id) DO UPDATE SET downloads = downloads + 1, bytes = bytes + excluded.bytes').bind(bytes || 0),
+      env.DB.prepare('INSERT INTO stats_ticker_counts (ticker, downloads, bytes) VALUES (?, 1, ?) ON CONFLICT(ticker) DO UPDATE SET downloads = downloads + 1, bytes = bytes + excluded.bytes').bind(ticker || '', bytes || 0),
+      env.DB.prepare('INSERT INTO stats_version_counts (version, downloads) VALUES (?, 1) ON CONFLICT(version) DO UPDATE SET downloads = downloads + 1').bind(version || ''),
+    ]);
+  } catch (e) { console.error('stats counter bump failed (run migrate_stats_counters.sql?):', e.message); }
+}
+
 async function handlePublicStats(env, cors) {
   let cache = null;
   const cacheKey = new Request('https://api.hfdatalibrary.com/__cache/public-stats', { method: 'GET' });
@@ -5113,8 +5145,19 @@ async function handlePublicStats(env, cors) {
   // Public stats — no auth required. All data is aggregated, no PII exposed.
   // Total registered accounts (all rows, incl. deactivated) — matches the admin "Total Users" count.
   const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first();
-  const totalDownloads = await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
-  const totalBytes = await env.DB.prepare('SELECT COALESCE(SUM(bytes_served),0) as s FROM download_log').first();
+  // Totals come from stats_totals (maintained at the download_log insert sites
+  // via bumpStatsCounters, backfilled by migrate_stats_counters.sql) — the
+  // COUNT(*)/SUM full scans they replace read the whole ~1.4M-row table per hit,
+  // ~440M rows/day measured 2026-08-17 (task #134, the R430 query-shape class).
+  // FAIL-OPEN: until the migration is applied, fall back to the old scans so a
+  // deploy without the tables changes nothing. The day/week windows stay live
+  // queries either way: idx_download_log_time keeps them cheap.
+  let totals = null;
+  try { totals = await env.DB.prepare('SELECT downloads as c, bytes as s FROM stats_totals WHERE id = 1').first(); } catch (e) { /* not migrated yet */ }
+  const totalDownloads = totals ? { c: totals.c || 0 }
+    : await env.DB.prepare('SELECT COUNT(*) as c FROM download_log').first();
+  const totalBytes = totals ? { s: totals.s || 0 }
+    : await env.DB.prepare('SELECT COALESCE(SUM(bytes_served),0) as s FROM download_log').first();
   const todayDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-1 day')").first();
   const weekDownloads = await env.DB.prepare("SELECT COUNT(*) as c FROM download_log WHERE timestamp > datetime('now', '-7 days')").first();
 
@@ -5381,11 +5424,19 @@ async function handlePublicStats(env, cors) {
       .slice(0, 500),
   };
 
-  // Top downloaded tickers
-  const topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
+  // Top downloaded tickers — from the maintained counter table (task #134);
+  // the GROUP BY it replaces scanned all of download_log per hit. Fail-open to
+  // the scan until the migration lands (missing table OR unbackfilled-empty).
+  let topTickers = null;
+  try { topTickers = await env.DB.prepare('SELECT ticker, downloads, bytes FROM stats_ticker_counts ORDER BY downloads DESC LIMIT 25').all(); } catch (e) { /* not migrated yet */ }
+  if (!topTickers || !topTickers.results || topTickers.results.length === 0)
+    topTickers = await env.DB.prepare('SELECT ticker, COUNT(*) as downloads, SUM(bytes_served) as bytes FROM download_log GROUP BY ticker ORDER BY downloads DESC LIMIT 25').all();
 
-  // Downloads by version
-  const byVersion = await env.DB.prepare('SELECT version, COUNT(*) as downloads FROM download_log GROUP BY version ORDER BY downloads DESC').all();
+  // Downloads by version — same counter pattern, same fallback.
+  let byVersion = null;
+  try { byVersion = await env.DB.prepare('SELECT version, downloads FROM stats_version_counts ORDER BY downloads DESC').all(); } catch (e) { /* not migrated yet */ }
+  if (!byVersion || !byVersion.results || byVersion.results.length === 0)
+    byVersion = await env.DB.prepare('SELECT version, COUNT(*) as downloads FROM download_log GROUP BY version ORDER BY downloads DESC').all();
 
   // Registrations per week (last 12 weeks)
   const regTrend = await env.DB.prepare("SELECT strftime('%Y-W%W', created_at) as week, COUNT(*) as registrations FROM users WHERE created_at > datetime('now', '-84 days') GROUP BY week ORDER BY week").all();
