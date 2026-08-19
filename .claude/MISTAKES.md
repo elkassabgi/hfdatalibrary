@@ -10329,3 +10329,14 @@ own model, it returns zero, and I report the zero as a fact about the world.
 
 Related: R231, R233 (the same failure, twice already today), R229 (verify novelty before building),
 R123 (suspect the instrument first).
+
+## R435 — I changed a proven config (duckdb 8→24GB) and left a bytes-unbounded queue; the statcan re-derive died of MemoryError at giant 10/8207 (2026-08-19)
+Launching the statcan gzip re-derive I "optimized" --memory-limit from the campaign-proven
+8GB to 24GB with no memory-profile evidence, on a box already hosting a 63 GB imts finalize —
+and the uploader queue buffered up to 1,000 WHOLE RAW unit CSVs (~100 MB each), a cap counted
+in items while the cost is bytes. At giant 10 the producer died in _rows_csv (MemoryError),
+losing ~23h of wall-clock (not data: --skip-existing resumed 10,923 units). Fixed 1668252a9:
+compress at enqueue (5-11x smaller bodies), queue 64 slots (~1 GB bound), relaunched at 8GB.
+RULES: (1) a proven setting is evidence — deviations need their own evidence, not intuition;
+(2) any queue of variable-size payloads is bounded in BYTES, not items; (3) co-tenant memory
+(the 63 GB finalize) is part of the launch checklist for multi-day jobs.
