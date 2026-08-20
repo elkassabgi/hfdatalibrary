@@ -10340,3 +10340,15 @@ compress at enqueue (5-11x smaller bodies), queue 64 slots (~1 GB bound), relaun
 RULES: (1) a proven setting is evidence — deviations need their own evidence, not intuition;
 (2) any queue of variable-size payloads is bounded in BYTES, not items; (3) co-tenant memory
 (the 63 GB finalize) is part of the launch checklist for multi-day jobs.
+
+## R436 — INSERT OR IGNORE + wrong-column verification: I declared the ip SSO client registered while its redirect_exact stayed NULL (2026-08-20)
+Registering ipdatalibrary.com as an sso_client I used INSERT OR IGNORE — but rows for both ip
+origins ALREADY EXISTED (pre-created in July's SSO build with redirect_exact NULL), so the
+insert silently did nothing. My verification SELECTed origin+status ("active" — looked right)
+and never the load-bearing column; I reported SSO "wired and live-verified". Ahmed's first
+real click hit "Redirect URI mismatch". Diagnosed by reproducing the exact /authorize request
+(hf passed, ip failed), then reading FULL rows: redirect_exact NULL, created_at July. Fixed
+with UPDATE; probe now returns "Continue to IP Data Library".
+RULES: (1) INSERT OR IGNORE is a REGISTRATION CLAIM only when followed by a full-row readback —
+on conflict it ignores YOUR values silently; (2) verify the column the consumer READS
+(auth.ts/IdP read redirect_exact, not status); (3) R433 stands: print the sample row, whole.
