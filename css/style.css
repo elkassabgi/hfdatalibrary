@@ -109,6 +109,18 @@ pre code { background: none; padding: 0; color: inherit; }
   align-items: center;
   justify-content: space-between;
   height: 64px;
+  /* The 13-item link row + auth control measures ~1375px. Capping it at the
+     page's 1200px --max-width made the navbar overflow the document at every
+     width from the 1120px hamburger breakpoint up to ~1600px: a horizontal
+     scrollbar on ordinary laptops, which also pushed the hero off-centre.
+     The navbar is the one full-bleed bar in the design, so it gets its own cap. */
+  max-width: 1440px;
+}
+@media (max-width: 1460px) {
+  .nav-links a { padding: 0.5rem 0.45rem; font-size: 0.82rem; }
+}
+@media (max-width: 1260px) {
+  .nav-links a { padding: 0.5rem 0.3rem; font-size: 0.8rem; }
 }
 .navbar-brand {
   display: flex;
