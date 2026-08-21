@@ -10381,3 +10381,20 @@ exists, the edit belongs in the template/constant, never the output. (2) A fix t
 is not a fix, it is a countdown. (3) The same applies to ip: `site/gen_site.py` is the source,
 `site/dist/` is disposable. (4) After changing a generator, REGENERATE and diff the output to
 prove the change reached every page — count the pages that carry it.
+
+## R439 — I declared the nav overflow "fixed, measured at 4 widths" having tested only DESKTOP; hf was still scrolling 181px on every phone (2026-08-21)
+Fixing hf's sitewide horizontal overflow I measured 1135/1235/1385/1685 px, got 0 at all four,
+and reported it fixed. All four are desktop. At 375px hf still overflowed by 181px — a wide
+`<pre>` inside `.feature-row` blew its grid track out, because grid children default to
+`min-width:auto` and hf's 768px rule set `grid-template-columns:1fr` without `min-width:0`.
+econ was worse (248px, and its homepage stylesheet had NO `@media` rules at all). Both are the
+defect the owner had already reported once, in its mobile form, and my "measured" claim would
+have closed the case.
+RULES: (1) A RESPONSIVE claim requires the RESPONSIVE RANGE — always include a phone width
+(375/380) and a tablet width, not just the desktop band where the bug was first seen; four
+measurements inside one regime are one measurement. (2) When a fix is "0 overflow", also print
+WHICH elements still exceed the viewport — an element scrolling inside its own container is
+fine, one pushing the document is not, and only the element list distinguishes them.
+(3) `grid-template-columns:1fr` does NOT make a grid item shrink; without `min-width:0` any
+wide child (pre, table, long token) silently widens the track. Check it wherever a grid holds
+code or tables. (4) Extends R437: enumerate surfaces AND viewports before a parity claim.
