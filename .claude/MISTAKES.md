@@ -10398,3 +10398,19 @@ fine, one pushing the document is not, and only the element list distinguishes t
 (3) `grid-template-columns:1fr` does NOT make a grid item shrink; without `min-width:0` any
 wide child (pre, table, long token) silently widens the track. Check it wherever a grid holds
 code or tables. (4) Extends R437: enumerate surfaces AND viewports before a parity claim.
+
+## R440 — `git checkout --` to undo ONE bad edit silently reverted an EARLIER good edit to the same files (2026-08-21)
+I duplicated the family band on econ's 5 hand-maintained pages, and cleaned it up with
+`git checkout -- catalog/site/{download,status,mcp,account,404}.html`. That restored the files
+to HEAD — which also threw away the sibling-library nav links (HF Data / IP Data) I had added
+to those same files earlier in the session and never committed. I then rebuilt band + footer
+and moved on, believing the pages complete. A re-audit agent found them four hours later:
+10 nav items where every other econ page had 12, on /download and /mcp — the two
+highest-intent pages on the site.
+RULES: (1) `git checkout --` / `git restore` reverts to the last COMMIT, not to "before my last
+mistake" — before using it on a dirty file, diff it (`git diff -- <path>`) and confirm the only
+uncommitted change is the one being discarded; (2) COMMIT a verified fix before starting the
+next edit on the same file, so a later revert has a floor; (3) after any revert, re-verify the
+OTHER properties that file was supposed to have — a revert is a change and needs the same
+post-check as an edit; (4) this is why R437's "enumerate every shared region" applies to
+re-verification too, not just to first-time claims.
