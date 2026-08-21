@@ -10365,3 +10365,19 @@ verifying, and screenshot full-page, not top-of-fold; (2) the R-example-means-cl
 applies to page anatomy too: a uniformity directive covers every region the sites share, not
 the regions I happened to restyle; (3) a claim of visual parity requires the same evidence
 per region on EVERY site, produced AFTER the last edit.
+
+## R438 — I patched GENERATED HTML instead of the generator, twice; econ's next `gen_site.py` run silently reverts both fixes (2026-08-21)
+Fixing family-uniformity on econ, I edited `catalog/site/index.html` directly to move the
+ElkassabgiData band above the footer, and swept `catalog/site/*.html` to turn the band's
+"more to come" span into an IP Data Library link (242 pages). Both edits landed on BUILD
+OUTPUT. `catalog/gen_site.py` (3,666 lines) is the source of truth: its `FAMILY_BAND`
+constant still carries the pre-canonical markup AND the literal `<span>more to come</span>`,
+and `_write()` injects it with `html.replace("</body>", FAMILY_BAND + "</body>")` — i.e.
+BELOW every page's footer, on EVERY page. So the next regeneration silently undoes both fixes
+and re-buries the band. Found by an audit agent, not by me, a day after I called econ done.
+RULES: (1) Before editing any .html, ASK WHETHER IT IS GENERATED — grep the repo for a
+generator that writes that path (`grep -rln "<distinctive string>" --include=*.py`); if one
+exists, the edit belongs in the template/constant, never the output. (2) A fix to build output
+is not a fix, it is a countdown. (3) The same applies to ip: `site/gen_site.py` is the source,
+`site/dist/` is disposable. (4) After changing a generator, REGENERATE and diff the output to
+prove the change reached every page — count the pages that carry it.
