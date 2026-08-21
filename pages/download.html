@@ -793,6 +793,7 @@ var FAMILY_RETURN = (function () {
   var p = new URLSearchParams(location.search);
   var sites = {
     econ: { origin: 'https://econdatalibrary.com', label: 'Econ Data Library' },
+    ip: { origin: 'https://ipdatalibrary.com', label: 'IP Data Library' },
     elkassabgidata: { origin: 'https://elkassabgidata.com', label: 'ElkassabgiData' }
   };
   var site = sites[p.get('from')];
@@ -806,6 +807,7 @@ var FAMILY_RETURN = (function () {
     try {
       var u = new URL(ret);
       var ok = ['https://econdatalibrary.com', 'https://www.econdatalibrary.com',
+                'https://ipdatalibrary.com', 'https://www.ipdatalibrary.com',
                 'https://elkassabgidata.com', 'https://www.elkassabgidata.com'];
       if (ok.indexOf(u.origin) !== -1) url = u.href;
     } catch (e) { /* malformed return -> fall back to the site origin */ }
