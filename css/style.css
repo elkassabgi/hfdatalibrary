@@ -436,6 +436,11 @@ td.mono { font-family: var(--font-mono); font-size: 0.85rem; }
   .stat-number { font-size: 1.5rem; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .feature-row, .feature-row.reverse { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+  /* grid children default to min-width:auto, so a wide <pre> blows the track
+     out past the viewport; 0 lets pre's own overflow-x:auto scroll instead. */
+  .feature-row > *, .grid-2 > *, .grid-3 > *, .grid-4 > * { min-width: 0; }
+  .feature-visual { padding: 1.25rem; }
+  pre, code, table { max-width: 100%; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
   .footer-bottom { flex-direction: column; gap: 0.5rem; text-align: center; }
 }
