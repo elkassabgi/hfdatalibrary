@@ -116,12 +116,6 @@ pre code { background: none; padding: 0; color: inherit; }
      The navbar is the one full-bleed bar in the design, so it gets its own cap. */
   max-width: 1440px;
 }
-@media (max-width: 1460px) {
-  .nav-links a { padding: 0.5rem 0.45rem; font-size: 0.82rem; }
-}
-@media (max-width: 1260px) {
-  .nav-links a { padding: 0.5rem 0.3rem; font-size: 0.8rem; }
-}
 .navbar-brand {
   display: flex;
   align-items: center;
@@ -164,6 +158,15 @@ pre code { background: none; padding: 0; color: inherit; }
 .nav-links a:hover, .nav-links a.active {
   color: #fff;
   background: rgba(255,255,255,0.1);
+}
+/* Compaction steps for the 13-item row. MUST sit after the base .nav-links a
+   rule above: a media query adds no specificity, so when these lived up beside
+   .navbar .container the later base rule silently won and nothing compacted. */
+@media (max-width: 1460px) {
+  .nav-links a { padding: 0.5rem 0.45rem; font-size: 0.82rem; }
+}
+@media (max-width: 1260px) {
+  .nav-links a { padding: 0.5rem 0.3rem; font-size: 0.8rem; }
 }
 .nav-toggle { display: none; background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; }
 
