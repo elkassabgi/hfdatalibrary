@@ -10352,3 +10352,16 @@ with UPDATE; probe now returns "Continue to IP Data Library".
 RULES: (1) INSERT OR IGNORE is a REGISTRATION CLAIM only when followed by a full-row readback —
 on conflict it ignores YOUR values silently; (2) verify the column the consumer READS
 (auth.ts/IdP read redirect_exact, not status); (3) R433 stands: print the sample row, whole.
+
+## R437 — "made them all uniform" verified hero/nav/CTA but never audited the FOOTER; Ahmed caught three visibly different footers the next day (2026-08-20)
+Task #141: I unified hero, status bar, nav, chip and CTAs across all four family sites, took
+screenshots of each site's TOP, and reported them uniform. The footers never entered the audit:
+hf = gold badge band ABOVE a 4-column link footer; econ = columns first, badge band BELOW;
+ip = a 4-line centered stub with no badge and no columns. Ahmed pasted the three footers side
+by side: "you told me that you made them all uniform, you lied.."
+RULES: (1) "Uniform" is a claim about the WHOLE page — enumerate every shared surface (nav,
+hero, status bar, CTAs, body sections, FOOTER, chip) into an explicit checklist before
+verifying, and screenshot full-page, not top-of-fold; (2) the R-example-means-class rule
+applies to page anatomy too: a uniformity directive covers every region the sites share, not
+the regions I happened to restyle; (3) a claim of visual parity requires the same evidence
+per region on EVERY site, produced AFTER the last edit.
