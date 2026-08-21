@@ -477,7 +477,6 @@
       li.innerHTML =
         '<span style="display:inline-flex; align-items:center; gap:0.55rem; white-space:nowrap;">' +
           '<a id="nav-signin" href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600;">Sign in</a>' +
-          '<a href="' + downloadUrl + '#register" style="color:rgba(255,255,255,0.72); font-size:0.72rem;">More sign-in options</a>' +
         '</span>';
     }
 
