@@ -18,3 +18,13 @@ WEBSITE_PLAN.md
 data/cleaning_detail.csv
 data/variables/
 expansion-plan/
+
+# keep-working Stop-hook sentinel + counter (machine-local, never committed)
+.claude/KEEP_WORKING
+.claude/.keep_working_count
+.claude/STOP_REASON
+
+# Correspondence with users. THIS REPO IS PUBLIC: these files carry real names and
+# email addresses, and were untracked-but-unignored, i.e. one `git add -A` away from
+# being published (the R135 trap, previously hit with MISTAKES.md).
+emails/
