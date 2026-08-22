@@ -10428,3 +10428,23 @@ a cache-buster) and measure the fresh render; (2) when a measurement contradicts
 have just read and re-read, suspect the MEASUREMENT before rewriting the file — I nearly
 "fixed" correct CSS; (3) `document.styleSheets` can show the NEW rules while the layout still
 reflects the OLD ones, so agreeing rule text is not evidence the render used it.
+
+## R442 — `update_draft` silently DETACHED a reply from its thread (and I put an unverified number in an email draft) (2026-08-22)
+Two faults on the same draft reply to a researcher's data enquiry.
+(a) UNVERIFIED NUMBER IN OUTBOUND TEXT. To justify "prices are back-adjusted" I wrote that
+SOXL's adjusted first close of $0.62 stood "against an inception price near $25". I never
+sourced the $25 — our files arrive pre-adjusted so they cannot show it, and a leveraged ETF
+splits often enough that the factor could come from several splits. Ahmed caught it with
+"soxl is a leverage stock". Replaced with only what the data proves (first adjusted close
+$0.62, last $122.19) plus an explicit statement that appreciation and split adjustment cannot
+be separated from our files.
+(b) THREADING LOST ON UPDATE. `create_draft` takes `replyToMessageId`; `update_draft` does NOT.
+Editing the draft through update_draft moved it from the enquiry's thread onto a thread of its
+own — it would have arrived as a new message, not a reply. Caught only because the response's
+threadId differed from the one I passed at creation.
+RULES: (1) EVERY number in text that leaves the building under Ahmed's name must trace to a
+command run this session — "roughly/near/about" is not a licence to supply a figure from
+memory; if the data cannot show it, say the data cannot show it; (2) to revise a threaded
+draft, DELETE AND RECREATE with `replyToMessageId`, never `update_draft`; (3) after any
+draft/message write, re-read the returned threadId and compare it to the intended thread —
+the API reports the detachment, but only if you look.
