@@ -10414,3 +10414,17 @@ next edit on the same file, so a later revert has a floor; (3) after any revert,
 OTHER properties that file was supposed to have — a revert is a change and needs the same
 post-check as an edit; (4) this is why R437's "enumerate every shared region" applies to
 re-verification too, not just to first-time claims.
+
+## R441 — I measured a CSS fix through a swapped <link href>, which renders stale; the reading said "fix not applied" when it was (2026-08-21)
+Checking hf's nav compaction I re-pointed the stylesheet `<link>` at a cache-busted URL and
+measured computed styles. It reported padding 7.2px (the 1460px step) at a 1140px viewport,
+where the 1260px step should win — so I went hunting for a duplicate rule, a specificity bug
+and a cascade-order bug, and found none, because the CSS was already correct. A FULL page
+reload at the same width then computed 4.8px, the right value, and the overflow I was chasing
+dropped from 85px to 9px on its own. Minutes lost on a measurement artefact.
+RULES: (1) NEVER verify computed CSS through an href swap — replacing a stylesheet's href does
+not reliably re-evaluate already-computed styles; reload the document (`location.replace` with
+a cache-buster) and measure the fresh render; (2) when a measurement contradicts a file you
+have just read and re-read, suspect the MEASUREMENT before rewriting the file — I nearly
+"fixed" correct CSS; (3) `document.styleSheets` can show the NEW rules while the layout still
+reflects the OLD ones, so agreeing rule text is not evidence the render used it.
