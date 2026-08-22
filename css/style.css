@@ -410,7 +410,7 @@ td.mono { font-family: var(--font-mono); font-size: 0.85rem; }
    The full bar needs ~1105px (brand + 10 links + auth button + gap);
    below that the links crowd and the Sign in / user button jams against
    the right edge, so switch to the dropdown menu at 1120px. */
-@media (max-width: 1120px) {
+@media (max-width: 1160px) {
   .nav-links { display: none; }
   .nav-links.open {
     display: flex;
