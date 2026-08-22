@@ -113,6 +113,27 @@
     <p><strong>Status:</strong> Known structural break</p>
     <p>The transition from PiTrading (consolidated tape) to IEX Exchange HIST (single exchange) at March 2022 creates a structural break in volume, trade count, and potentially in price coverage. Step 9 of the cleaning pipeline checks for artificial price jumps at this boundary, but the volume discontinuity is inherent to the source change and cannot be cleaned away.</p>
 
+    <h4>Trade corrections and cancellations (post-March 2022)</h4>
+    <p><strong>Status:</strong> Known limitation, documented 2026-08-22</p>
+    <p>Post-2022 bars are built from IEX TOPS <em>Trade Report</em> messages only. IEX
+    trade-break messages are not consumed, so a print that the exchange later busts or
+    corrects remains in the minute bar. Erroneous prints are therefore caught, if at all,
+    by the generic outlier filters in the Clean version (steps 7 and 8) rather than by a
+    corrections feed. Pre-2022 bars arrive pre-aggregated from the vendor, so any
+    corrections handling in that period is the vendor&rsquo;s and is not visible to us.
+    Researchers whose designs are sensitive to busted trades should treat both periods
+    accordingly.</p>
+
+    <h4>Extended-hours data is not included in either version</h4>
+    <p><strong>Status:</strong> Clarification, documented 2026-08-22</p>
+    <p>Neither Raw nor Clean contains pre-market or after-hours bars. Clean removes
+    out-of-session bars by rule (step 1), but the sources as ingested do not supply them
+    in the first place: measured across the full served files, 0 of 1,213,939 SOXL raw
+    bars and 0 of 2,308,352 AAPL raw bars fall outside 09:30&ndash;16:00 ET, and the
+    observed clock range is 09:30&ndash;15:59 in both. The Data Versions page previously
+    listed &ldquo;outside-hours bars&rdquo; among Raw&rsquo;s contents; that was wrong and
+    has been corrected.</p>
+
     <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
     <h2>No other issues reported</h2>
