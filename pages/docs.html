@@ -100,7 +100,7 @@
 
     <h3>Data sources</h3>
     <p><strong>Primary source (pre-March 2022):</strong> PiTrading, which provides historical consolidated-tape data derived from the CTA (NYSE-listed) and UTP (Nasdaq-listed) feeds. These are the same feeds that underlie CRSP and TAQ. The data arrives as one-minute OHLCV bars, adjusted for stock splits and dividends.</p>
-    <p><strong>Secondary source (post-March 2022):</strong> IEX Exchange market data. Bars from March 30, 2026 onward are parsed directly from IEX Exchange HIST full-depth pcap files into one-minute OHLCV bars; earlier post-2022 bars are being re-derived directly from IEX HIST pcaps this week. IEX represents approximately 2–3% of consolidated volume, so these bars capture IEX-only activity, not the full tape.</p>
+    <p><strong>Secondary source (post-March 2022):</strong> IEX Exchange market data. Bars from March 30, 2026 onward are parsed directly from IEX Exchange HIST TOPS pcap files (IEX's top-of-book feed) into one-minute OHLCV bars; earlier post-2022 bars are being re-derived directly from IEX HIST pcaps this week. IEX represents approximately 2–3% of consolidated volume, so these bars capture IEX-only activity, not the full tape.</p>
     <p>Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
     <p>The splice boundary (March 2022) is documented, and both sources are flagged in the <code>source</code> column of every file.</p>
 
