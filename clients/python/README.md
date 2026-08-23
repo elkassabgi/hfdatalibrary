@@ -6,6 +6,14 @@ both `raw` and `clean` versions across eight timeframes.
 
 ## Install
 
+Until the package is published to PyPI, install it straight from the repository:
+
+```bash
+pip install "git+https://github.com/elkassabgi/hfdatalibrary.git#subdirectory=clients/python"
+```
+
+Once it is on PyPI:
+
 ```bash
 pip install hfdatalibrary          # add pyarrow for parquet: pip install hfdatalibrary[parquet]
 ```
