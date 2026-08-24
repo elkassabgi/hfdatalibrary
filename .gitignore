@@ -25,3 +25,20 @@ expansion-plan/
 /PARTNER_TOOLKIT_PLAN.md
 /TOOLKIT_IMPLEMENTATION_PLAN.md
 /IEX_PIPELINE_PLAN.md
+
+# --- secret shapes (added 2026-08-24 after R455) ---------------------------------
+# A live USPTO API key reached a PUBLIC repo because .uspto_key was documented as
+# "gitignored" and never actually added to any .gitignore. .env* was covered here;
+# nothing else was. These patterns are about SHAPE, not about the one file that
+# leaked: the next secret will have a name nobody predicted.
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*_key
+.*_key
+credentials*
+*secret*
+*.token
+token.txt
