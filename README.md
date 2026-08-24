@@ -38,3 +38,6 @@ IEX retains all rights in the underlying securities information.
 ## Repository contents
 
 This repo holds the website (`index.html`, `pages/`), the Cloudflare Worker API (`api/`), and the daily data pipeline (`pipeline/` — IEX HIST pcap download, Go TOPS parser, bar building, 9-step cleaning, R2 upload). The data itself is distributed from https://hfdatalibrary.com, not from this repository.
+
+The MCP server that exposes this library (and the Econ and IP libraries) to AI assistants
+lives in its own repository: [elkassabgidata-mcp](https://github.com/elkassabgi/elkassabgidata-mcp) — MIT licensed.
