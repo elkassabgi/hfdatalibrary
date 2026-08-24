@@ -11,6 +11,22 @@ requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "Ahmed Elkassabgi" }]
 keywords = ["finance", "stock-market", "ohlcv", "intraday", "high-frequency", "backtesting", "research-data"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
     "requests>=2.20",
     "pandas>=1.0",
@@ -23,6 +39,7 @@ parquet = ["pyarrow>=6.0"]
 Homepage = "https://hfdatalibrary.com"
 Documentation = "https://hfdatalibrary.com/pages/docs"
 Source = "https://github.com/elkassabgi/hfdatalibrary"
+Issues = "https://github.com/elkassabgi/hfdatalibrary/issues"
 
 [tool.setuptools]
 packages = ["hfdatalibrary"]
