@@ -81,6 +81,7 @@ const ACCOUNTS_ALLOW = new Set([
   '/account/export',
   '/account/resend-verification',
   '/account/delete',
+  '/account/delete-code',
   '/csp-report',
   '/v1/auth/google/start',
   '/v1/auth/orcid/start',
@@ -3013,8 +3014,9 @@ async function handleAccountsHost(request, env, url, path, ip, ua, country) {
     if (path === '/account/export' && method === 'GET') return await handleAccountExport(request, env);
     if (path === '/account/resend-verification' && method === 'POST') return await handleAccountResendVerification(request, env);
     if (path === '/account/delete' && method === 'POST') return await handleAccountDelete(request, env);
+    if (path === '/account/delete-code' && method === 'POST') return await handleAccountDeleteCode(request, env);
     if (path === '/csp-report' && method === 'POST') return await handleCspReport(request, env);
-    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout' || path === '/account/update-profile' || path === '/account/change-password' || path === '/account/export' || path === '/account/resend-verification' || path === '/account/delete') return new Response('Not found', { status: 404 });
+    if (path === '/account' || path === '/account/regenerate-key' || path === '/account/logout' || path === '/account/update-profile' || path === '/account/change-password' || path === '/account/export' || path === '/account/resend-verification' || path === '/account/delete' || path === '/account/delete-code') return new Response('Not found', { status: 404 });
     if (path === '/token/exchange' && method === 'POST') return await handleTokenExchange(request, env, ip, ua, tokenCors);
     if (path === '/token/refresh' && method === 'POST') return await handleTokenRefresh(request, env, ip, ua, tokenCors);
     if (path === '/logout' && method === 'POST') return await handleAccountsLogout(request, env, tokenCors);
@@ -6267,9 +6269,17 @@ function renderAccountPage(user, opts) {
     '<div class="danger"><h2>Delete account</h2>' +
     '<div class="warn">This permanently removes your account and personal data across every ElkassabgiData library. It cannot be undone.</div>' +
     '<form method="POST" action="/account/delete">' +
-    '<label class="fl">Confirm your password<input class="fld" type="password" name="password" autocomplete="current-password" required></label>' +
+    // `required` removed from the password field 2026-08-26: Google/ORCID-registered
+    // accounts hold a random placeholder nobody was ever shown, so a required password
+    // input made this form UNSUBMITTABLE for them (Ahmed hit it live). Either proof
+    // works now; the server decides. This page ships no JS (CSP default-src 'none'),
+    // so both inputs render always and the handler branches on which one was filled.
+    '<label class="fl">Confirm your password<input class="fld" type="password" name="password" autocomplete="current-password"></label>' +
+    '<label class="fl">Or enter an emailed deletion code<input class="fld" name="code" inputmode="numeric" maxlength="6" placeholder="6-digit code"></label>' +
     '<label class="fl">Type DELETE to confirm<input class="fld" name="confirm" placeholder="DELETE" required></label>' +
-    '<div class="row"><button type="submit" class="del">Delete my account</button></div></form></div>' +
+    '<div class="row"><button type="submit" class="del">Delete my account</button></div></form>' +
+    '<form method="POST" action="/account/delete-code" class="row" style="margin-top:0.5rem"><button type="submit" class="ghost">No password? Email me a deletion code</button></form>' +
+    '</div>' +
     '<h2>About your ElkassabgiData account</h2>' +
     '<p class="hint" style="line-height:1.6">One free account works across every ElkassabgiData library (hfdatalibrary.com, econdatalibrary.com, and more) &mdash; sign in once per site, and sessions last 30 days. Your API key above works everywhere via the <span style="font-family:ui-monospace,Consolas,monospace">X-API-Key</span> header. &ldquo;Log out everywhere&rdquo; ends every session at once. Forgot your password? Reset it at <a href="https://hfdatalibrary.com/pages/reset" style="color:#d4a843">hfdatalibrary.com/pages/reset</a>.</p>' +
     '</div></body></html>';
@@ -6441,6 +6451,43 @@ async function handleAccountResendVerification(request, env) {
 }
 
 // 1.3: delete account on accounts.* (mirrors api.* handleDeleteAccount + revokes family sessions/tokens).
+// 1.3b: deletion-confirmation code for accounts with no usable password (OAuth-registered
+// users hold a random placeholder nobody was ever shown — the `required` password input made
+// the delete form UNSUBMITTABLE for them). Mirrors api.*'s handleDeleteCodeRequest and mints
+// an IDENTICAL row shape ('del-<uid>-<code>', purpose='delete', 15 min, single-use), so a
+// code from either surface spends on either. Same shared per-account rate budgets.
+async function handleAccountDeleteCode(request, env) {
+  if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
+  const user = await getIdpSessionUser(request, env);
+  if (!user) return new Response(renderSignedOutPage(), { status: 401, headers: accountPageHeaders });
+  const rl = await checkRateLimit(env, 'delc:u' + user.id, 'api:delete_code');
+  if (!rl.ok) {
+    return new Response(renderAccountPage(user, { notice: 'We already emailed you a deletion code recently. Check your inbox and spam folder, or try again later.' }), { status: 200, headers: accountPageHeaders });
+  }
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+  const expires = new Date(Date.now() + 15 * 60000).toISOString();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+    .bind(user.id, 'del-' + user.id + '-' + code, expires, 'delete').run();
+  // NON-FATAL like every other minted-then-mailed flow here: the row exists by now and a
+  // throw would 500 a successful mint and invite burning another one.
+  let sent = true;
+  try {
+    await sendEmail(
+      env, user.email,
+      'Confirm deletion of your ElkassabgiData account',
+      '<p>Hello' + (user.name ? ' ' + htmlEncode(user.name) : '') + ',</p>' +
+      '<p>You asked to permanently delete your ElkassabgiData account. Enter this code in the delete form to confirm:</p>' +
+      '<p style="font-size:1.6rem; font-weight:700; letter-spacing:0.2em;">' + code + '</p>' +
+      '<p>The code expires in 15 minutes and works once. If you did not request this, you can ignore this email — nothing happens without the code.</p>',
+      FROM_EMAIL, 'ElkassabgiData'
+    );
+  } catch (e) { sent = false; }
+  return new Response(renderAccountPage(user, {
+    notice: sent ? 'Deletion code sent — check your inbox, then enter it in the delete form below.'
+                 : 'We could not send the email just now. Please try again in a few minutes.'
+  }), { status: 200, headers: accountPageHeaders });
+}
+
 async function handleAccountDelete(request, env) {
   if (!assertSameOriginForm(request)) return new Response('cross_site_blocked', { status: 403 });
   const user = await getIdpSessionUser(request, env);
@@ -6448,11 +6495,22 @@ async function handleAccountDelete(request, env) {
   let form;
   try { form = await request.formData(); } catch { return new Response(renderAccountPage(user, { notice: 'Could not read the form — please try again.' }), { status: 400, headers: accountPageHeaders }); }
   const password = (form.get('password') || '').toString();
+  const code = (form.get('code') || '').toString().trim();
   const confirm = (form.get('confirm') || '').toString();
   if (confirm !== 'DELETE') return new Response(renderAccountPage(user, { notice: 'Type DELETE (all caps) in the confirm box to delete your account.' }), { status: 200, headers: accountPageHeaders });
   const dbUser = await env.DB.prepare('SELECT password_hash, email FROM users WHERE id = ?').bind(user.id).first();
-  if (!dbUser || !(await verifyPassword(password, dbUser.password_hash))) {
-    return new Response(renderAccountPage(user, { notice: 'Incorrect password — your account was NOT deleted.' }), { status: 200, headers: accountPageHeaders });
+  if (code) {
+    // Emailed-code path — purpose 'delete' EXACTLY, no NULL grace (this consumer destroys
+    // an account); attempts bounded per account; single-use.
+    const rl = await checkRateLimit(env, 'delv:u' + user.id, 'api:delete_verify');
+    if (!rl.ok) return new Response(renderAccountPage(user, { notice: 'Too many code attempts — your account was NOT deleted. Request a fresh code and try again in a few minutes.' }), { status: 200, headers: accountPageHeaders });
+    const row = await env.DB.prepare(
+      "SELECT id FROM password_resets WHERE user_id = ? AND token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND purpose = 'delete'"
+    ).bind(user.id, 'del-' + user.id + '-' + code).first();
+    if (!row) return new Response(renderAccountPage(user, { notice: 'That code is not valid or has expired — your account was NOT deleted. Use "Email me a deletion code" to get a fresh one.' }), { status: 200, headers: accountPageHeaders });
+    await env.DB.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').bind(row.id).run();
+  } else if (!dbUser || !(await verifyPassword(password, dbUser.password_hash))) {
+    return new Response(renderAccountPage(user, { notice: 'Incorrect or missing password — your account was NOT deleted. If you signed up with Google or ORCID and never set a password, use "Email me a deletion code" below the form.' }), { status: 200, headers: accountPageHeaders });
   }
   // Remove every trace: family sessions/tokens + api.* rows + the user.
   // Deleting the account must revoke everything it could still be reached by, not just its
