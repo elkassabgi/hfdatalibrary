@@ -175,6 +175,14 @@
           <div class="form-group">
             <label>Enter your password:</label>
             <input type="password" id="delete-password" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px;">
+            <p style="font-size:0.85rem; color:var(--gray-500); margin:0.4rem 0 0;">
+              Signed up with Google or ORCID and never set a password?
+              <a href="#" id="delete-code-link" onclick="requestDeleteCode(); return false;">Email me a confirmation code instead</a>.
+            </p>
+          </div>
+          <div class="form-group" id="delete-code-group" style="display:none;">
+            <label>Confirmation code from the email:</label>
+            <input type="text" id="delete-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:4px;">
           </div>
           <button class="btn" style="background:#dc2626; color:#fff;" onclick="deleteAccount()">Permanently delete</button>
           <button class="btn btn-outline" style="color:var(--gray-600); border-color:var(--gray-300); margin-left:0.5rem;" onclick="document.getElementById('delete-dialog').style.display='none'">Cancel</button>
@@ -451,19 +459,43 @@ function showDeleteDialog() {
   document.getElementById('delete-dialog').style.display = 'block';
 }
 
+// Deletion without a password. Google/ORCID-registered accounts hold a random password
+// placeholder they were never shown, so "Enter your password" was an unsatisfiable demand
+// for them (Ahmed hit it live 2026-08-26 on a second Google account). The code proves
+// mailbox control — the same claim a password reset rests on.
+async function requestDeleteCode() {
+  const result = document.getElementById('delete-result');
+  const link = document.getElementById('delete-code-link');
+  link.style.pointerEvents = 'none';
+  try {
+    const r = await fetch(API + '/v1/auth/delete-code', { method: 'POST', headers: authHeaders(), body: '{}' });
+    const data = await r.json();
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:' + (r.ok ? '#065f46' : 'var(--red)') + '; margin:0;">' +
+      (data.message || data.error || 'Request failed') + '</p>';
+    if (r.ok) document.getElementById('delete-code-group').style.display = 'block';
+  } catch (e) {
+    result.style.display = 'block';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>';
+  }
+  setTimeout(function () { link.style.pointerEvents = ''; }, 5000);
+}
+
 async function deleteAccount() {
   const confirm = document.getElementById('delete-confirm').value.trim();
   const password = document.getElementById('delete-password').value;
+  const codeEl = document.getElementById('delete-code');
+  const code = codeEl ? codeEl.value.trim() : '';
   const result = document.getElementById('delete-result');
 
   if (confirm !== 'DELETE') { result.style.display='block'; result.innerHTML='<p style="color:var(--red); margin:0;">Type DELETE exactly</p>'; return; }
-  if (!password) { result.style.display='block'; result.innerHTML='<p style="color:var(--red); margin:0;">Password required</p>'; return; }
+  if (!password && !code) { result.style.display='block'; result.innerHTML='<p style="color:var(--red); margin:0;">Enter your password — or request an emailed confirmation code below it.</p>'; return; }
 
   try {
     const r = await fetch(API + '/v1/auth/delete', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ confirm, password })
+      body: JSON.stringify(code ? { confirm, code } : { confirm, password })
     });
     const data = await r.json();
     if (r.ok) {

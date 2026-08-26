@@ -1049,13 +1049,15 @@ function resetTurnstile() {
 // family session. Sets currentUser (drives the search gate + the "registration required" banner).
 // [D02/G-13] purge the legacy session ONLY on 401; KEEP it on any 5xx / network blip — a brief api.*
 // hiccup must never client-side-log-out a legacy user.
+let authBearer = null;   // the token /v1/auth/me actually accepted — reused by the profile modal
 async function checkAuth() {
   currentUser = null;
+  authBearer = null;
   const legacy = safeGet('hfd_session');
   if (legacy) {
     try {
       const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
-      if (r.ok) currentUser = await r.json();
+      if (r.ok) { currentUser = await r.json(); authBearer = legacy; }
       else if (r.status === 401) { safeDel('hfd_session'); sessionToken = null; }
       // 5xx / non-401 → keep hfd_session, fall through (transient)
     } catch (e) { /* network → keep, fall through */ }
@@ -1063,14 +1065,99 @@ async function checkAuth() {
   if (!currentUser && window.EKD) {
     try {
       const at = await window.EKD.getAccessToken();
-      if (at) { const r2 = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } }); if (r2.ok) currentUser = await r2.json(); }
+      if (at) { const r2 = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } }); if (r2.ok) { currentUser = await r2.json(); authBearer = at; } }
     } catch (e) {}
   }
   const banner = document.getElementById('free-access-banner');
   if (banner) banner.style.display = currentUser ? 'none' : '';
   if (window.__hfdPaintNav) window.__hfdPaintNav();            // repaint the site.js nav (old-form login shows the name without a reload)
+  maybePromptProfile();
 }
 checkAuth();
+
+// ── Post-registration profile completion ──────────────────────────────────────
+// Google-registered accounts arrive with profile_complete=0 (institution/country/role
+// unset) and every download 403s until those are filled. Until 2026-08-26 nothing told
+// the user until they TRIED a download, and the advice then sent them to another page —
+// 175 of 1,299 accounts (13.5%, every one via Google) were parked in that state. Ask
+// RIGHT HERE, the moment any signed-in visit finds the profile incomplete: the hook in
+// checkAuth covers the OAuth landing, the popup sign-in and every later visit. "Later"
+// dismisses for the browser session only — downloads stay blocked by the server gate
+// either way, so the nag is strictly friendlier than the 403 it preempts.
+function maybePromptProfile() {
+  if (!currentUser || currentUser.profile_complete) return;
+  // Family-token sessions (SSO popup resume, no hfd_session) cannot Save here:
+  // /v1/auth/update-profile authenticates via getSessionUser, which structurally
+  // rejects family bearers (kind IS NULL OR 'web'). Showing them a Save that can
+  // only 401 is worse than today's 403-with-advice, which already points at
+  // accounts.elkassabgidata.com/account — the completion form that DOES accept
+  // their session. Widening the mutation endpoint's auth surface is its own
+  // review, not a rider on this one (adversarial review 2026-08-26).
+  if (currentUser.isFamilyToken) return;
+  if (sessionStorage.getItem('hfd_profile_later') === '1') return;
+  if (document.getElementById('profile-complete-overlay')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'profile-complete-overlay';
+  wrap.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,41,0.6); z-index:9998; display:flex; align-items:center; justify-content:center; padding:1rem;';
+  wrap.innerHTML =
+    '<div style="background:#fff; border-radius:12px; max-width:430px; width:100%; padding:1.75rem; box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+      '<h3 style="margin:0 0 0.5rem; font-size:1.15rem;">One last step — tell us who you are</h3>' +
+      '<p style="margin:0 0 1rem; color:var(--gray-500); font-size:0.9rem;">Your Google sign-up is done. Downloads unlock once these three fields are filled.</p>' +
+      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Institution</label>' +
+      '<input id="pc-institution" type="text" placeholder="e.g. University of Central Arkansas" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.75rem;">' +
+      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Country</label>' +
+      '<input id="pc-country" type="text" placeholder="e.g. United States" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.75rem;">' +
+      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Role</label>' +
+      '<input id="pc-role" type="text" placeholder="e.g. Professor, PhD student, Analyst" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.5rem;">' +
+      '<p id="pc-error" style="display:none; color:var(--red); font-size:0.85rem; margin:0 0 0.5rem;"></p>' +
+      '<div style="display:flex; gap:0.75rem; margin-top:0.75rem;">' +
+        '<button id="pc-save" class="btn btn-primary" style="flex:1;">Save &amp; unlock downloads</button>' +
+        '<button id="pc-later" class="btn" style="background:var(--gray-100);">Later</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  document.getElementById('pc-later').addEventListener('click', function () {
+    sessionStorage.setItem('hfd_profile_later', '1');
+    wrap.remove();
+  });
+  document.getElementById('pc-save').addEventListener('click', async function () {
+    const inst = document.getElementById('pc-institution').value.trim();
+    const ctry = document.getElementById('pc-country').value.trim();
+    const role = document.getElementById('pc-role').value.trim();
+    const err = document.getElementById('pc-error');
+    if (!inst || !ctry || !role) {
+      err.textContent = 'All three fields are needed to unlock downloads.';
+      err.style.display = 'block';
+      return;
+    }
+    this.disabled = true;
+    try {
+      const r = await fetch(API + '/v1/auth/update-profile', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authBearer, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ institution: inst, country: ctry, role: role })
+      });
+      const d = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        err.textContent = d.error || 'Could not save — please try again.';
+        err.style.display = 'block';
+        this.disabled = false;
+        return;
+      }
+      wrap.remove();
+      if (currentUser) currentUser.profile_complete = true;
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:fixed; top:80px; right:1.5rem; background:#059669; color:#fff; padding:1rem 1.5rem; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:9999; font-weight:500;';
+      toast.textContent = '✓ Profile saved — downloads unlocked.';
+      document.body.appendChild(toast);
+      setTimeout(function () { toast.remove(); }, 4000);
+    } catch (e) {
+      err.textContent = 'Network error — please try again.';
+      err.style.display = 'block';
+      this.disabled = false;
+    }
+  });
+}
 
 // ── Custom Bundle Builder ──
 let allTickers = [];

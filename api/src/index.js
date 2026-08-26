@@ -159,6 +159,7 @@ const HF_OWNED_ORIGINS = new Set([
 const MUTATION_GUARD_EXACT = new Set([
   '/v1/auth/regenerate-key',
   '/v1/auth/delete',
+  '/v1/auth/delete-code',
   '/v1/auth/update-profile',
   '/v1/auth/change-password',
   '/v1/auth/2fa/setup',
@@ -412,6 +413,11 @@ const RATE_LIMITS = {
   // Resend-verification, keyed per ACCOUNT (the request is authenticated, so the IP is the
   // wrong unit — a shared campus address would otherwise exhaust everyone's allowance).
   'api:resend': { max: 3, window: 3600 },       // 3 verification emails per hour per account
+  // Deletion-confirmation codes, keyed per ACCOUNT like 'api:resend' (authenticated request,
+  // same reasoning). The verify rule bounds guessing a 6-digit code: 5 tries per 15 minutes
+  // against a single-use code that itself expires in 15 minutes.
+  'api:delete_code': { max: 3, window: 3600 },  // 3 deletion-code emails per hour per account
+  'api:delete_verify': { max: 5, window: 900 }, // 5 deletion-code attempts per account per 15 min
   'api:download': { max: 100, window: 60 },     // 100 downloads per minute per user
   'api:general': { max: 300, window: 60 },      // 300 general API requests per minute
   'api:2fa': { max: 5, window: 600 },           // 5 TOTP guesses per ACCOUNT per 10 min.
@@ -526,6 +532,9 @@ export default {
 
       if (path === '/v1/auth/delete' && request.method === 'POST')
         return await handleDeleteAccount(request, env, cors);
+
+      if (path === '/v1/auth/delete-code' && request.method === 'POST')
+        return await handleDeleteCodeRequest(request, env, cors);
 
       if (path === '/v1/auth/update-profile' && request.method === 'POST')
         return await handleUpdateProfile(request, env, cors);
@@ -3740,6 +3749,54 @@ async function handleMyDownloadHistory(request, env, cors) {
   return jsonRes({ downloads: logs.results }, 200, cors);
 }
 
+// Deletion-confirmation code — the self-service identity proof for accounts that have no
+// usable password. handleGoogleCallback creates users with a RANDOM password placeholder
+// nobody is ever shown, so handleDeleteAccount's "Password required" was an unsatisfiable
+// demand for every Google-registered account (175 profile-incomplete + 588 completed as of
+// 2026-08-26 — Ahmed hit it himself trying to delete a second Google account). The code is
+// a proof of mailbox control, the same claim a password reset rests on, minted through the
+// same password_resets machinery with its own purpose so neither reset nor verify consumers
+// can spend it (the purpose column exists precisely to keep these credentials apart).
+async function handleDeleteCodeRequest(request, env, cors) {
+  const user = await getSessionUser(request, env);
+  if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
+  const userId = user.user_id || user.id;
+  // Keyed per ACCOUNT like 'api:resend' — the request is authenticated, and the thing worth
+  // bounding is one mailbox's mail volume, not a shared campus IP's.
+  const rl = await checkRateLimit(env, 'delc:u' + userId, 'api:delete_code');
+  if (!rl.ok) {
+    return jsonRes({ error: 'We already emailed you a deletion code recently. Check your inbox and spam folder, or try again later.' }, 429, cors);
+  }
+  // 6 digits, typed by hand. Guessing is bounded three ways: 'api:delete_verify' (5 tries per
+  // 15 min per account), single use, and a 15-minute expiry. The stored token is namespaced
+  // 'del-<uid>-<code>' because password_resets.token is UNIQUE and bare 6-digit codes would
+  // collide across users.
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+  const expires = new Date(Date.now() + 15 * 60000).toISOString();
+  await env.DB.prepare('INSERT INTO password_resets (user_id, token, expires_at, purpose) VALUES (?, ?, ?, ?)')
+    .bind(userId, 'del-' + userId + '-' + code, expires, 'delete').run();
+  const dbUser = await env.DB.prepare('SELECT email, name FROM users WHERE id = ?').bind(userId).first();
+  // NON-FATAL, matching handleResendVerification: the row is minted by the time this runs,
+  // and a throw would turn a successful mint into a 500 that invites burning another one.
+  let sent = true;
+  try {
+    await sendEmail(
+      env, dbUser.email,
+      'Confirm deletion of your HF Data Library account',
+      '<p>Hello' + (dbUser.name ? ' ' + escapeHtml(dbUser.name) : '') + ',</p>' +
+      '<p>You asked to permanently delete your HF Data Library account. Enter this code on the account page to confirm:</p>' +
+      '<p style="font-size:1.6rem; font-weight:700; letter-spacing:0.2em;">' + code + '</p>' +
+      '<p>The code expires in 15 minutes and works once. If you did not request this, you can ignore this email — nothing happens without the code.</p>',
+      FROM_EMAIL, 'HF Data Library'
+    );
+  } catch (e) { sent = false; }
+  return jsonRes({
+    message: sent ? 'Deletion code sent. Check your inbox.'
+                  : 'We could not send the email just now. Please try again in a few minutes.',
+    sent,
+  }, sent ? 200 : 502, cors);
+}
+
 async function handleDeleteAccount(request, env, cors) {
   const user = await getSessionUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
@@ -3747,14 +3804,28 @@ async function handleDeleteAccount(request, env, cors) {
   let body;
   try { body = await request.json(); } catch { return jsonRes({ error: 'Invalid JSON' }, 400, cors); }
 
-  const { password, confirm } = body;
+  const { password, confirm, code } = body;
   if (confirm !== 'DELETE') return jsonRes({ error: 'Type DELETE to confirm' }, 400, cors);
-  if (!password) return jsonRes({ error: 'Password required' }, 400, cors);
 
   const userId = user.user_id || user.id;
   const dbUser = await env.DB.prepare('SELECT password_hash, email FROM users WHERE id = ?').bind(userId).first();
-  const passwordOk = await verifyPassword(password, dbUser.password_hash);
-  if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
+  if (code !== undefined && code !== null && String(code).trim() !== '') {
+    // Emailed-code path (see handleDeleteCodeRequest). Purpose 'delete' EXACTLY — no NULL
+    // grace, same fail-closed posture as handleReset: this consumer destroys an account.
+    const rl = await checkRateLimit(env, 'delv:u' + userId, 'api:delete_verify');
+    if (!rl.ok) return jsonRes({ error: 'Too many code attempts. Request a fresh code and try again in a few minutes.' }, 429, cors);
+    const row = await env.DB.prepare(
+      "SELECT id FROM password_resets WHERE user_id = ? AND token = ? AND used = 0 AND datetime(expires_at) > datetime('now') AND purpose = 'delete'"
+    ).bind(userId, 'del-' + userId + '-' + String(code).trim()).first();
+    if (!row) return jsonRes({ error: 'That code is not valid or has expired. Request a new one from the delete dialog.' }, 401, cors);
+    await env.DB.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').bind(row.id).run();
+  } else {
+    if (!password) {
+      return jsonRes({ error: 'Enter your password — or, if you signed up with Google or ORCID and never set one, use an emailed confirmation code instead.' }, 400, cors);
+    }
+    const passwordOk = await verifyPassword(password, dbUser.password_hash);
+    if (!passwordOk) return jsonRes({ error: 'Invalid password' }, 401, cors);
+  }
 
   // Delete all user data (personal info removed; anonymized counts remain in aggregated queries)
   // Same as the accounts.* twin: everything, not just sessions.
