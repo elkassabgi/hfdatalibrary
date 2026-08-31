@@ -921,6 +921,57 @@
 
   window.HFDKeys = { get: resolveApiKey, fill: fill };
 
+  // ── Saving a file without tripping Chrome's automatic-downloads block ───────
+  // Every ordinary way a page starts a download — a programmatic <a download>
+  // click, a navigation to a Content-Disposition: attachment response, and a
+  // blob:/object-URL click alike — goes through Chrome's DownloadRequestLimiter.
+  // A visitor who once answered Block to the "download multiple files" prompt has
+  // all three refused silently, site-wide, and no script can detect or undo it.
+  // The File System Access API is the one route the limiter never sees (its gate
+  // is FILE_SYSTEM_WRITE_GUARD and it creates no DownloadItem), so it is tried
+  // first wherever it exists and the classic route stays as the fallback.
+  //
+  // MUST be called while the user's transient activation is still live —
+  // showSaveFilePicker() requires it — so call it from the click path, not after
+  // a long await. A picker that throws for any reason other than the user
+  // cancelling falls back rather than failing.
+  var HFDSave = {
+    // Ask the user where to put a file.
+    //   → a FileSystemFileHandle when the picker is available and they chose;
+    //   → 'cancelled' when they dismissed it (callers must NOT fall back — the
+    //     user said no, and starting a download anyway is the opposite of that);
+    //   → null when there is no picker, or it failed for any other reason
+    //     (most often the transient activation having expired), meaning: use the
+    //     classic route.
+    // Shared so the two callers cannot drift apart the way the two API-key
+    // injectors did.
+    pickHandle: async function (filename) {
+      if (typeof window.showSaveFilePicker !== 'function') return null;
+      try {
+        return await window.showSaveFilePicker({ suggestedName: filename });
+      } catch (e) {
+        return (e && e.name === 'AbortError') ? 'cancelled' : null;
+      }
+    },
+    // Returns 'saved' | 'cancelled' | 'fallback'.
+    blob: async function (blob, filename) {
+      var handle = await HFDSave.pickHandle(filename);
+      if (handle === 'cancelled') return 'cancelled';
+      if (handle) {
+        var w = await handle.createWritable();
+        await blob.stream().pipeTo(w);
+        return 'saved';
+      }
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      return 'fallback';
+    }
+  };
+  window.HFDSave = HFDSave;
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { fill(); });
   } else {

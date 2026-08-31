@@ -434,16 +434,26 @@ async function changePassword() {
   } catch (e) { result.innerHTML = '<p style="color:var(--red); margin:0;">Connection error</p>'; }
 }
 
-async function exportData() {
-  window.open(API + '/v1/auth/export?auth=' + sessionToken, '_blank');
-  // Actually, the endpoint uses the Authorization header. Let's fetch and blob it.
-}
-
+// There were TWO exportData declarations here. The first opened
+// `/v1/auth/export?auth=` + the session token in a new tab — an endpoint that
+// authenticates by header, so it could only ever 401, and it put the session
+// token in a URL besides. The second declaration overwrote it, so the broken one
+// never ran; it is deleted rather than left as a trap for the next reader.
 async function exportData() {
   try {
     const r = await fetch(API + '/v1/auth/export', { headers: authHeaders() });
     if (!r.ok) { alert('Failed to export'); return; }
     const blob = await r.blob();
+    // Via the shared saver: a blob download is subject to the same Chrome
+    // automatic-downloads block that the bundle builder used to trip, so anyone
+    // still carrying that Block would find "export my data" silently doing
+    // nothing. HFDSave prefers the File System Access API, which the block does
+    // not reach. site.js is loaded on this page, but degrade rather than throw
+    // if that ever stops being true.
+    if (window.HFDSave) {
+      await window.HFDSave.blob(blob, 'hfdatalibrary_my_data.json');
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

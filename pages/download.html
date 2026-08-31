@@ -1817,31 +1817,23 @@ function handleRoleChange() {
 // limiter also exists but the user has not been prompted 1,391 times, because
 // nothing on this page does that any more.
 async function saveSignedUrl(url, filename) {
-  if (typeof window.showSaveFilePicker === 'function') {
-    let handle = null;
-    try {
-      handle = await window.showSaveFilePicker({ suggestedName: filename });
-    } catch (e) {
-      // AbortError == the user cancelled the save dialog; respect that and stop.
-      // Anything else (most likely the transient activation having expired while
-      // the token request was in flight) falls through to the navigation.
-      if (e && e.name === 'AbortError') return;
-      handle = null;
-    }
-    if (handle) {
-      const fr = await fetch(url);
-      if (!fr.ok) {
-        let msg = '';
-        try { const j = await fr.json(); if (j && j.error) msg = j.error; } catch (e2) {}
-        alert(downloadFailureText(fr.status, msg) + '\n\n' + downloadFailureAdvice(fr.status, msg));
-        return;
-      }
-      const w = await handle.createWritable();
-      // Streamed, not buffered: a 1-minute parquet is tens of MB and there is no
-      // reason for any of it to sit in the tab.
-      await fr.body.pipeTo(w);
+  // window.HFDSave lives in js/site.js, which every page loads; the guard is for
+  // the case where it failed to load, not for pages that lack it.
+  const handle = window.HFDSave ? await window.HFDSave.pickHandle(filename) : null;
+  if (handle === 'cancelled') return;                 // the user said no
+  if (handle) {
+    const fr = await fetch(url);
+    if (!fr.ok) {
+      let msg = '';
+      try { const j = await fr.json(); if (j && j.error) msg = j.error; } catch (e2) {}
+      alert(downloadFailureText(fr.status, msg) + '\n\n' + downloadFailureAdvice(fr.status, msg));
       return;
     }
+    const w = await handle.createWritable();
+    // Streamed, not buffered: a 1-minute CSV can be far larger than the parquet
+    // and there is no reason for any of it to sit in the tab.
+    await fr.body.pipeTo(w);
+    return;
   }
   window.location.href = url;
 }
