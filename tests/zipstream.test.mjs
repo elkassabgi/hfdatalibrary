@@ -1,11 +1,15 @@
 /* Node test for js/zipstream.js — run with:  node tests/zipstream.test.mjs
  *
- * Writes archives with the real writer and asserts a DIFFERENT implementation
- * (Python's zipfile, invoked by the caller) can read them. This file checks the
- * structural invariants that Python's reader alone would not distinguish, and
- * drives the ZIP64 branches by lowering their thresholds — they fire for real at
- * ~4 GB, which a test cannot honestly reach, and an unexercised branch that only
- * runs in production is the failure mode this exists to prevent.
+ * Two layers, honestly separated:
+ *  1. This file's own checks prove the STRUCTURE of the bytes — signatures,
+ *     flags, counts and ZIP64 records where the format says. It drives the
+ *     ZIP64 branches by lowering their thresholds (they fire for real at ~4 GB,
+ *     unreachable in a test, and an unexercised branch that first runs in
+ *     production is the failure mode this exists to prevent).
+ *  2. The block at the bottom hands the archives to an INDEPENDENT reader —
+ *     Python's zipfile.testzip(), which re-reads every member and verifies its
+ *     CRC — and prints SKIP when no python is on PATH, never silence. Re-reading
+ *     your own bytes answers "did I write what I wrote", not "is this a ZIP".
  */
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -84,6 +88,72 @@ const MTIME = new Date(2026, 7, 31, 12, 34, 56);
   check('first local header declares version 45', buf.readUInt16LE(4) === 45);
   check('first entry size slot is the 0xFFFFFFFF sentinel', buf.readUInt32LE(18) === 0xFFFFFFFF);
   check('zip64 extra field id 0x0001 in first local header', buf.readUInt16LE(30 + 'big_0.bin'.length) === 0x0001);
+}
+
+// ── 3. bigOffset WITHOUT bigSize — the branch a real bundle actually takes ────
+// A 27 GB corpus of ~20 MB entries never trips the per-entry size threshold;
+// what goes 64-bit first is the local-header OFFSET of later entries. In that
+// case the central-directory extra field must carry ONLY the 8-byte offset
+// (no size fields), which cases 1 and 2 cannot demonstrate: case 2 lowers both
+// thresholds together, so its extras always carry sizes too.
+{
+  const Z = loadModule();
+  Z._setZip64ThresholdsForTest(1 << 30, 2048, 1 << 16);   // sizes never trip; offset at 2 KB
+  const s = sink();
+  const z = new Z.ZipWriter(s.writer);
+  for (let i = 0; i < 4; i++) {
+    await z.add('off_' + i + '.bin', new Uint8Array(Buffer.alloc(1200, i)), MTIME);
+  }
+  await z.finish();
+  const buf = s.bytes();
+  const OFF64 = path.join(os.tmpdir(), 'hfd-zip-offset64.zip');
+  fs.writeFileSync(OFF64, buf);
+  console.log('offset-only zip64 archive:');
+  // Later entries' central rows must carry the offset sentinel and a 12-byte
+  // zip64 extra (4-byte header + one 8-byte offset field) — sizes stay real.
+  const cd = buf.indexOf(Buffer.from('504b0102', 'hex'));
+  check('central directory present', cd !== -1);
+  // Find a central row whose offset slot is the sentinel.
+  let rowsWithSentinel = 0, extraLens = [];
+  let p = cd;
+  while (p !== -1) {
+    const offsetSlot = buf.readUInt32LE(p + 42);
+    if (offsetSlot === 0xFFFFFFFF) {
+      rowsWithSentinel++;
+      extraLens.push(buf.readUInt16LE(p + 30));
+    }
+    p = buf.indexOf(Buffer.from('504b0102', 'hex'), p + 4);
+  }
+  check('later entries use the offset sentinel', rowsWithSentinel >= 1);
+  check('their zip64 extra is offset-only (12 bytes)', extraLens.every(l => l === 12), JSON.stringify(extraLens));
+}
+
+// ── Independent reader: Python's zipfile, when a python is on PATH ────────────
+// testzip() re-reads every member and verifies its CRC; None means all pass.
+// Without this, the file above only answers "did I write what I wrote", not
+// "is this a ZIP" (ledger R342/R506 class). SKIP is printed, never silence.
+{
+  const { spawnSync } = await import('node:child_process');
+  const script = 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); r=z.testzip(); print("OK" if r is None else "BAD:"+str(r))';
+  const archives = [
+    path.join(os.tmpdir(), 'hfd-zip-classic.zip'),
+    path.join(os.tmpdir(), 'hfd-zip-zip64.zip'),
+    path.join(os.tmpdir(), 'hfd-zip-offset64.zip'),
+  ];
+  let exe = null;
+  for (const cand of ['python', 'py']) {
+    if (!spawnSync(cand, ['--version'], { encoding: 'utf8' }).error) { exe = cand; break; }
+  }
+  if (exe) {
+    console.log('cross-reader (python zipfile):');
+    for (const f of archives) {
+      const r = spawnSync(exe, ['-c', script, f], { encoding: 'utf8' });
+      const out = (r.stdout || '').trim();
+      check('python accepts ' + path.basename(f), r.status === 0 && out === 'OK', out || (r.stderr || '').trim());
+    }
+  } else {
+    console.log('  SKIP  python cross-reader check (no python on PATH) — archives at:\n    ' + archives.join('\n    '));
+  }
 }
 
 console.log(failures === 0 ? '\nALL PASS' : '\n' + failures + ' FAILED');

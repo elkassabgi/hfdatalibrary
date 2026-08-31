@@ -69,6 +69,22 @@
   var SLICE_BYTES = 1 << 20;        // 1 MiB per uninterrupted pass
   var YIELD_BYTES = 8 << 20;        // hand the thread back every 8 MiB
 
+  // The yield must NOT be setTimeout: a background tab clamps timers to one per
+  // second (and one per MINUTE after ~5 min hidden), which would slow the CRC to
+  // ~8 MiB/s — then ~8 MiB/min — in exactly the "keep this tab open" scenario the
+  // page tells users to run. MessageChannel posts are not throttled that way.
+  var yieldToLoop = (function () {
+    if (typeof MessageChannel === 'function') {
+      var ch = new MessageChannel();
+      var pending = null;
+      ch.port1.onmessage = function () { var r = pending; pending = null; if (r) r(); };
+      return function () {
+        return new Promise(function (resolve) { pending = resolve; ch.port2.postMessage(0); });
+      };
+    }
+    return function () { return new Promise(function (r) { setTimeout(r, 0); }); };
+  })();
+
   async function crc32Async(bytes) {
     var c = 0xFFFFFFFF;
     var i = 0, sinceYield = 0;
@@ -78,7 +94,7 @@
       sinceYield += SLICE_BYTES;
       if (sinceYield >= YIELD_BYTES && i < bytes.length) {
         sinceYield = 0;
-        await new Promise(function (r) { setTimeout(r, 0); });
+        await yieldToLoop();
       }
     }
     return (c ^ 0xFFFFFFFF) >>> 0;
@@ -263,23 +279,38 @@
    *
    * Returns null if the user cancels the save dialog.
    */
+  // Returns a sink object, or the string 'cancelled' when the user dismissed the
+  // save dialog — the caller must stop, not fall back: the user said no. Every
+  // OTHER picker failure (no API, expired activation, an SecurityError in an
+  // embedded context) falls back to the in-memory sink, same rule as
+  // HFDSave.pickHandle in js/site.js — the two used to disagree, and the
+  // disagreement turned "activation expired" into a false "you cancelled".
   async function openArchiveSink(suggestedName) {
     if (typeof global.showSaveFilePicker === 'function') {
-      var handle;
+      var handle = null;
       try {
         handle = await global.showSaveFilePicker({
           suggestedName: suggestedName,
           types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
         });
       } catch (e) {
-        return null;                                   // AbortError == user cancelled
+        if (e && e.name === 'AbortError') return 'cancelled';
+        handle = null;                                 // anything else → in-memory fallback
       }
-      var fileStream = await handle.createWritable();
-      return {
-        streaming: true,
-        writer: fileStream.getWriter(),
-        deliver: async function () { /* already on disk */ }
-      };
+      if (handle) {
+        // createWritable can throw after a successful pick (target locked,
+        // AV interference) — degrade to the in-memory fallback, never report
+        // the user's own cancellation for an error they did not cause.
+        var fileStream = null;
+        try { fileStream = await handle.createWritable(); } catch (e2) { fileStream = null; }
+        if (fileStream) {
+          return {
+            streaming: true,
+            writer: fileStream.getWriter(),
+            deliver: async function () { return 'saved'; }   // already on disk
+          };
+        }
+      }
     }
 
     var parts = [];
@@ -297,6 +328,11 @@
         a.href = url; a.download = suggestedName;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        // A blob download still rides Chrome's DownloadRequestLimiter, so a
+        // persisted Block silently eats the click and there is no event to
+        // observe. Tell the caller which route ran so it can append "if nothing
+        // appeared, check the padlock's Automatic downloads setting" honestly.
+        return 'fallback';
       }
     };
   }

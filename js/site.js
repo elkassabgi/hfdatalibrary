@@ -359,6 +359,10 @@
           if (window.EKD) {
             EKD_READY = true;
             window.EKD.init();                                          // clientId = this origin, callback /auth/callback
+            // Read by the key-filler's waitForEkd: window.EKD existing only proves the
+            // SDK script EVALUATED; getAccessToken before init() runs with clientId null
+            // and fails in a way that looks like "signed out" for the whole pageview.
+            window.__ekdInited = true;
             // D42: SDK events NEVER paint directly — they re-run the single nav owner.
             window.EKD.on('login',  function (detail) {
               // ONLY a DELIBERATE sign-in retires the "stay signed out" flag. This event ALSO
@@ -372,6 +376,11 @@
                 // durable copy outlives the sign-in and suppresses resume forever after.
               }
               safeDel('ekd_notice_demoted'); paintUserWidget();
+              // A sign-in that happens AFTER page load must also re-fill the API-key
+              // placeholders — fill() runs once at DOMContentLoaded, and without this
+              // the navbar would show the new name while every snippet still said
+              // YOUR_KEY until a reload (the exact symptom Ahmed reported).
+              if (window.HFDKeys) { try { window.HFDKeys.fill(); } catch (e) {} }
             });
             window.EKD.on('logout', function () { paintUserWidget(); });
           }
@@ -770,14 +779,19 @@
   // still undefined when this module first runs — the exact case the whole key
   // filler exists to serve. Wait for it, but only when there is a refresh token
   // to suggest the SDK is going to matter, and only for a bounded time.
+  // Waits for the SDK to be INITIALIZED, not merely evaluated: window.EKD exists
+  // the moment the script runs, but init() — which sets the clientId — runs in
+  // the navbar's onload handler, and getAccessToken in that gap fails in a way
+  // indistinguishable from "signed out" for the rest of the pageview.
   function waitForEkd(timeoutMs) {
+    function ready() { return (window.EKD && window.__ekdInited) ? window.EKD : null; }
     return new Promise(function (resolve) {
-      if (window.EKD) { resolve(window.EKD); return; }
+      if (ready()) { resolve(window.EKD); return; }
       if (!safeGet('ekd_rt')) { resolve(null); return; }
       var waited = 0, step = 150;
       var t = setInterval(function () {
         waited += step;
-        if (window.EKD) { clearInterval(t); resolve(window.EKD); }
+        if (ready()) { clearInterval(t); resolve(window.EKD); }
         else if (waited >= timeoutMs) { clearInterval(t); resolve(null); }
       }, step);
     });
@@ -913,6 +927,12 @@
       // .placeholder is also used for editable sample values such as AAPL — only
       // rewrite the ones that are actually a key placeholder.
       if (PLACEHOLDERS.indexOf(txt) === -1) continue;
+      // A .placeholder key-token in PROSE ("tokens like YOUR_API_KEY are meant to
+      // be edited") must keep saying the token — substituting a real key into a
+      // sentence explaining the convention is worse than not substituting at all.
+      // Snippets are the only place the real value belongs; .ekey is by
+      // definition a snippet marker, .placeholder qualifies only inside one.
+      if (el.classList.contains('placeholder') && !el.closest('pre, code')) continue;
       el.textContent = key;                    // textContent, never innerHTML
       el.setAttribute('data-real-key', '1');
     }
@@ -958,9 +978,15 @@
       var handle = await HFDSave.pickHandle(filename);
       if (handle === 'cancelled') return 'cancelled';
       if (handle) {
-        var w = await handle.createWritable();
-        await blob.stream().pipeTo(w);
-        return 'saved';
+        // createWritable can throw AFTER a successful pick (target locked by
+        // another program, AV interference) — that must degrade to the classic
+        // route, not surface as an unhandled rejection that saves nothing.
+        var w = null;
+        try { w = await handle.createWritable(); } catch (e) { w = null; }
+        if (w) {
+          await blob.stream().pipeTo(w);
+          return 'saved';
+        }
       }
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');

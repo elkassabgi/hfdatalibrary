@@ -1104,6 +1104,10 @@ async function checkAuth() {
   const banner = document.getElementById('free-access-banner');
   if (banner) banner.style.display = currentUser ? 'none' : '';
   if (window.__hfdPaintNav) window.__hfdPaintNav();            // repaint the site.js nav (old-form login shows the name without a reload)
+  // Re-fill any key placeholders after every auth change — cheap no-op on this
+  // page (it has no snippets), but checkAuth also runs after popup sign-ins,
+  // where a fill is exactly what pages with snippets would need.
+  if (window.HFDKeys) { try { window.HFDKeys.fill(); } catch (e) {} }
   maybePromptVerify();
   maybePromptProfile();
 }
@@ -1473,9 +1477,13 @@ async function downloadBundle(format) {
   try {
     sink = await window.HFDZip.openArchiveSink(archiveName);
   } catch (e) { sink = null; }
-  if (!sink) {                                   // user cancelled the save dialog
+  if (sink === 'cancelled') {                    // the user dismissed the save dialog
     status.textContent = 'Cancelled — nothing was downloaded.';
     bar.style.width = '0%';
+    return;
+  }
+  if (!sink) {                                   // no sink at all — should be unreachable
+    status.textContent = 'Could not open a place to save the archive. Reload the page and try again.';
     return;
   }
   const zip = new window.HFDZip.ZipWriter(sink.writer);
@@ -1515,7 +1523,17 @@ async function downloadBundle(format) {
   // The window is fixed rather than sliding, so the wait is bounded by 60 s.
   let rateWaits = 0;
   const RETRY_LIMIT = 3;
-  const retriesFor = {};
+  // Object.create(null): ticker names come from user input, and a plain {} would
+  // treat "constructor" or "toString" as already-present keys.
+  const retriesFor = Object.create(null);
+  // Set when the SINK itself failed (disk full, the picked file made read-only,
+  // the user revoking the handle) — every remaining fetch would be bytes we
+  // cannot write, so the loop must stop, not keep spending the rate budget.
+  let sinkDead = '';
+  // The auth MODE this run is in, updated from every successful getDownloadAuth.
+  // When one finally returns null we report the mode we were last in, instead of
+  // guessing — the guess sent legacy users the family recovery text.
+  let lastAuthKind = null;
   const sleep = ms => new Promise(res => setTimeout(res, ms));
 
   // Stay just under the cap rather than discovering it. The server's window is
@@ -1525,37 +1543,42 @@ async function downloadBundle(format) {
   // another tab.
   const DL_PER_MIN = 95;
   let winStart = Date.now(), winCount = 0;
+  // BOTH waits are deadline-driven (`while Date.now() < end`), never counted in
+  // sleep(1000) iterations: a hidden tab clamps timers to one per second, then to
+  // one per MINUTE after ~5 minutes — and this page tells users to leave the tab
+  // open. An iteration-counted "60 s" wait in a hidden tab would take an hour.
+  async function waitUntil(end, label) {
+    while (Date.now() < end) {
+      const left = Math.max(1, Math.ceil((end - Date.now()) / 1000));
+      status.textContent = completed + ' / ' + tickers.length + ' added (' + fmtBytes(bytesWritten) + ')' +
+        '\n' + label + ' — continuing in ' + left + 's.';
+      await sleep(Math.min(1000, end - Date.now()));
+    }
+  }
   async function paceDownloads() {
     const now = Date.now();
     if (now - winStart >= 60000) { winStart = now; winCount = 0; }
     if (winCount >= DL_PER_MIN) {
-      let left = Math.ceil((60000 - (now - winStart)) / 1000);
-      for (; left > 0; left--) {
-        status.textContent = completed + ' / ' + tickers.length + ' added (' + fmtBytes(bytesWritten) + ')' +
-          '\nPacing to the 100-downloads-per-minute limit — continuing in ' + left + 's.';
-        await sleep(1000);
-      }
+      await waitUntil(winStart + 60000, 'Pacing to the 100-downloads-per-minute limit');
       winStart = Date.now(); winCount = 0;
     }
     winCount++;
   }
   async function pauseForRateLimit(resp, ticker) {
-    // Retry-After is seconds. Clamp: a missing or absurd value must not park the
-    // user for an unbounded time, and must not spin either.
+    // Retry-After is seconds (readable because the worker exposes it via
+    // Access-Control-Expose-Headers). Clamp: a missing or absurd value must not
+    // park the user unboundedly, and must not spin either.
     let secs = parseInt(resp.headers.get('Retry-After') || '', 10);
     if (!(secs > 0) || secs > 120) secs = 60;
     rateWaits++;
-    for (let left = secs; left > 0; left--) {
-      status.textContent = completed + ' / ' + tickers.length + ' added (' + fmtBytes(bytesWritten) + ')' +
-        '\nAt the 100-downloads-per-minute limit — resuming in ' + left + 's (' + ticker + ').';
-      await sleep(1000);
-    }
+    await waitUntil(Date.now() + secs * 1000, 'At the 100-downloads-per-minute limit (' + ticker + ')');
   }
 
   for (let ti = 0; ti < tickers.length; ti++) {
     const ticker = tickers[ti];
     const a2 = await getDownloadAuth();                        // fresh per ticker (D38: 15-min edl_at)
-    if (!a2) { authDead = 'family'; break; }
+    if (!a2) { authDead = lastAuthKind || 'family'; break; }
+    lastAuthKind = a2.kind;
     try {
       const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
         headers: { 'Authorization': 'Bearer ' + a2.token }
@@ -1575,11 +1598,15 @@ async function downloadBundle(format) {
         await paceDownloads();
         const fr = await fetch(data.url);
         if (fr.status === 429) {
-          // Not a failure — the cap. Wait it out and take this ticker again. The
-          // token just spent is single-use, so the retry re-runs BOTH hops.
-          await pauseForRateLimit(fr, ticker);
+          // Not a failure — the cap. Retry budget is checked BEFORE waiting, so a
+          // ticker that has already burned its retries fails immediately instead
+          // of paying one more wait it can never use. The token just spent is
+          // single-use, so the retry re-runs BOTH hops.
           if (retriesFor[ticker] === undefined) retriesFor[ticker] = 0;
-          if (++retriesFor[ticker] <= RETRY_LIMIT) { ti--; continue; }
+          if (++retriesFor[ticker] <= RETRY_LIMIT) {
+            await pauseForRateLimit(fr, ticker);
+            ti--; continue;
+          }
           failed++;
           failures.push({ ticker: ticker, status: 429, reason: 'Still rate-limited after ' + RETRY_LIMIT + ' waits.' });
         } else if (!fr.ok) {
@@ -1596,16 +1623,28 @@ async function downloadBundle(format) {
             capHit = true;
             break;
           }
-          await zip.add(ticker + '_' + version + '_' + timeframe + '.' + format, bytes);
+          // The WRITE gets its own try: a throw here is the SINK failing (disk
+          // full, the picked file locked or revoked), not this ticker — every
+          // remaining fetch would be bytes we cannot write, so stop the loop
+          // instead of counting ticker "failures" for fifteen more minutes.
+          try {
+            await zip.add(ticker + '_' + version + '_' + timeframe + '.' + format, bytes);
+          } catch (we) {
+            sinkDead = (we && we.message) ? we.message : String(we);
+            break;
+          }
           bytesWritten += bytes.length;
         }
       } else if (r.status === 429) {
         // Hop 1 is not charged against 'api:download' today, but a 429 here would
         // mean some other limit engaged; the correct response is identical — wait
-        // and retry, never record it as a per-ticker failure.
-        await pauseForRateLimit(r, ticker);
+        // and retry, never record it as a per-ticker failure. Budget checked
+        // before the wait, same as hop 2.
         if (retriesFor[ticker] === undefined) retriesFor[ticker] = 0;
-        if (++retriesFor[ticker] <= RETRY_LIMIT) { ti--; continue; }
+        if (++retriesFor[ticker] <= RETRY_LIMIT) {
+          await pauseForRateLimit(r, ticker);
+          ti--; continue;
+        }
         failed++;
         failures.push({ ticker: ticker, status: 429, reason: 'Still rate-limited after ' + RETRY_LIMIT + ' waits.' });
       } else if (r.status === 401) {                                // D38: session died mid-bundle → stop + recover
@@ -1642,16 +1681,26 @@ async function downloadBundle(format) {
   // this would hand the user a corrupt file — worse than the failure that caused
   // the bail-out, and indistinguishable from it.
   const ok = completed - failed;
+  const filesInArchive = zip.entries.length;
   let finalizeError = '';
+  let deliverRoute = 'saved';
   try {
     await zip.finish();
-    await sink.deliver();
+    deliverRoute = (await sink.deliver()) || 'saved';
   } catch (e) {
     finalizeError = (e && e.message) ? e.message : String(e);
   }
 
+  if (sinkDead) {
+    status.textContent = 'Stopped: the archive could not be written any further (' + sinkDead + '). ' +
+      'It was closed with the ' + filesInArchive + ' file(s) already inside — a common cause is a full disk. ' +
+      'Free space (or pick a different drive) and run the rest as a new bundle.';
+    return;
+  }
   if (authDead) {
-    status.textContent = 'Sign-in ended — the archive was closed with the ' + ok + ' file(s) fetched before it stopped.';
+    status.textContent = filesInArchive === 0
+      ? 'Sign-in ended before anything could be fetched — the saved archive is EMPTY and safe to delete.'
+      : 'Sign-in ended — the archive was closed with the ' + filesInArchive + ' file(s) fetched before it stopped.';
     handleDownloadAuthDead(authDead, authDeadReason);
     return;
   }
@@ -1660,8 +1709,14 @@ async function downloadBundle(format) {
       '\nIf you are out of disk space, free some and try again with fewer tickers.';
     return;
   }
+  // On the in-memory route the final download itself can be silently refused by
+  // Chrome's automatic-downloads Block — there is no event to observe, so the
+  // honest thing is to say which route ran and what to check if nothing appeared.
+  const blockNote = deliverRoute === 'fallback'
+    ? '\nIf no download appeared: click the padlock in the address bar → Site settings → Automatic downloads → Allow, then try again.'
+    : '';
   const savedLine = 'Saved 1 archive — ' + archiveName + ' (' + fmtBytes(bytesWritten) + ', ' + ok + ' files inside).' +
-    (rateWaits > 0 ? ' Paused ' + rateWaits + '× for the per-minute download limit.' : '');
+    (rateWaits > 0 ? ' Paused ' + rateWaits + '× for the per-minute download limit.' : '') + blockNote;
   if (capHit) {
     status.textContent = savedLine + '\nStopped at this browser\'s ' + fmtBytes(BLOB_FALLBACK_CAP) +
       ' in-memory limit, so ' + (tickers.length - completed) + ' of ' + tickers.length +
@@ -1824,12 +1879,12 @@ function handleRoleChange() {
 // navigation stays as the fallback for browsers without the API — where the
 // limiter also exists but the user has not been prompted 1,391 times, because
 // nothing on this page does that any more.
-async function saveSignedUrl(url, filename) {
-  // window.HFDSave lives in js/site.js, which every page loads; the guard is for
-  // the case where it failed to load, not for pages that lack it.
-  const handle = window.HFDSave ? await window.HFDSave.pickHandle(filename) : null;
-  if (handle === 'cancelled') return;                 // the user said no
-  if (handle) {
+async function saveSignedUrl(url, filename, handle) {
+  // `handle` is picked by the CALLER inside the click's transient activation,
+  // before any network round-trip — picking it here, after the token request,
+  // is what made slow links fall back to the navigation route the Chrome Block
+  // refuses. Null handle → no picker available → classic navigation.
+  if (handle && handle !== 'cancelled') {
     const fr = await fetch(url);
     if (!fr.ok) {
       let msg = '';
@@ -1837,7 +1892,13 @@ async function saveSignedUrl(url, filename) {
       alert(downloadFailureText(fr.status, msg) + '\n\n' + downloadFailureAdvice(fr.status, msg));
       return;
     }
-    const w = await handle.createWritable();
+    // createWritable inside the try-shaped path too: a locked target file or AV
+    // interference throws here, and that is an error to SHOW, not a silent stop.
+    let w = null;
+    try { w = await handle.createWritable(); } catch (we) {
+      alert('Could not write to the chosen file (' + ((we && we.message) || we) + '). Pick a different location and try again.');
+      return;
+    }
     // Streamed, not buffered: a 1-minute CSV can be far larger than the parquet
     // and there is no reason for any of it to sit in the tab.
     await fr.body.pipeTo(w);
@@ -1847,8 +1908,14 @@ async function saveSignedUrl(url, filename) {
 }
 
 async function downloadViaToken(ticker, format) {
-  const auth = await getDownloadAuth();
-  if (!auth) {
+  // Cheap gates first, then the PICKER, then the network. The picker needs the
+  // click's transient activation (~5 s); the token round-trip can exceed that on
+  // a slow link, and a picker that throws for expired activation falls back to
+  // the navigation route — which is refused for anyone carrying the Chrome
+  // Block this function exists to bypass. getDownloadAuth for a legacy session
+  // is a localStorage read; the family branch may refresh, which is why the
+  // picker comes before it.
+  if (!currentUser) {
     var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
     alert('Please sign in to download — one free account works across every library.');
     return;
@@ -1856,13 +1923,22 @@ async function downloadViaToken(ticker, format) {
   if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('version-select').value;
   const timeframe = document.getElementById('timeframe-select').value;
+  const filename = ticker + '_' + version + '_' + timeframe + '.' + format;
+  const handle = window.HFDSave ? await window.HFDSave.pickHandle(filename) : null;
+  if (handle === 'cancelled') return;                       // the user said no
+  const auth = await getDownloadAuth();
+  if (!auth) {
+    var c2 = document.getElementById('ekd-signin-card'); if (c2) c2.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    alert('Your sign-in expired. Please sign in again to download.');
+    return;
+  }
   try {
     const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
       headers: { 'Authorization': 'Bearer ' + auth.token }
     });
     const data = await r.json();
     if (r.ok && data.url) {
-      await saveSignedUrl(data.url, ticker + '_' + version + '_' + timeframe + '.' + format);
+      await saveSignedUrl(data.url, filename, handle);
     } else if (r.status === 401) {
       handleDownloadAuthDead(auth.kind, data.error);          // D38: dead session → recover, no retry loop
     } else if (r.status === 403) {
@@ -2030,10 +2106,10 @@ async function registerUser() {
         const orcidNote = document.getElementById('reg-orcid-notice');
         if (orcidNote) orcidNote.textContent = data.orcid_notice;
       }
-      // Unmissable version of the same instruction. The worker reports
-      // email_verified: false for everyone except an admin address, so the modal
-      // is skipped for the accounts that genuinely have nothing to verify rather
-      // than being shown to everyone unconditionally.
+      // Unmissable version of the same instruction. The worker now reports
+      // email_verified: false for EVERY registrant — admins included, whose rows
+      // are also born unverified — so the guard's real job is the OLDER worker:
+      // a response without the field must not trigger the modal.
       if (data.email_verified === false) showVerifyModal(email, data.verification_email_sent);
       checkAuth();
     } else {

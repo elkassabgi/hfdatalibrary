@@ -471,6 +471,10 @@ export default {
       'Access-Control-Allow-Origin': allowedOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, Authorization',
+      // Retry-After is not on the CORS safelist, so without this line a same-site
+      // page can SEE a 429 but never read how long to wait — the bundle builder
+      // reads it to pace itself, and silently fell back to a guessed 60 s.
+      'Access-Control-Expose-Headers': 'Retry-After',
       'Access-Control-Max-Age': '86400',
       'Vary': 'Origin',
     };
@@ -3455,9 +3459,13 @@ async function handleMe(request, env, cors) {
   if (!user) return jsonRes({ error: 'Not authenticated' }, 401, cors);
 
   // §7 Family (edl_at) tokens get a SCRUBBED profile — never api_key, nor any
-  // admin/VIP/2FA/counter field. Revealing api_key requires a full first-party
-  // session (validateFamilyToken already set api_key=null; this omits it and the
-  // sensitive fields entirely so nothing leaks even if that changed).
+  // admin/VIP/2FA/counter field. validateFamilyToken already set api_key=null;
+  // this omits it and the sensitive fields entirely so nothing leaks even if
+  // that changed. ONE deliberate exception exists elsewhere: GET /v1/auth/api-key
+  // (handleOwnApiKey) discloses the caller's own key to a family token whose
+  // audience is an HF PRODUCTION origin — rate-limited and written to
+  // admin_audit_log. THIS response stays scrubbed: it is consumed by four family
+  // sites, and the exception lives on the one route built to carry it.
   if (user.isFamilyToken) {
     return jsonRes({
       id: user.user_id || user.id,
@@ -3490,8 +3498,9 @@ async function handleMe(request, env, cors) {
       // totp_enabled, google_id, orcid_profile, api_key*) and deliberately left them out —
       // they are read only by pages/account.html and pages/admin.html, both of which
       // authenticate with a legacy web session and therefore always get the branch below.
-      // api_key stays null on purpose: validateFamilyToken nulls it, and a family token must
-      // not hand out the long-lived key.
+      // api_key stays null HERE on purpose: this response feeds four family sites.
+      // The one sanctioned disclosure to a family token is GET /v1/auth/api-key
+      // (handleOwnApiKey — HF production origins only, rate-limited, audited).
       is_vip: !!user.is_vip,
       isFamilyToken: true,
     }, 200, cors);
@@ -4111,6 +4120,26 @@ async function requireHfFirstPartyUser(request, env) {
 async function handleOwnApiKey(request, env, cors) {
   const user = await requireHfFirstPartyUser(request, env);
   if (!user) return jsonRes({ error: 'Not authenticated' }, 401, cors);
+
+  // Bounded and audited, because this is the one place a short-lived family token
+  // can obtain the durable key. The rate limit turns "hammer the endpoint from a
+  // stolen 15-minute token" into a bounded event, and the audit row makes every
+  // disclosure to a family session visible in the admin panel's audit view — an
+  // escalation that leaves no trace is one nobody investigates.
+  const rlk = await checkRateLimit(env, 'apikey:u' + (user.user_id || user.id), 'api:general');
+  if (!rlk.ok) return rateLimitResponse(rlk.retryAfter, cors);
+  if (user.isFamilyToken) {
+    try {
+      await env.DB.prepare(
+        'INSERT INTO admin_audit_log (admin_user_id, admin_email, action, target_user_id, target_email, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(
+        user.user_id || user.id, user.email, 'api_key_disclosed_to_family_token',
+        user.user_id || user.id, user.email,
+        'audience=' + (user.session_audience || ''),
+        request.headers.get('cf-connecting-ip') || 'unknown'
+      ).run();
+    } catch (e) { /* the audit is important, but it must never block the user's own key */ }
+  }
   // validateFamilyToken() nulls api_key on the object it returns, so the row is
   // re-read here rather than trusted — otherwise this would answer `null` for
   // exactly the sessions it exists to serve.
