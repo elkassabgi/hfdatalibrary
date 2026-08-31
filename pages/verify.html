@@ -57,12 +57,20 @@
           '<a href="download" class="btn btn-primary" style="margin-top:1rem;">Go to Downloads</a>' +
         '</div>';
     } else {
+      // "Register again" was the old advice here, and it is a dead end: the account
+      // already exists, so re-registering can only answer "Email already registered."
+      // The right next step for an expired/used link is a FRESH link — the download
+      // page shows a resend button to any signed-in-but-unverified visitor.
       el.innerHTML =
         '<div style="background:#fef2f2; border:1px solid #fecaca; border-radius:12px; padding:2.5rem;">' +
           '<h2 style="color:#991b1b; margin-bottom:0.5rem;">Verification failed</h2>' +
-          '<p style="color:#dc2626;">' + (data.error || 'Invalid or expired link.') + '</p>' +
-          '<p style="margin-top:1rem;"><a href="download#register">Register again</a> or contact <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a></p>' +
+          '<p style="color:#dc2626;"></p>' +
+          '<p style="margin-top:1rem;">Links expire after 24 hours and work once. ' +
+          '<a href="download">Sign in on the Download page</a> and use the <strong>Resend email</strong> ' +
+          'button in the yellow banner to get a fresh link, or contact <a href="mailto:admin@hfdatalibrary.com">admin@hfdatalibrary.com</a>.</p>' +
         '</div>';
+      // textContent, never concatenated into the markup: the message is server JSON.
+      el.querySelector('p').textContent = data.error || 'Invalid or expired link.';
     }
   } catch (e) {
     el.innerHTML = '<h2 style="color:var(--red);">Connection error</h2><p>Please try again later.</p>';
