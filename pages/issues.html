@@ -11,25 +11,25 @@
   <meta property="og:description" content="Known data-quality limits of the free 1-minute OHLCV intraday US stock dataset: the March 2022 IEX source change, ~2-3% volume coverage, structural break.">
   <meta property="og:url" content="https://hfdatalibrary.com/pages/issues">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta property="og:site_name" content="HF Data Library">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Known Issues - Intraday Minute Stock Data Errata">
   <meta name="twitter:description" content="Known data-quality limits of the free 1-minute OHLCV intraday US stock dataset: the March 2022 IEX source change, ~2-3% volume coverage, structural break.">
-  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/style.css?v=20260714">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
 
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="../" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="data">Data</a></li>
@@ -38,11 +38,10 @@
       <li><a href="api">API</a></li>
       <li><a href="download">Download</a></li>
       <li><a href="code">Code</a></li>
-      <li><a href="ai-prompts">AI Tools</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
       <li><a href="cite">Cite</a></li>
       <li><a href="stats">Stats</a></li>
-      <li><a href="status">Status</a></li>
-      <li><a href="contact">Contact</a></li><li><a href="https://econdatalibrary.com">Econ Data</a></li><li><a href="https://ipdatalibrary.com">IP Data</a></li>
+      <li><a href="contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -103,36 +102,15 @@
       <li>Studies where NBBO (National Best Bid/Offer) prices are needed — IEX quotes reflect IEX's book, not the NBBO</li>
     </ul>
 
-    <p><strong>How to identify the data source:</strong> Each bar has a <code>source</code> column. Bars with <code>source="pitrading"</code> are from the consolidated tape. Bars with <code>source="iex"</code> are from IEX Exchange HIST only. Post-2022 bars not yet tagged <code>source="iex"</code> are being re-derived directly from IEX HIST this week.</p>
+    <p><strong>How to identify the data source:</strong> Each bar has a <code>source</code> column. Bars with <code>source="pitrading"</code> are from the consolidated tape. Bars with <code>source="iex"</code> are from IEX Exchange HIST only.</p>
 
     <h4>Why not use a full-tape source?</h4>
-    <p>Consolidated tape data (CTA/UTP) is owned by NYSE and Nasdaq. All providers who redistribute it (Polygon, Yahoo Finance, etc.) charge licensing fees and prohibit re-redistribution in their terms of service. IEX Exchange HIST is the only U.S. equity exchange that makes its historical data freely available and permits redistribution with attribution. This is a trade-off between coverage and accessibility. Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
+    <p>Consolidated tape data (CTA/UTP) is owned by NYSE and Nasdaq. All providers who redistribute it (Alpaca, Polygon, Yahoo Finance, etc.) charge licensing fees and prohibit re-redistribution in their terms of service. IEX Exchange HIST is the only U.S. equity exchange that makes its historical data freely available and permits redistribution with attribution. This is a trade-off between coverage and accessibility.</p>
     <p>Researchers who require full consolidated tape data for post-2022 analysis should supplement this library with institutional access to WRDS/TAQ or similar licensed sources.</p>
 
     <h4>Splice boundary (March 2022)</h4>
     <p><strong>Status:</strong> Known structural break</p>
     <p>The transition from PiTrading (consolidated tape) to IEX Exchange HIST (single exchange) at March 2022 creates a structural break in volume, trade count, and potentially in price coverage. Step 9 of the cleaning pipeline checks for artificial price jumps at this boundary, but the volume discontinuity is inherent to the source change and cannot be cleaned away.</p>
-
-    <h4>Trade corrections and cancellations (post-March 2022)</h4>
-    <p><strong>Status:</strong> Known limitation, documented 2026-08-22</p>
-    <p>Post-2022 bars are built from IEX TOPS <em>Trade Report</em> messages only. IEX
-    trade-break messages are not consumed, so a print that the exchange later busts or
-    corrects remains in the minute bar. Erroneous prints are therefore caught, if at all,
-    by the generic outlier filters in the Clean version (steps 7 and 8) rather than by a
-    corrections feed. Pre-2022 bars arrive pre-aggregated from the vendor, so any
-    corrections handling in that period is the vendor&rsquo;s and is not visible to us.
-    Researchers whose designs are sensitive to busted trades should treat both periods
-    accordingly.</p>
-
-    <h4>Extended-hours data is not included in either version</h4>
-    <p><strong>Status:</strong> Clarification, documented 2026-08-22</p>
-    <p>Neither Raw nor Clean contains pre-market or after-hours bars. Clean removes
-    out-of-session bars by rule (step 1), but the sources as ingested do not supply them
-    in the first place: measured across the full served files, 0 of 1,213,939 SOXL raw
-    bars and 0 of 2,308,352 AAPL raw bars fall outside 09:30&ndash;16:00 ET, and the
-    observed clock range is 09:30&ndash;15:59 in both. The Data Versions page previously
-    listed &ldquo;outside-hours bars&rdquo; among Raw&rsquo;s contents; that was wrong and
-    has been corrected.</p>
 
     <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
@@ -151,11 +129,9 @@
   <div class="container">
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
-  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
 
 <script src="../js/site.js"></script>

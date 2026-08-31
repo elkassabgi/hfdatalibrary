@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)</title>
-  <meta name="description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.5+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. Free TAQ/CRSP alternative.">
+  <title>Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV) - HF Data</title>
+  <meta name="description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (~1.5B bars). Raw &amp; Clean versions, 25 academic variables. Free TAQ/CRSP alternative.">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="canonical" href="https://hfdatalibrary.com/">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)">
-  <meta property="og:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.5+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
+  <meta property="og:title" content="Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV)">
+  <meta property="og:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (~1.5B bars). Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
   <meta property="og:url" content="https://hfdatalibrary.com/">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:site_name" content="HF Data Library">
@@ -21,9 +21,9 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)">
+  <meta name="twitter:title" content="Free 1-Minute Intraday Stock &amp; ETF Data (OHLCV)">
   <meta name="twitter:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present. Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
-  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
 
   <!-- Structured data: Dataset (Google Dataset Search) + Organization + WebSite + FAQPage -->
   <script type="application/ld+json">
@@ -33,9 +33,8 @@
       {
         "@type": "Dataset",
         "@id": "https://hfdatalibrary.com/#dataset",
-        "name": "HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)",
-        "alternateName": ["Free 1-Minute Intraday Stock Data (OHLCV)", "HF Data Library"],
-        "description": "Free high-frequency, intraday (1-minute) OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to the present (~1.5 billion bars). Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, a REST API, an MCP server for AI assistants, and full methodology documentation. A free, citable alternative to TAQ and CRSP for intraday equity research.",
+        "name": "HF Data Library: Free 1-Minute Intraday Stock Data (OHLCV)",
+        "description": "Free high-frequency, intraday (1-minute) OHLCV data for 1,391 U.S. stocks and ETFs, December 2002 to the present (~1.5 billion bars). Two cleaning versions (Raw, Clean), 25 pre-computed academic variables, REST API, and full methodology documentation. A free, citable alternative to TAQ and CRSP for intraday equity research.",
         "url": "https://hfdatalibrary.com/",
         "identifier": "https://doi.org/10.5281/zenodo.19501605",
         "sameAs": "https://zenodo.org/records/19501605",
@@ -117,7 +116,7 @@
         "@id": "https://hfdatalibrary.com/#org",
         "name": "HF Data Library",
         "url": "https://hfdatalibrary.com/",
-        "logo": "https://hfdatalibrary.com/assets/og-image.png",
+        "logo": "https://hfdatalibrary.com/assets/og-image.svg",
         "founder": {
           "@type": "Person",
           "name": "Ahmed Elkassabgi",
@@ -190,15 +189,7 @@
             "name": "Is there an API?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. A free REST API is available with a free key and a 100 downloads-per-minute limit, returning data in JSON, CSV, or Parquet."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Can I use it with Claude, ChatGPT, or other AI assistants?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Yes. Connect the free ElkassabgiData MCP server to Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English - it finds the series, downloads it, and cites it. The MCP guide has step-by-step setup for each client."
+              "text": "Yes. A free REST API is available with a free key and a 300 requests-per-minute limit, returning data in JSON, CSV, or Parquet."
             }
           },
           {
@@ -228,16 +219,16 @@
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/style.css?v=20260714">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <!-- ── Navigation ── -->
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="/" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="/" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="pages/data">Data</a></li>
@@ -246,11 +237,10 @@
       <li><a href="pages/api">API</a></li>
       <li><a href="pages/download">Download</a></li>
       <li><a href="pages/code">Code</a></li>
-      <li><a href="pages/ai-prompts">AI Tools</a></li>
+      <li><a href="pages/ai-prompts">AI Prompts</a></li>
       <li><a href="pages/cite">Cite</a></li>
       <li><a href="pages/stats">Stats</a></li>
-      <li><a href="pages/status">Status</a></li>
-      <li><a href="pages/contact">Contact</a></li><li><a href="https://econdatalibrary.com">Econ Data</a></li><li><a href="https://ipdatalibrary.com">IP Data</a></li>
+      <li><a href="pages/contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -258,7 +248,7 @@
 <!-- ── Hero ── -->
 <section class="hero">
   <div class="container">
-    <h1>HF Data Library: High-Frequency U.S. <span>Equity Data</span> (1-Minute OHLCV)</h1>
+    <h1>Free 1-Minute Intraday U.S. <span>Stock &amp; ETF</span> Data</h1>
     <p class="subtitle">Free, research-grade, high-frequency intraday data — 1-minute OHLCV bars for 1,391 U.S. stocks and ETFs. Documented, version-controlled, and updated <strong>daily</strong>.</p>
 
     <div class="stats-bar">
@@ -266,7 +256,7 @@
         <span class="stat-number" data-meta="tickers-short">1,391</span>
         <span class="stat-label">Tickers</span>
       </div>
-      <div class="stat-item" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:1.25rem 1rem; box-shadow:0 4px 20px rgba(0,0,0,0.3); margin-top:-1.3125rem;">
+      <div class="stat-item" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:1.25rem 1rem; box-shadow:0 4px 20px rgba(0,0,0,0.3); margin-top:-0.75rem;">
         <span class="stat-number" id="bars-counter" data-meta="bars-counter">1,551,364,273</span>
         <span class="stat-label">1-Minute Bars</span>
       </div>
@@ -284,7 +274,6 @@
       <a href="pages/download" class="btn btn-primary">Download Data</a>
       <a href="pages/docs" class="btn btn-outline">Read the Docs</a>
       <a href="pages/api" class="btn btn-outline">API Access</a>
-      <a href="pages/mcp" class="btn btn-outline">AI &amp; MCP</a>
     </div>
   </div>
 </section>
@@ -383,7 +372,7 @@ print(df.head())
 <section class="section section-alt">
   <div class="container">
     <h2 style="text-align:center; margin-bottom:2.5rem;">Multiple ways to access the data</h2>
-    <div class="grid-4">
+    <div class="grid-3">
       <div class="card">
         <div class="card-icon">&#8681;</div>
         <h3>Browser Download</h3>
@@ -393,14 +382,8 @@ print(df.head())
       <div class="card">
         <div class="card-icon">{&thinsp;}</div>
         <h3>REST API</h3>
-        <p>Programmatic access to any ticker, date range, and version. JSON, CSV, or parquet. Free API key with 100 downloads/minute. Python, R, and Stata examples provided.</p>
+        <p>Programmatic access to any ticker, date range, and version. JSON, CSV, or parquet. Free API key with 300 requests/minute. Python, R, and Stata examples provided.</p>
         <a href="pages/api" class="btn btn-primary" style="margin-top:1rem;">API Docs</a>
-      </div>
-      <div class="card">
-        <div class="card-icon">&#129302;</div>
-        <h3>AI &amp; MCP</h3>
-        <p>Connect Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English — the MCP server finds the series, downloads it, and cites it. No code required, and — unlike the paid market-data APIs — completely free.</p>
-        <a href="pages/mcp" class="btn btn-primary" style="margin-top:1rem;">MCP Guide</a>
       </div>
       <div class="card">
         <div class="card-icon">&#128230;</div>
@@ -478,13 +461,6 @@ print(df.head())
             <td>Paid</td>
           </tr>
           <tr>
-            <td><strong>AI access (MCP)</strong></td>
-            <td class="comparison-highlight"><span class="comparison-check">Free</span></td>
-            <td><span class="comparison-x">No</span></td>
-            <td>Unofficial</td>
-            <td>Paid</td>
-          </tr>
-          <tr>
             <td><strong>DOI / Citable</strong></td>
             <td class="comparison-highlight"><span class="comparison-check">Zenodo DOI</span></td>
             <td><span class="comparison-x">No</span></td>
@@ -508,8 +484,7 @@ print(df.head())
         </tbody>
       </table>
     </div>
-    <p style="text-align:center; margin-top:1.5rem; font-size:0.95rem;">Among these, the HF Data Library is the only source with its own <strong>free MCP server</strong> for AI assistants — Polygon.io's requires a paid plan, and the others don't offer one. <a href="pages/mcp">See the MCP guide →</a></p>
-    <p style="text-align:center; margin-top:1rem; font-size:0.95rem;"><a href="pages/taq-crsp-alternative">Read more: a free TAQ &amp; CRSP alternative for intraday research →</a></p>
+    <p style="text-align:center; margin-top:1.5rem; font-size:0.95rem;"><a href="pages/taq-crsp-alternative">Read more: a free TAQ &amp; CRSP alternative for intraday research →</a></p>
   </div>
 </section>
 
@@ -540,11 +515,7 @@ print(df.head())
     </div>
     <div class="faq-item" style="margin-bottom:1.5rem;">
       <h3 style="margin-bottom:0.35rem;">Is there an API?</h3>
-      <p>Yes. A free <a href="pages/api">REST API</a> is available with a free key and a 100 downloads-per-minute limit, returning data in JSON, CSV, or Parquet.</p>
-    </div>
-    <div class="faq-item" style="margin-bottom:1.5rem;">
-      <h3 style="margin-bottom:0.35rem;">Can I use it with Claude, ChatGPT, or other AI assistants?</h3>
-      <p>Yes. Connect the free <a href="pages/mcp">ElkassabgiData MCP server</a> to Claude, Cursor, Gemini, or ChatGPT and ask for data in plain English — it finds the series, downloads it, and cites it. The <a href="pages/mcp">MCP guide</a> has step-by-step setup for each client.</p>
+      <p>Yes. A free <a href="pages/api">REST API</a> is available with a free key and a 300 requests-per-minute limit, returning data in JSON, CSV, or Parquet.</p>
     </div>
     <div class="faq-item" style="margin-bottom:1.5rem;">
       <h3 style="margin-bottom:0.35rem;">Is this a free alternative to TAQ or CRSP?</h3>
@@ -554,20 +525,6 @@ print(df.head())
       <h3 style="margin-bottom:0.35rem;">How do I cite the data?</h3>
       <p>Cite the dataset by its Zenodo DOI, <strong>10.5281/zenodo.19501605</strong>. A formatted citation, BibTeX, and a CITATION.cff file are on the <a href="pages/cite">Cite page</a>.</p>
     </div>
-  </div>
-</section>
-
-<!-- ── ElkassabgiData family band ── -->
-<section class="section" style="background:linear-gradient(135deg,var(--navy) 0%,var(--navy-light) 100%);text-align:center;padding:3.5rem 0;">
-  <div class="container">
-    <a href="https://elkassabgidata.com" title="ElkassabgiData — one account, every library">
-      <img src="assets/elkassabgidata-logo.svg" alt="ElkassabgiData" width="340" height="91" style="max-width:90%;height:auto;">
-    </a>
-    <p style="color:rgba(255,255,255,.85);font-size:1.15rem;margin:1.2rem 0 .3rem;font-family:var(--font-serif);">One account. Every library.</p>
-    <p style="color:rgba(255,255,255,.55);font-size:.9rem;max-width:640px;margin:0 auto;">Your free ElkassabgiData key unlocks the whole family:
-      <strong style="color:#fff;">HF Data Library</strong> (this site) and
-      <a href="https://econdatalibrary.com" style="color:var(--gold);text-decoration:none;">Econ Data Library</a> — economic &amp; financial time series — and
-      <a href="https://ipdatalibrary.com" style="color:var(--gold);text-decoration:none;">IP Data Library</a> — patent &amp; innovation measures.</p>
   </div>
 </section>
 
@@ -595,7 +552,6 @@ print(df.head())
         <ul>
           <li><a href="pages/docs">Methodology</a></li>
           <li><a href="pages/api">API Reference</a></li>
-          <li><a href="pages/mcp">MCP Server (AI)</a></li>
           <li><a href="pages/code">Sample Code</a></li>
           <li><a href="pages/changelog">Changelog</a></li>
         </ul>
@@ -619,11 +575,9 @@ print(df.head())
     </div>
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
-  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
 
 <script src="js/site.js"></script>

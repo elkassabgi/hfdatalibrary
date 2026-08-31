@@ -10,14 +10,14 @@
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/style.css?v=20260714">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
 
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="../" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
   </div>
 </nav>
 
@@ -25,21 +25,7 @@
   <div class="container" style="max-width:400px;">
     <h2 style="text-align:center; margin-bottom:1.5rem;">Reset password</h2>
 
-    <!-- 1.1: reset-REQUEST form. Shown when there is NO ?token= — this replaces the
-         old dead "Invalid link. No reset token found." state so a bare /pages/reset
-         visit is a working "email me a link" flow. Posts to the M3-gated endpoint. -->
-    <div id="request-form" class="register-form" style="max-width:100%; display:none;">
-      <p style="font-size:0.9rem; color:var(--gray-600); margin-bottom:1rem;">This resets the password for your ElkassabgiData account &mdash; the single account used by hfdatalibrary.com, econdatalibrary.com, and all our libraries.</p>
-      <div class="form-group">
-        <label for="request-email">Email</label>
-        <input type="email" id="request-email" placeholder="you@example.com" autocomplete="email">
-      </div>
-      <button class="btn btn-primary" style="width:100%;" onclick="requestReset()">Email me a reset link</button>
-      <div id="request-result" style="margin-top:1rem; display:none;"></div>
-    </div>
-
-    <!-- completion form: shown when arriving from the emailed link (?token=…). Behavior unchanged. -->
-    <div id="reset-form" class="register-form" style="max-width:100%; display:none;">
+    <div id="reset-form" class="register-form" style="max-width:100%;">
       <div class="form-group">
         <label for="new-password">New password</label>
         <input type="password" id="new-password" placeholder="Minimum 8 characters">
@@ -57,53 +43,8 @@
 <script>
 const token = new URLSearchParams(window.location.search).get('token');
 
-// No token => reset REQUEST (previously a dead "Invalid link" page); token present
-// => the completion form arrived from the emailed link. Reveal exactly one.
-if (token) {
-  document.getElementById('reset-form').style.display = '';
-} else {
-  document.getElementById('request-form').style.display = '';
-}
-
-async function requestReset() {
-  const email = document.getElementById('request-email').value.trim();
-  const result = document.getElementById('request-result');
-  if (!email || email.indexOf('@') === -1) {
-    result.style.display = 'block';
-    result.innerHTML = '<p style="color:var(--red);">Enter your email address.</p>';
-    return;
-  }
-  // The backend returns a neutral 200 whether or not the address exists (no
-  // account enumeration), so the page shows the SAME success either way — and
-  // even on a network error, to never leak existence. [§9 D83]
-  // Neutral on existence, NOT on 429. A 429 describes the caller's own network rather than any
-  // account, so showing it leaks nothing that the constant-response rule exists to protect —
-  // and staying neutral there tells someone to watch an inbox that will stay empty.
-  let rr = null;
-  try {
-    rr = await fetch('https://api.hfdatalibrary.com/v1/auth/reset-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-  } catch (e) { /* fall through to the same neutral message */ }
-  if (rr && rr.status === 429) {
-    document.getElementById('request-form').innerHTML =
-      '<div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:1.5rem;">' +
-        '<strong style="color:#b45309;">Too many requests</strong>' +
-        '<p style="color:#92400e; margin-top:0.5rem;">Your network has requested several password resets in the last hour. ' +
-        'Please wait a little and try again. If you share an internet connection &mdash; a university or an office &mdash; ' +
-        'someone else may have used the allowance.</p>' +
-      '</div>';
-    return;
-  }
-  document.getElementById('request-form').innerHTML =
-    '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.5rem;">' +
-      '<strong style="color:#065f46;">Check your email</strong>' +
-      '<p style="color:#047857; margin-top:0.5rem;">If an account exists for that address, we&rsquo;ve emailed a password-reset link. ' +
-      'Don&rsquo;t see it within a minute? Check your spam or junk folder. ' +
-      'Once reset, click <a href="download#register">Sign in</a> &mdash; one account works across all ElkassabgiData libraries.</p>' +
-    '</div>';
+if (!token) {
+  document.getElementById('reset-form').innerHTML = '<p style="color:var(--red);">Invalid link. No reset token found.</p>';
 }
 
 async function resetPassword() {
@@ -139,15 +80,5 @@ async function resetPassword() {
 }
 </script>
 
-
-<footer class="footer">
-  <div class="container">
-    <div class="footer-bottom">
-      <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
-      <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
-    </div>
-  </div>
-</footer>
 </body>
 </html>

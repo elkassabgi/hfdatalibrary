@@ -11,19 +11,19 @@
   <meta property="og:description" content="Download free 1-minute historical OHLCV data for 1,391 US stocks &amp; ETFs (2002-present). Per-ticker or bulk Parquet &amp; CSV bundles by index &amp; sector. CC BY 4.0.">
   <meta property="og:url" content="https://hfdatalibrary.com/pages/download">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta property="og:site_name" content="HF Data Library">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Download Free 1-Minute Stock &amp; ETF Data">
   <meta name="twitter:description" content="Download free 1-minute historical OHLCV data for 1,391 US stocks &amp; ETFs (2002-present). Per-ticker or bulk Parquet &amp; CSV bundles by index &amp; sector. CC BY 4.0.">
-  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/style.css?v=20260714">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     .search-box {
@@ -70,7 +70,7 @@
 
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="../" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="data">Data</a></li>
@@ -79,11 +79,10 @@
       <li><a href="api">API</a></li>
       <li><a href="download" class="active">Download</a></li>
       <li><a href="code">Code</a></li>
-      <li><a href="ai-prompts">AI Tools</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
       <li><a href="cite">Cite</a></li>
       <li><a href="stats">Stats</a></li>
-      <li><a href="status">Status</a></li>
-      <li><a href="contact">Contact</a></li><li><a href="https://econdatalibrary.com">Econ Data</a></li><li><a href="https://ipdatalibrary.com">IP Data</a></li>
+      <li><a href="contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -448,17 +447,6 @@
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
 
-    <!-- [Phase 3.3] Family SSO sign-in card — quick popup; the register/login grid below is the
-         retained dark-launch flow (untouched). -->
-    <div id="ekd-signin-card" style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:1.5rem 1.75rem; margin-bottom:2rem;">
-      <h3 style="margin:0 0 0.4rem;">Sign in with your ElkassabgiData account</h3>
-      <p style="color:var(--gray-600); font-size:0.92rem; margin:0 0 1.1rem;">One free account works across every ElkassabgiData library. Sign in with a quick popup &mdash; same email and password.</p>
-      <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
-        <a id="ekd-signin-btn" href="#register" class="btn btn-primary">Sign in</a>
-        <a id="ekd-register-btn" href="#register" class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);">Create free account</a>
-      </div>
-    </div>
-
     <!-- Registration / Login -->
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: start;">
       <div>
@@ -558,374 +546,27 @@
   <div class="container">
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
-  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
-
-<!-- Citation-agreement gate: shown once (per version) before the first download. -->
-<div id="cite-modal" style="display:none; position:fixed; inset:0; background:rgba(11,18,32,0.6); z-index:2000; align-items:center; justify-content:center; padding:1rem;">
-  <div style="background:#fff; max-width:560px; width:100%; border-radius:12px; padding:1.75rem 1.85rem; box-shadow:0 12px 44px rgba(0,0,0,0.35);">
-    <h3 style="margin:0 0 0.75rem; color:var(--navy); font-family:var(--font-sans);">Please cite this data</h3>
-    <p style="margin:0 0 0.85rem; color:var(--gray-700); font-size:0.93rem; line-height:1.6;">
-      This dataset is <strong>free</strong> under <a href="license">CC BY&nbsp;4.0</a>. In return, you agree to
-      <strong>credit it</strong> in any publication, redistribution, or derivative work. Please cite:
-    </p>
-    <div style="background:var(--gray-50); border:1px solid var(--gray-200); border-radius:8px; padding:0.85rem 1rem; font-size:0.85rem; color:var(--gray-800); line-height:1.5; margin-bottom:1.1rem;">
-      Elkassabgi, A. (2026). <em>HF Data Library: Free 1-Minute Intraday U.S. Equity Data.</em> Zenodo. https://doi.org/10.5281/zenodo.19501605
-      <div style="margin-top:0.5rem;"><a href="cite">Full citation, BibTeX &amp; APA &rarr;</a></div>
-    </div>
-    <p style="margin:0 0 1.1rem; color:var(--gray-700); font-size:0.85rem; line-height:1.55;">Post–March 2022 bars are derived from IEX market data. Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
-    <label style="display:flex; align-items:flex-start; gap:0.55rem; font-size:0.9rem; color:var(--gray-700); margin-bottom:1.2rem; cursor:pointer;">
-      <input type="checkbox" id="cite-agree-chk" style="margin-top:0.2rem; flex:0 0 auto;">
-      <span>I agree to cite the HF Data Library — and the original data sources where noted — in any use of this data.</span>
-    </label>
-    <div style="display:flex; gap:0.6rem; justify-content:flex-end;">
-      <button id="cite-agree-cancel" style="padding:0.5rem 1.1rem; border:1px solid var(--gray-300); background:#fff; color:var(--gray-700); border-radius:6px; cursor:pointer;">Cancel</button>
-      <button id="cite-agree-ok" style="padding:0.5rem 1.3rem; border:none; background:var(--gray-300); color:#fff; border-radius:6px; cursor:not-allowed;" disabled>Agree &amp; Download</button>
-    </div>
-  </div>
-</div>
 
 <script>
 const API = 'https://api.hfdatalibrary.com';
-const ACCOUNTS_BASE = 'https://accounts.elkassabgidata.com';
-
-// [Phase 3.3] Dual-mode download auth: a VALIDATED legacy hfd_session wins (channel='web'), else the
-// EKD family token (channel='family'). Purely additive — the old register/login grid below is untouched.
-function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-function safeDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
-
-// Load the EKD SDK for family sign-in; feature-detect everywhere. onload → init + re-run checkAuth so an
-// EKD user's currentUser resolves once the SDK is ready. onerror/absence → legacy-only, page still works.
-var EKD_READY = false;
-(function loadSdk() {
-  try {
-    var s = document.createElement('script');
-    s.src = ACCOUNTS_BASE + '/sdk/ekd-sso.js';
-    s.onload = function () {
-      try {
-        if (window.EKD) {
-          EKD_READY = true;
-          window.EKD.init();                                   // clientId = this origin, callback /auth/callback
-          window.EKD.on('login',  function () { checkAuth(); });
-          window.EKD.on('logout', function () { checkAuth(); });
-        }
-      } catch (e) {}
-      checkAuth();
-    };
-    s.onerror = function () {};
-    document.head.appendChild(s);
-  } catch (e) {}
-})();
-
-// Fresh Bearer per download call (D38: edl_at is 15-min — resolve per request). Legacy-first, else family.
-async function getDownloadAuth() {
-  var legacy = safeGet('hfd_session');
-  if (legacy) return { token: legacy, kind: 'legacy' };
-  if (window.EKD) { try { var at = await window.EKD.getAccessToken(); if (at) return { token: at, kind: 'family' }; } catch (e) {} }
-  return null;
-}
-
-// D38: a download 401. family → the session is dead — do NOT loop getAccessToken; clear state + offer Sign
-// in (EKD.login mints fresh tokens with no reload — that IS recovery). legacy → purge per G-13.
-// The optional `reason` is the server's 401 body. The worker's explainAuthFailure() only inspects
-// X-API-Key / ?api_key=, and this page authenticates with `Authorization: Bearer`, so today a browser
-// 401 ALWAYS comes back as the generic "Provide your API key in the X-API-Key header" boilerplate —
-// wrong-shaped advice for someone signed in on the website, so it is suppressed. If the worker ever
-// starts explaining Bearer failures too (expired key, inactive account), that text shows up here with
-// no page change; we detect the useless generic by its X-API-Key mention rather than by status alone.
-function handleDownloadAuthDead(kind, reason) {
-  currentUser = null;
-  var specific = (reason && String(reason).indexOf('X-API-Key') === -1) ? String(reason) : '';
-  if (kind === 'family') {
-    alert((specific ? specific + '\n\n' : '') +
-      'Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
-  } else {
-    safeDel('hfd_session'); sessionToken = null;
-    alert((specific ? specific + '\n\n' : '') +
-      'Your session expired. Please sign in again to download.');
-  }
-  var el = document.getElementById('ekd-signin-card'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-// ── Why a download was refused ──────────────────────────────────────────────────────────────
-// The bundle loop used to throw the server's explanation away and print only a count, so a user
-// whose email was unverified saw "Done! 0 files downloaded. 1 failed." and had no way to learn
-// that verifying their email would fix it. These three helpers turn a refusal into (a) the reason
-// and (b) the next step, and are shared by the bundle loop and the single-file path so both say
-// the same thing.
-
-// The REASON is whatever the server actually said (the `error` field of the JSON body) — it is
-// never guessed here, so a refusal the worker adds later ("account suspended", anything) surfaces
-// correctly with no page change and no lockstep deploy. Only when the body is missing or unusable
-// (a Cloudflare edge error page, a dropped connection) do we fall back to wording keyed off the
-// HTTP status, which is always available.
-function downloadFailureText(status, reason) {
-  if (reason) return String(reason);
-  if (status === 0)   return 'Could not reach the server — network error, or the request was blocked.';
-  if (status === 401) return 'Your sign-in was not accepted.';
-  if (status === 403) return 'The server refused this download for your account.';
-  if (status === 404) return 'The server did not recognise that request.';
-  if (status === 429) return 'Too many downloads in a short time.';
-  if (status >= 500)  return 'The server hit an error (HTTP ' + status + ').';
-  return 'The download was refused (HTTP ' + status + ').';
-}
-
-// What to DO about it. Matched against the server's own wording first — that is the only signal
-// precise enough to distinguish "verify your email" from "complete your profile", both of which
-// arrive as a 403 — and falls through to a status-keyed pointer so an unfamiliar reason still ends
-// with a next step instead of a dead end. The match only picks the ADVICE; the reason shown to the
-// user is always the server's text, so nothing here has to predict which cause occurred.
-function downloadFailureAdvice(status, reason) {
-  var t = String(reason || '').toLowerCase();
-  if (t.indexOf('verif') !== -1)
-    return 'Open the verification email we sent and click the link — check your spam or junk folder if it is not in your inbox — then start the download again.';
-  if (t.indexOf('profile') !== -1 || t.indexOf('institution') !== -1)
-    return 'Add your institution, country and role at accounts.elkassabgidata.com/account, then start the download again.';
-  if (t.indexOf('expired') !== -1 && t.indexOf('key') !== -1)
-    return 'Generate a new key at hfdatalibrary.com/pages/account, then update anything that still uses the old one.';
-  if (t.indexOf('inactive') !== -1 || t.indexOf('deactivat') !== -1 || t.indexOf('suspend') !== -1)
-    return 'Email admin@hfdatalibrary.com to have the account reactivated.';
-  if (status === 401 || status === 403)
-    return 'Check your account at accounts.elkassabgidata.com/account, then try again.';
-  if (status === 400)
-    return 'Change the version, timeframe or format selected above and try again.';
-  if (status === 404)
-    return 'That symbol may not exist in the version, timeframe or format you picked — try Parquet at 1min, or choose a different timeframe.';
-  if (status === 429)
-    return 'Wait a minute, then download the remaining files.';
-  if (status === 0 || status >= 500)
-    return 'Try again in a few minutes; if it keeps failing, email admin@hfdatalibrary.com.';
-  return 'Try again, and email admin@hfdatalibrary.com if it keeps happening.';
-}
-
-// One line per DISTINCT reason, never one per file. A 400-ticker bundle that hits a single
-// account-level refusal must say it ONCE; when reasons genuinely differ we show the three biggest
-// with a couple of example tickers and roll the rest into a tail, so the summary stays readable
-// instead of becoming a wall of 400 identical sentences.
-// Returns an array of plain strings — the caller joins them into textContent (never innerHTML:
-// both the reason and the ticker are attacker-influenceable, see the escaping rule).
-// `decisive` (optional) is the ONE failure that ended the run. It exists because the on-page
-// "What to do" and the pop-up alert used to be chosen by two different rules — this function took
-// the LARGEST group, the caller's alert took the LAST failure — so two 404s followed by a stopping
-// 403 printed the 404 remedy on the page and the 403 remedy in the alert: two different next steps
-// for one click, with the page advising the problem that did NOT stop the run. The caller now
-// passes the stopping failure here and uses the same one for the alert, so they cannot disagree.
-function summariseDownloadFailures(failures, decisive) {
-  var groups = [], index = {};
-  for (var i = 0; i < failures.length; i++) {
-    var f = failures[i];
-    var text = downloadFailureText(f.status, f.reason);
-    var key = f.status + '|' + text;
-    if (!index[key]) {
-      index[key] = { text: text, status: f.status, reason: f.reason, count: 0, tickers: [] };
-      groups.push(index[key]);
-    }
-    index[key].count++;
-    if (index[key].tickers.length < 3) index[key].tickers.push(f.ticker);
-  }
-  groups.sort(function (a, b) { return b.count - a.count; });
-  var lines = [];
-  if (groups.length === 1) {
-    lines.push('Reason: ' + groups[0].text);
-  } else {
-    // Roll up only when rolling up actually saves space: "+ 1 more for 1 other reason" is the same
-    // length as the reason it hides, so four distinct reasons are all shown and five-plus are cut to
-    // the three largest.
-    var shown = groups.slice(0, groups.length <= 4 ? 4 : 3);
-    for (var j = 0; j < shown.length; j++) {
-      lines.push(shown[j].count + ' failed: ' + shown[j].text +
-        ' (e.g. ' + shown[j].tickers.join(', ') + ')');
-    }
-    var restGroups = groups.length - shown.length;
-    if (restGroups > 0) {
-      var restFiles = 0;
-      for (var k = shown.length; k < groups.length; k++) restFiles += groups[k].count;
-      lines.push('+ ' + restFiles + ' more for ' + restGroups + ' other reason' + (restGroups === 1 ? '' : 's') + '.');
-    }
-  }
-  // The advice comes from the failure that actually STOPPED the run when there was one, and from
-  // the biggest group otherwise. A stopping refusal is account- or request-level: it is the thing
-  // standing between the user and every remaining ticker, so it is the only useful next step even
-  // when a larger group of per-ticker 404s came first.
-  var advise = decisive || groups[0];
-  lines.push('What to do: ' + downloadFailureAdvice(advise.status, advise.reason));
-  return lines;
-}
-
-// §9 popup-rejection copy (D40): specific for blocked/closed, generic for everything else.
-function showSigninError(err) {
-  var m = (err && err.message) || 'exchange_failed';
-  alert(m === 'popup_blocked'
-    ? 'Your browser blocked the sign-in window. Allow popups for this site, then click Sign in again.'
-    : m === 'popup_closed'
-      ? 'The sign-in window was closed. If you just registered, check your email (and spam) to verify your address, then click Sign in.'
-      : 'Sign-in didn’t complete. Click Sign in to try again — if you just registered, one click is all it takes.');
-}
-
-// Surface a download 403 (email-unverified / profile-incomplete) VERBATIM + a next step.
-// The tail used to be fixed, so a user told "complete your profile" was also told to check their
-// spam folder — advice for a different problem, which reads as noise and hides the real fix. The
-// next step is now derived from what the server actually said, via the shared advice helper.
-function downloadForbidden(msg) {
-  alert(downloadFailureText(403, msg) +
-    '\n\n' + downloadFailureAdvice(403, msg) +
-    '\nOr sign in below with the same email and password.');
-}
-
-// Wire the sign-in card buttons — synchronous EKD.login (G-12a); the #register href is the no-JS fallback.
-function wireEkdCard() {
-  var si = document.getElementById('ekd-signin-btn');
-  var rg = document.getElementById('ekd-register-btn');
-  if (si) si.addEventListener('click', function (e) { if (!window.EKD) return; e.preventDefault(); window.EKD.login().catch(showSigninError); });
-  if (rg) rg.addEventListener('click', function (e) { if (!window.EKD) return; e.preventDefault(); window.EKD.login({ tab: 'register' }).catch(showSigninError); });
-}
-document.addEventListener('DOMContentLoaded', wireEkdCard);
-
-// Family-aware registration: a visitor arriving from another ElkassabgiData site
-// carries ?from=econ / ?from=elkassabgidata. Accounts are shared family-wide, so
-// we acknowledge where they came from and offer a one-click way back afterwards.
-var FAMILY_RETURN = (function () {
-  var p = new URLSearchParams(location.search);
-  var sites = {
-    econ: { origin: 'https://econdatalibrary.com', label: 'Econ Data Library' },
-    ip: { origin: 'https://ipdatalibrary.com', label: 'IP Data Library' },
-    elkassabgidata: { origin: 'https://elkassabgidata.com', label: 'ElkassabgiData' }
-  };
-  var site = sites[p.get('from')];
-  if (!site) return null;
-  // Optional ?return= carries the exact page the user came from, so "Back"
-  // returns them there (not just the site's homepage). Origin-validated
-  // against the family allow-list so we never send users to a foreign URL.
-  var url = site.origin;
-  var ret = p.get('return');
-  if (ret) {
-    try {
-      var u = new URL(ret);
-      var ok = ['https://econdatalibrary.com', 'https://www.econdatalibrary.com',
-                'https://ipdatalibrary.com', 'https://www.ipdatalibrary.com',
-                'https://elkassabgidata.com', 'https://www.elkassabgidata.com'];
-      if (ok.indexOf(u.origin) !== -1) url = u.href;
-    } catch (e) { /* malformed return -> fall back to the site origin */ }
-  }
-  // #sso_recheck tells the family site's sso.js to re-run its session check on
-  // arrival — the user may have just signed in HERE, after that site's
-  // once-per-session check already ran and cached "signed out".
-  if (url.indexOf('#') === -1) url += '#sso_recheck';
-  return { url: url, label: site.label };
-})();
-function familyReturnHtml() {
-  if (!FAMILY_RETURN) return '';
-  return '<p style="margin:1rem 0 0;"><a href="' + FAMILY_RETURN.url + '" ' +
-    'style="display:inline-block; background:#1a2332; color:#fff; padding:0.6rem 1.2rem; ' +
-    'border-radius:8px; text-decoration:none; font-weight:600;">&larr; Back to ' +
-    FAMILY_RETURN.label + '</a></p>';
-}
-// Drop a note above the register form when they arrive from a family site.
-document.addEventListener('DOMContentLoaded', function () {
-  if (!FAMILY_RETURN) return;
-  var h = document.getElementById('register');
-  if (!h) return;
-  var note = document.createElement('p');
-  note.style.cssText = 'background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; ' +
-    'border-radius:8px; padding:0.75rem 1rem; font-size:0.9rem; margin:0.75rem 0 1rem;';
-  note.innerHTML = 'You&rsquo;re creating your free <strong>ElkassabgiData</strong> account from the ' +
-    FAMILY_RETURN.label + ' &mdash; one account works across every library. ' +
-    '<a href="' + FAMILY_RETURN.url + '" style="font-weight:600; color:#1e40af; white-space:nowrap;">&larr; Back to ' +
-    FAMILY_RETURN.label + '</a>';
-  h.parentNode.insertBefore(note, h.nextSibling);
-  // The ticker-search content loads asynchronously above #register and keeps
-  // shifting it, so a fixed-delay scroll lands short (the form ends up far down
-  // the page). Poll until the form's absolute position stops moving — i.e. the
-  // page has settled — then scroll to it once. Hard stop after 6s.
-  var lastTop = null, stable = 0;
-  var iv = setInterval(function () {
-    var top = Math.round(h.getBoundingClientRect().top + window.pageYOffset);
-    if (top === lastTop) {
-      if (++stable >= 2) { clearInterval(iv); h.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-    } else { stable = 0; lastTop = top; }
-  }, 300);
-  setTimeout(function () { clearInterval(iv); h.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 6000);
-});
 let currentUser = null;
 let sessionToken = localStorage.getItem('hfd_session');
-
-// ── Citation-agreement gate ──────────────────────────────────────────────
-// Bump the version to re-prompt everyone if the citation terms change.
-const CITE_AGREE_VERSION = '2026-07';
-function requireCitationAgreement() {
-  return new Promise(function (resolve) {
-    if (localStorage.getItem('hfd_cite_agreed') === CITE_AGREE_VERSION) { resolve(true); return; }
-    const m = document.getElementById('cite-modal');
-    const chk = document.getElementById('cite-agree-chk');
-    const ok = document.getElementById('cite-agree-ok');
-    const cancel = document.getElementById('cite-agree-cancel');
-    chk.checked = false;
-    ok.disabled = true; ok.style.background = 'var(--gray-300)'; ok.style.cursor = 'not-allowed';
-    chk.onchange = function () {
-      ok.disabled = !chk.checked;
-      ok.style.background = chk.checked ? 'var(--blue)' : 'var(--gray-300)';
-      ok.style.cursor = chk.checked ? 'pointer' : 'not-allowed';
-    };
-    ok.onclick = function () {
-      if (!chk.checked) return;
-      localStorage.setItem('hfd_cite_agreed', CITE_AGREE_VERSION);
-      m.style.display = 'none';
-      resolve(true);
-    };
-    cancel.onclick = function () { m.style.display = 'none'; resolve(false); };
-    m.style.display = 'flex';
-  });
-}
 
 // Handle OAuth callback redirects
 let oauthPendingProvider = null;
 let oauthPendingId = null;
-// Signed proof that this browser really completed ORCID's OAuth. oauthPendingId is only
-// ever used to fill the form in; the server ignores it and trusts this token instead.
-let oauthPendingProof = null;
-
-// Hand the user a FRESH Turnstile token after any failed submit. Called from every failure
-// path in the register handler; without it a retry re-sends the spent token and fails on the
-// CAPTCHA regardless of what was actually wrong. Guarded because the widget script is
-// third-party: if it failed to load, registration must still work (the worker treats a
-// missing token as a failure only when TURNSTILE_SECRET is configured), and a reset that
-// throws must never take the error message down with it.
-function resetTurnstile() {
-  try { if (typeof turnstile !== 'undefined' && turnstile.reset) turnstile.reset(); } catch (e) {}
-}
 (function handleOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
-  // The session id arrives in the QUERY STRING, matching what the worker sends
-  // (api/src/index.js §SESSION-IN-QUERY). That is a known weakness — the id is a
-  // 30-day full-scope credential and a query string lands in the Pages access log,
-  // in browser history and in outgoing Referer headers — and the fix is to move it
-  // to the fragment, which never leaves the browser. A fragment reader was written
-  // and then taken back out: the Worker and Pages deploy as separate parallel jobs,
-  // so a page that reads only the fragment is dark for every user still being served
-  // the old worker, and a worker that sends only the fragment is dark for every user
-  // still being served the old page. Whichever half lands first, sign-in fails
-  // silently. Fix it as one coordinated change: land the fragment reader HERE with
-  // the query fallback kept, confirm it is live, then move the worker in a later push.
-  // STEP 1 of that coordinated change. This reader now accepts the callback values from the
-  // FRAGMENT as well as the query string, preferring the fragment. On its own it changes
-  // nothing observable — the worker still sends a query string, so `pick` falls through to the
-  // old source on every real sign-in today. That is exactly the point: it makes the page
-  // tolerant of BOTH shapes, so the worker can be switched afterwards without a window in
-  // which one half is dark. Step 2 is the worker change; this must be confirmed live first.
-  const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
-  const pick = (k) => hashParams.get(k) || params.get(k);
-
-  const session = pick('session');
-  const oauthSuccess = pick('oauth_success');
-  const oauthError = pick('oauth_error');
-  const oauthProvider = pick('oauth_provider');
-  const oauthId = pick('oauth_id');
-  const oauthName = pick('oauth_name');
+  const session = params.get('session');
+  const oauthSuccess = params.get('oauth_success');
+  const oauthError = params.get('oauth_error');
+  const oauthProvider = params.get('oauth_provider');
+  const oauthId = params.get('oauth_id');
+  const oauthName = params.get('oauth_name');
 
   if (oauthSuccess && session) {
     localStorage.setItem('hfd_session', session);
@@ -945,71 +586,14 @@ function resetTurnstile() {
       }, 3000);
     }, 100);
   }
-  // Google/ORCID sign-in on a 2FA-protected account. The worker no longer issues a session on
-  // those paths — it used to, skipping the second factor entirely — and instead mints a pending
-  // token and sends the browser back here to finish, exactly as the password flow does.
-  //
-  // Deferred with setTimeout, and that is load-bearing rather than style. This block is an IIFE
-  // that runs where it sits in the file, while `pendingTotpToken` is `let`-declared ~290 lines
-  // BELOW it: assigning to it from here directly is a temporal-dead-zone ReferenceError that
-  // would kill the whole handler, including the ordinary sign-in paths above it. A macrotask
-  // runs after the script body finishes, by which point the binding exists.
-  const totpRequired = pick('totp_required');
-  const totpPending = pick('pending_token');
-  if (totpRequired && totpPending) {
-    window.history.replaceState({}, document.title, window.location.pathname);
-    setTimeout(function () {
-      try {
-        pendingTotpToken = totpPending;
-        const box = document.getElementById('login-result');
-        if (!box) return;
-        box.style.display = 'block';
-        box.innerHTML =
-          '<div style="background:var(--blue-pale); border-radius:8px; padding:1rem; margin-top:0.5rem;">' +
-            '<p style="margin:0 0 0.75rem; color:var(--navy); font-weight:500;">Two-factor authentication is on for this account. Enter your 6-digit code:</p>' +
-            '<div style="display:flex; gap:0.5rem;">' +
-              '<input type="text" id="totp-code" placeholder="123456" maxlength="6" style="flex:1; padding:0.5rem; border:2px solid var(--gray-200); border-radius:6px; font-family:var(--font-mono); font-size:1.1rem; letter-spacing:0.2em; text-align:center;">' +
-              '<button class="btn btn-primary" style="padding:0.5rem 1rem;" onclick="submitTotp()">Verify</button>' +
-            '</div>' +
-            '<p id="totp-error" style="color:var(--red); margin:0.5rem 0 0; display:none;"></p>' +
-          '</div>';
-        const inp = document.getElementById('totp-code');
-        if (inp) inp.focus();
-      } catch (e) { /* never let this prompt break the rest of the page */ }
-    }, 0);
-  }
-
   if (oauthError) {
-    // "Please try again" is right only for a TRANSIENT failure. Several of these are terminal
-    // by design — retrying reproduces them exactly — and telling someone to repeat an action
-    // that cannot succeed is worse than saying nothing, because it hides the real next step.
-    // Codes needing a different action get their own sentence; anything unrecognised keeps the
-    // generic retry text.
-    const OAUTH_ERRORS = {
-      account_link_conflict:
-        'This email address is already registered to a different Google account. That happens ' +
-        'when an address has been reassigned to a new owner. For your security we will not ' +
-        'transfer the existing account automatically — please sign in with the original Google ' +
-        'account, or contact us and we will sort it out.',
-      email_unverified:
-        'We could not confirm that you own this email address: Google reports it as unverified, ' +
-        'and the account already here has never been confirmed either. Verify the address with ' +
-        'Google, or register with a password and click the confirmation link we email you.',
-      account_deactivated:
-        'This account has been deactivated. If you think that is a mistake, reply to any email ' +
-        'from us and we will take a look.',
-      no_email:
-        'Your provider did not share an email address, and we need one to create an account. ' +
-        'Check the permissions you granted, or register with a password instead.',
-    };
-    alert(OAUTH_ERRORS[oauthError] || ('Sign-in failed: ' + oauthError + '. Please try again or use email/password.'));
+    alert('Sign-in failed: ' + oauthError + '. Please try again or use email/password.');
     window.history.replaceState({}, document.title, window.location.pathname);
   }
   if (oauthProvider === 'orcid' && oauthId) {
     // User authorized via ORCID but has no account yet — pre-fill registration
     oauthPendingProvider = 'orcid';
     oauthPendingId = oauthId;
-    oauthPendingProof = pick('orcid_prefill');
     // Wait for DOM to be ready, then show banner and pre-fill
     setTimeout(() => {
       const nameField = document.getElementById('reg-name');
@@ -1025,17 +609,7 @@ function resetTurnstile() {
             '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256" fill="#a6ce39"><circle cx="128" cy="128" r="128"/><path fill="#fff" d="M86.3 186.2H70.9V79.1h15.4v107.1zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.5 178 93 148 93h-23.7v79.4zM88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z"/></svg>' +
             '<strong style="color:#065f46;">ORCID verified</strong>' +
           '</div>' +
-          '<p style="color:#047857; font-size:0.9rem; margin:0;">Your ORCID iD <code style="user-select:all;" id="orcid-banner-id"></code> will be linked to this account. You will be able to sign in with ORCID next time.</p>';
-        // oauthId comes from the query string, so it must never reach innerHTML. Until
-        // 2026-07-31 it was concatenated in directly, which made
-        //   /pages/download?oauth_provider=orcid&oauth_id=<img src=x onerror=...>
-        // a working reflected-XSS link on hfdatalibrary.com — any logged-in user who
-        // followed it ran the attacker's script on our origin, with their session in
-        // localStorage. The site CSP still allows 'unsafe-inline', so nothing caught it.
-        // textContent renders the value as text and never as markup; the shape check
-        // additionally refuses anything that is not an ORCID iD.
-        const idSlot = banner.querySelector('#orcid-banner-id');
-        if (idSlot) idSlot.textContent = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(oauthId) ? oauthId : '';
+          '<p style="color:#047857; font-size:0.9rem; margin:0;">Your ORCID iD <code style="user-select:all;">' + oauthId + '</code> will be linked to this account. You will be able to sign in with ORCID next time.</p>';
         regForm.insertBefore(banner, regForm.firstChild);
       }
       // Scroll to registration form
@@ -1045,119 +619,22 @@ function resetTurnstile() {
   }
 })();
 
-// Resolve the download identity on load / post-login: a VALIDATED legacy hfd_session wins, else the EKD
-// family session. Sets currentUser (drives the search gate + the "registration required" banner).
-// [D02/G-13] purge the legacy session ONLY on 401; KEEP it on any 5xx / network blip — a brief api.*
-// hiccup must never client-side-log-out a legacy user.
-let authBearer = null;   // the token /v1/auth/me actually accepted — reused by the profile modal
+// Fetch current user on page load (for search/download to work)
 async function checkAuth() {
-  currentUser = null;
-  authBearer = null;
-  const legacy = safeGet('hfd_session');
-  if (legacy) {
-    try {
-      const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
-      if (r.ok) { currentUser = await r.json(); authBearer = legacy; }
-      else if (r.status === 401) { safeDel('hfd_session'); sessionToken = null; }
-      // 5xx / non-401 → keep hfd_session, fall through (transient)
-    } catch (e) { /* network → keep, fall through */ }
-  }
-  if (!currentUser && window.EKD) {
-    try {
-      const at = await window.EKD.getAccessToken();
-      if (at) { const r2 = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } }); if (r2.ok) { currentUser = await r2.json(); authBearer = at; } }
-    } catch (e) {}
-  }
-  const banner = document.getElementById('free-access-banner');
-  if (banner) banner.style.display = currentUser ? 'none' : '';
-  if (window.__hfdPaintNav) window.__hfdPaintNav();            // repaint the site.js nav (old-form login shows the name without a reload)
-  maybePromptProfile();
+  if (!sessionToken) { currentUser = null; return; }
+  try {
+    const r = await fetch(API + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + sessionToken } });
+    if (r.ok) {
+      currentUser = await r.json();
+      // Hide the "Registration required" banner for logged-in users
+      const banner = document.getElementById('free-access-banner');
+      if (banner) banner.style.display = 'none';
+    } else {
+      localStorage.removeItem('hfd_session'); sessionToken = null; currentUser = null;
+    }
+  } catch (e) { currentUser = null; }
 }
 checkAuth();
-
-// ── Post-registration profile completion ──────────────────────────────────────
-// Google-registered accounts arrive with profile_complete=0 (institution/country/role
-// unset) and every download 403s until those are filled. Until 2026-08-26 nothing told
-// the user until they TRIED a download, and the advice then sent them to another page —
-// 175 of 1,299 accounts (13.5%, every one via Google) were parked in that state. Ask
-// RIGHT HERE, the moment any signed-in visit finds the profile incomplete: the hook in
-// checkAuth covers the OAuth landing, the popup sign-in and every later visit. "Later"
-// dismisses for the browser session only — downloads stay blocked by the server gate
-// either way, so the nag is strictly friendlier than the 403 it preempts.
-function maybePromptProfile() {
-  if (!currentUser || currentUser.profile_complete) return;
-  // Family-token sessions (SSO popup resume, no hfd_session) cannot Save here:
-  // /v1/auth/update-profile authenticates via getSessionUser, which structurally
-  // rejects family bearers (kind IS NULL OR 'web'). Showing them a Save that can
-  // only 401 is worse than today's 403-with-advice, which already points at
-  // accounts.elkassabgidata.com/account — the completion form that DOES accept
-  // their session. Widening the mutation endpoint's auth surface is its own
-  // review, not a rider on this one (adversarial review 2026-08-26).
-  if (currentUser.isFamilyToken) return;
-  if (sessionStorage.getItem('hfd_profile_later') === '1') return;
-  if (document.getElementById('profile-complete-overlay')) return;
-  const wrap = document.createElement('div');
-  wrap.id = 'profile-complete-overlay';
-  wrap.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,41,0.6); z-index:9998; display:flex; align-items:center; justify-content:center; padding:1rem;';
-  wrap.innerHTML =
-    '<div style="background:#fff; border-radius:12px; max-width:430px; width:100%; padding:1.75rem; box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
-      '<h3 style="margin:0 0 0.5rem; font-size:1.15rem;">One last step — tell us who you are</h3>' +
-      '<p style="margin:0 0 1rem; color:var(--gray-500); font-size:0.9rem;">Your Google sign-up is done. Downloads unlock once these three fields are filled.</p>' +
-      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Institution</label>' +
-      '<input id="pc-institution" type="text" placeholder="e.g. University of Central Arkansas" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.75rem;">' +
-      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Country</label>' +
-      '<input id="pc-country" type="text" placeholder="e.g. United States" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.75rem;">' +
-      '<label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;">Role</label>' +
-      '<input id="pc-role" type="text" placeholder="e.g. Professor, PhD student, Analyst" style="width:100%; padding:0.5rem; border:1px solid var(--gray-300); border-radius:6px; margin-bottom:0.5rem;">' +
-      '<p id="pc-error" style="display:none; color:var(--red); font-size:0.85rem; margin:0 0 0.5rem;"></p>' +
-      '<div style="display:flex; gap:0.75rem; margin-top:0.75rem;">' +
-        '<button id="pc-save" class="btn btn-primary" style="flex:1;">Save &amp; unlock downloads</button>' +
-        '<button id="pc-later" class="btn" style="background:var(--gray-100);">Later</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(wrap);
-  document.getElementById('pc-later').addEventListener('click', function () {
-    sessionStorage.setItem('hfd_profile_later', '1');
-    wrap.remove();
-  });
-  document.getElementById('pc-save').addEventListener('click', async function () {
-    const inst = document.getElementById('pc-institution').value.trim();
-    const ctry = document.getElementById('pc-country').value.trim();
-    const role = document.getElementById('pc-role').value.trim();
-    const err = document.getElementById('pc-error');
-    if (!inst || !ctry || !role) {
-      err.textContent = 'All three fields are needed to unlock downloads.';
-      err.style.display = 'block';
-      return;
-    }
-    this.disabled = true;
-    try {
-      const r = await fetch(API + '/v1/auth/update-profile', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + authBearer, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ institution: inst, country: ctry, role: role })
-      });
-      const d = await r.json().catch(function () { return {}; });
-      if (!r.ok) {
-        err.textContent = d.error || 'Could not save — please try again.';
-        err.style.display = 'block';
-        this.disabled = false;
-        return;
-      }
-      wrap.remove();
-      if (currentUser) currentUser.profile_complete = true;
-      const toast = document.createElement('div');
-      toast.style.cssText = 'position:fixed; top:80px; right:1.5rem; background:#059669; color:#fff; padding:1rem 1.5rem; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:9999; font-weight:500;';
-      toast.textContent = '✓ Profile saved — downloads unlocked.';
-      document.body.appendChild(toast);
-      setTimeout(function () { toast.remove(); }, 4000);
-    } catch (e) {
-      err.textContent = 'Network error — please try again.';
-      err.style.display = 'block';
-      this.disabled = false;
-    }
-  });
-}
 
 // ── Custom Bundle Builder ──
 let allTickers = [];
@@ -1242,14 +719,8 @@ function renderBundle() {
 }
 
 async function downloadBundle(format) {
-  const auth = await getDownloadAuth();
-  if (!auth) {
-    var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    alert('Please sign in to download — one free account works across every library.');
-    return;
-  }
+  if (!sessionToken) { alert('Please log in first.'); return; }
   if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
-  if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('bundle-version').value;
   const timeframe = document.getElementById('bundle-timeframe').value;
   const tickers = [...selectedTickers].sort();
@@ -1257,30 +728,14 @@ async function downloadBundle(format) {
   const bar = document.getElementById('bundle-bar');
   const status = document.getElementById('bundle-status');
   progress.style.display = 'block';
-  status.style.whiteSpace = 'pre-line';   // the summary below is multi-line and set via textContent
-  let completed = 0, failed = 0, authDead = null, authDeadReason = '';
-  // The loop used to keep a bare `failed` count and discard the JSON body it had already parsed,
-  // so every refusal — unverified email, incomplete profile, bad timeframe — collapsed into an
-  // unexplained number. Each failure now records the server's own words alongside its status.
-  const failures = [];
-  // Set when the refusal is account- or request-level rather than ticker-level: the same request
-  // for the next ticker would be refused identically, so firing 1,390 more doomed calls only wastes
-  // the user's time and our rate budget. We stop and explain instead.
-  let stopEarly = false;
+  let completed = 0, failed = 0;
   for (const ticker of tickers) {
-    const a2 = await getDownloadAuth();                        // fresh per ticker (D38: 15-min edl_at)
-    if (!a2) { authDead = auth.kind; break; }
     try {
       const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
-        headers: { 'Authorization': 'Bearer ' + a2.token }
+        headers: { 'Authorization': 'Bearer ' + sessionToken }
       });
-      // Parsed in its own try: a Cloudflare edge error page or a bot challenge is HTML, and the old
-      // `await r.json()` threw straight past the status check into the outer catch — turning every
-      // such failure into an anonymous one with no status to report. Now the status always survives.
-      let data = null;
-      try { data = await r.json(); } catch (e) { data = null; }
-      const serverMsg = (data && typeof data.error === 'string') ? data.error : '';
-      if (r.ok && data && data.url) {
+      const data = await r.json();
+      if (r.ok && data.url) {
         const a = document.createElement('a');
         a.href = data.url;
         a.download = ticker + '_' + version + '_' + timeframe + '.' + format;
@@ -1288,66 +743,13 @@ async function downloadBundle(format) {
         a.click();
         a.remove();
         await new Promise(resolve => setTimeout(resolve, 300));
-      } else if (r.status === 401) {                                // D38: session died mid-bundle → stop + recover
-        authDead = a2.kind; authDeadReason = serverMsg; break;
-      } else {
-        failed++;
-        failures.push({ ticker: ticker, status: r.status, reason: serverMsg });
-        // 403 depends on the ACCOUNT (email unverified, profile incomplete) and 400 on the version /
-        // format / timeframe dropdowns, which are fixed for the whole run — both are identical for
-        // every remaining ticker. 404 and 5xx are per-ticker and must not stop the bundle.
-        // The `serverMsg &&` guard is what makes this an APPLICATION-level test rather than a bare
-        // HTTP-status one. Every refusal the worker itself issues is jsonRes({ error: ... }), so it
-        // always arrives with a reason; a Cloudflare edge 403 — a WAF block or a managed challenge —
-        // is an HTML page, which is exactly why `data` is parsed defensively above and left null.
-        // Keyed off the status alone, one such network event aborted a 400-ticker bundle after the
-        // first file and told the user to go check their ACCOUNT: an account remedy for a network
-        // event, 399 tickers abandoned. With no parsed reason we do what the loop did before this
-        // feature existed — count the failure and carry on to the next ticker.
-        if (serverMsg && (r.status === 403 || r.status === 400)) stopEarly = true;
-      }
-    } catch (e) {
-      failed++;
-      failures.push({ ticker: ticker, status: 0, reason: '' });     // network error / aborted fetch
-    }
+      } else { failed++; }
+    } catch (e) { failed++; }
     completed++;
     bar.style.width = ((completed / tickers.length) * 100) + '%';
     status.textContent = completed + ' / ' + tickers.length + ' downloaded' + (failed > 0 ? ' (' + failed + ' failed)' : '');
-    if (stopEarly) break;                                          // after the progress update, so the bar reflects the attempt
   }
-  if (authDead) {
-    status.textContent = 'Sign-in ended — ' + (completed - failed) + ' downloaded before it stopped.';
-    handleDownloadAuthDead(authDead, authDeadReason);
-    return;
-  }
-  const ok = completed - failed;
-  if (failures.length === 0) {
-    status.textContent = 'Done! ' + ok + ' files downloaded.';
-    return;
-  }
-  // Note: only the token request (hop 1) is observable from here. The file itself is fetched by a
-  // browser navigation to data.url, whose status JS cannot see, so a refusal at that second hop
-  // (missing file for that timeframe, or the 100/min rate limit) still counts as a success above.
-  const head = (ok === 0)
-    ? 'No files downloaded — ' + failed + ' failed.'
-    : 'Done! ' + ok + ' files downloaded, ' + failed + ' failed.';
-  const stoppedNote = (completed < tickers.length)
-    ? ' Stopped after ' + completed + ' of ' + tickers.length + ' — the rest would be refused the same way.'
-    : '';
-  // The ONE failure that ended the run, or null if the loop went the whole way. The page and the
-  // alert both take their "what to do" from it, so a single click can no longer produce two
-  // different next steps (previously the page advised the largest failure group and the alert the
-  // last failure — with two 404s and a stopping 403 those are different remedies).
-  const stopper = stopEarly ? failures[failures.length - 1] : null;
-  const lines = summariseDownloadFailures(failures, stopper);
-  // textContent, never innerHTML: `reason` is a server-supplied string and the ticker names come
-  // from user input, so neither may ever be parsed as markup.
-  status.textContent = [head + stoppedNote].concat(lines).join('\n');
-  // A bundle that produced nothing and stopped on a fixable account/request problem needs to be
-  // impossible to miss — the inline line alone reads as if the click did nothing.
-  if (stopper && ok === 0) {
-    alert(downloadFailureText(stopper.status, stopper.reason) + '\n\n' + downloadFailureAdvice(stopper.status, stopper.reason));
-  }
+  status.textContent = 'Done! ' + (completed - failed) + ' files downloaded.' + (failed > 0 ? ' ' + failed + ' failed.' : '');
 }
 
 document.getElementById('bundle-input').addEventListener('keyup', function(e) {
@@ -1436,21 +838,11 @@ async function submitTotp() {
 async function requestReset() {
   const email = document.getElementById('login-email').value.trim();
   if (!email) { alert('Enter your email first, then click "Forgot password?"'); return; }
-  // The neutral message is right for "does this address exist" and WRONG for 429. A 429 is a
-  // fact about the caller's own network, not about any account, so surfacing it leaks nothing —
-  // while hiding it tells someone to wait for an email that is never going to arrive.
-  let rr = null;
-  try {
-    rr = await fetch(API + '/v1/auth/reset-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-  } catch (e) { /* network failure → fall through to the neutral message */ }
-  if (rr && rr.status === 429) {
-    alert('Too many password-reset requests from your network in the last hour. Please wait and try again — if you share an internet connection (a university or office), someone else may have used the allowance.');
-    return;
-  }
+  await fetch(API + '/v1/auth/reset-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
   alert('If that email is registered, a reset link has been sent.');
 }
 
@@ -1463,30 +855,18 @@ function handleRoleChange() {
 
 // ── Signed download — request a short-lived token and open it ──
 async function downloadViaToken(ticker, format) {
-  const auth = await getDownloadAuth();
-  if (!auth) {
-    var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    alert('Please sign in to download — one free account works across every library.');
-    return;
-  }
-  if (!(await requireCitationAgreement())) return;
+  if (!sessionToken) { alert('Please log in first.'); return; }
   const version = document.getElementById('version-select').value;
   const timeframe = document.getElementById('timeframe-select').value;
   try {
     const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
-      headers: { 'Authorization': 'Bearer ' + auth.token }
+      headers: { 'Authorization': 'Bearer ' + sessionToken }
     });
     const data = await r.json();
     if (r.ok && data.url) {
       window.location.href = data.url;
-    } else if (r.status === 401) {
-      handleDownloadAuthDead(auth.kind, data.error);          // D38: dead session → recover, no retry loop
-    } else if (r.status === 403) {
-      downloadForbidden(data.error);                          // verify-email / complete-profile, verbatim + next step
     } else {
-      // Was a bare `data.error` with no guidance, and nothing at all when the body had no `error`
-      // field. Same reason-plus-next-step treatment the bundle summary now gives.
-      alert(downloadFailureText(r.status, data.error) + '\n\n' + downloadFailureAdvice(r.status, data.error));
+      alert(data.error || 'Failed to get download link');
     }
   } catch (e) { alert('Connection error'); }
 }
@@ -1498,9 +878,8 @@ async function searchTicker() {
   const results = document.getElementById('search-results');
   results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Searching...</p>';
 
-  if (!currentUser) { await checkAuth(); }                      // re-resolve (EKD may have loaded since page load)
   if (!currentUser) {
-    results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Please <a href="#ekd-signin-card">sign in</a> to download data &mdash; one free account works across every library.</p>';
+    results.innerHTML = '<p style="text-align:center; color:var(--gray-500);">Please <a href="#register">register or log in</a> to download data.</p>';
     return;
   }
 
@@ -1550,17 +929,6 @@ async function registerUser() {
     if (!role) { document.getElementById('reg-result').style.display = 'block'; document.getElementById('reg-result').innerHTML = '<p style="color:var(--red); margin:0;">Please specify your role.</p>'; return; }
   }
   const newsletter = document.getElementById('reg-newsletter').checked;
-  // A Turnstile token is SINGLE-USE and expires about five minutes after it is solved, but
-  // getResponse() keeps handing back the same one. Nothing on this page ever reset the
-  // widget, so the first failed submit — a taken email, a weak password, or simply taking
-  // longer than five minutes over the form — spent the token, and every retry after that
-  // came back "CAPTCHA verification failed. Please try again." no matter what the user
-  // corrected. The green tick stayed on screen the whole time, so the message looked like a
-  // lie. The only escape was a full page reload, which throws away everything typed.
-  //
-  // This is very likely the "some error happened, then it told him he cannot retry" that
-  // started this whole review: the CAPTCHA message masked the real error, and the hourly
-  // registration cap (fixed separately) then locked the address out entirely.
   const turnstileToken = (typeof turnstile !== 'undefined') ? turnstile.getResponse() : '';
   if (!turnstileToken) {
     document.getElementById('reg-result').style.display = 'block';
@@ -1575,19 +943,12 @@ async function registerUser() {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Please fill in all fields.</p>';
     return;
   }
-  // Mirrors isSafeName() in api/src/index.js — keep the two in step. Any script is accepted;
-  // only invisible characters are refused (control codes, and the bidi overrides that make a
-  // string render in an order that does not match its bytes). ZWNJ/ZWJ are allowed, because
-  // Persian and several Indic scripts need them.
-  //
-  // This used to be a Latin-only test, and it mattered that it lived here: the server stopped
-  // refusing non-Latin values on 2026-08-02, but the form went on rejecting them in the browser,
-  // so the server change would have been invisible to every user typing 北京大学.
-  const safeField = s => !/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/.test(s)
-    && /^[\p{L}\p{M}\p{N}\s\u200C\u200D\-'.,&()/]+$/u.test(s) && /[\p{L}]/u.test(s);
-  if (!safeField(name) || !safeField(institution) || !safeField(country) || !safeField(role)) {
+  // Profile fields render publicly (stats page world map, institutions list).
+  // Reject non-Latin characters before submission — server enforces same rule.
+  const latinish = s => /^[\p{Script=Latin}\p{N}\s\-'.,&()/]+$/u.test(s) && /[\p{Script=Latin}]/u.test(s);
+  if (!latinish(name) || !latinish(institution) || !latinish(country) || !latinish(role)) {
     result.style.display = 'block';
-    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must each contain at least one letter, and cannot contain symbols or invisible characters.</p>';
+    result.innerHTML = '<p style="color:var(--red); margin:0;">Name, institution, country, and role must use English/Latin letters only (e.g. write "China", not "中国").</p>';
     return;
   }
   if (password.length < 8) {
@@ -1603,19 +964,10 @@ async function registerUser() {
     const r = await fetch(API + '/v1/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // credentials so the __Host-hfd_orcid_pf cookie the ORCID callback set on
-      // api.hfdatalibrary.com rides along. The prefill token is now HALF a
-      // credential — the server checks it against sha256(that cookie's nonce), so a
-      // token mailed to a stranger verifies nowhere. Without this the cookie is not
-      // sent (this is a cross-origin fetch, same site) and the ORCID link is dropped.
-      // api.* returns Access-Control-Allow-Credentials for hfdatalibrary.com.
-      credentials: 'include',
       body: JSON.stringify({
         name, email, password, institution, country, role, newsletter,
         turnstile_token: turnstileToken,
-        // The server ignores orcid_id (anyone can type one) and reads orcid_prefill,
-        // which is signed and only minted after a real ORCID sign-in.
-        orcid_prefill: oauthPendingProvider === 'orcid' ? oauthPendingProof : undefined
+        orcid_id: oauthPendingProvider === 'orcid' ? oauthPendingId : undefined
       })
     });
     const data = await r.json();
@@ -1626,38 +978,17 @@ async function registerUser() {
       localStorage.setItem('hfd_session', sessionToken);
       result.innerHTML =
         '<div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:1.25rem;">' +
-          '<strong style="color:#065f46;">Account created!</strong>' +
-          // The green banner at the top of this form promised "Your ORCID iD will be linked
-          // to this account. You will be able to sign in with ORCID next time." When the
-          // confirmation did not survive the time it took to fill the form, the server
-          // creates the account anyway with no ORCID iD on it and returns orcid_notice.
-          // That promise has to be corrected on this screen — the user will otherwise
-          // discover it only when "Sign in with ORCID" fails to find their account.
-          (data.orcid_notice ? '<p id="reg-orcid-notice" style="margin:0.6rem 0 0; padding:0.65rem 0.8rem; background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; color:#92400e; font-size:0.9rem;"></p>' : '') +
-          '<p style="margin:0.6rem 0 0; font-size:0.95rem;">&#128231; <strong>Verify your email to start downloading.</strong> We&rsquo;ve sent a verification link &mdash; check your inbox (and spam folder) and click it to activate your account.</p>' +
-          '<p style="margin:0.75rem 0 0; font-size:0.9rem;">Your API key (works across every ElkassabgiData library once your email is verified):</p>' +
+          '<strong style="color:#065f46;">Account created! You are now logged in.</strong>' +
+          '<p style="margin:0.5rem 0 0; font-size:0.9rem;">Your API key (for programmatic access):</p>' +
           '<code style="display:block; margin-top:0.5rem; padding:0.75rem; background:#fff; border:1px solid #d1d5db; border-radius:4px; font-size:0.95rem; word-break:break-all;">' + data.api_key + '</code>' +
-          familyReturnHtml() +
+          '<p style="margin:0.75rem 0 0; font-size:0.8rem; color:#6b7280;">You can now download data from the search above or use the API.</p>' +
         '</div>';
-      // textContent, never concatenation into innerHTML — same rule as the ORCID banner
-      // above. An older worker simply does not send this field and the paragraph is not
-      // rendered at all, so page and worker can deploy in either order.
-      if (data.orcid_notice) {
-        const orcidNote = document.getElementById('reg-orcid-notice');
-        if (orcidNote) orcidNote.textContent = data.orcid_notice;
-      }
       checkAuth();
     } else {
-      result.textContent = '';
-      const errP = document.createElement('p');
-      errP.style.cssText = 'color:var(--red); margin:0;';
-      errP.textContent = data.error || 'Registration failed.';
-      result.appendChild(errP);
-      resetTurnstile();
+      result.innerHTML = '<p style="color:var(--red); margin:0;">' + (data.error || 'Registration failed.') + '</p>';
     }
   } catch (e) {
     result.innerHTML = '<p style="color:var(--red); margin:0;">Error connecting to API. Please try again.</p>';
-    resetTurnstile();
   }
 
   btn.disabled = false;

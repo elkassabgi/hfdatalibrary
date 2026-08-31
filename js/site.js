@@ -5,73 +5,6 @@
 (function () {
   'use strict';
 
-  // ── Notice banner (auto-expires; adjust/remove MAINT_EXPIRES_UTC once the
-  //    scheduled API upgrade is complete) ──
-  var MAINT_EXPIRES_UTC = Date.UTC(2026, 7, 1, 0, 0, 0); // 2026-08-01 00:00Z
-  var MAINT_MSG = 'API access will be temporarily unavailable during a scheduled upgrade.';
-  function injectMaintenanceBanner() {
-    try {
-      if (Date.now() > MAINT_EXPIRES_UTC) return;
-      if (sessionStorage.getItem('apinotice-dismissed') === '1') return;
-      var bar = document.createElement('div');
-      bar.id = 'maint-banner';
-      bar.style.cssText = 'background:#1e3a5f;color:#fff;padding:0.6rem 2.2rem 0.6rem 1rem;' +
-        'font-size:0.88rem;line-height:1.45;text-align:center;position:relative;z-index:1500;';
-      bar.textContent = '\u2699\uFE0F ' + MAINT_MSG;
-      var x = document.createElement('button');
-      x.textContent = '\u00D7';
-      x.setAttribute('aria-label', 'Dismiss');
-      x.style.cssText = 'position:absolute;right:0.7rem;top:50%;transform:translateY(-50%);' +
-        'background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;';
-      x.onclick = function () { bar.remove(); sessionStorage.setItem('apinotice-dismissed', '1'); };
-      bar.appendChild(x);
-      document.body.insertBefore(bar, document.body.firstChild);
-    } catch (e) { /* banner must never break the page */ }
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', injectMaintenanceBanner);
-  } else {
-    injectMaintenanceBanner();
-  }
-
-  // ── Catch-up notice banner (data-driven, self-retiring) ──
-  // Shows on every page whenever the dataset's end_date has fallen more than
-  // CATCHUP_GAP_DAYS behind today (UTC). The worst NORMAL gap is ~5.5 days
-  // (Friday session, Monday holiday, viewed Wednesday before that day's run
-  // lands), so 6 fires only when sessions are genuinely missing — and the
-  // banner disappears on its own once catch-up restores currency, no code
-  // change needed to retire it. Called after metadata.json loads.
-  var CATCHUP_GAP_DAYS = 6;
-  function injectCatchupBanner(meta) {
-    try {
-      if (!meta || !meta.end_date) return;
-      if (sessionStorage.getItem('catchup-dismissed') === '1') return;
-      var gapDays = (Date.now() - Date.parse(meta.end_date + 'T00:00:00Z')) / 864e5;
-      if (!(gapDays > CATCHUP_GAP_DAYS)) return;
-      // end_date is a bare date — format it in UTC, or viewers west of UTC
-      // see the previous day (formatDate renders in the viewer's timezone).
-      var through = new Date(meta.end_date + 'T00:00:00Z').toLocaleDateString('en-US',
-        { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
-      var bar = document.createElement('div');
-      bar.id = 'catchup-banner';
-      bar.style.cssText = 'background:#fef3c7;color:#92400e;border-bottom:1px solid #f59e0b;' +
-        'padding:0.6rem 2.2rem 0.6rem 1rem;font-size:0.88rem;line-height:1.45;' +
-        'text-align:center;position:relative;z-index:1500;';
-      bar.textContent = '⚠️ Service notice: a service error interrupted daily data ' +
-        'updates. It has been fixed and the archive is catching up automatically — data ' +
-        'currently runs through ' + through + ', and the remaining sessions are being restored ' +
-        'with each catch-up run. Existing data is unaffected.';
-      var x = document.createElement('button');
-      x.textContent = '×';
-      x.setAttribute('aria-label', 'Dismiss');
-      x.style.cssText = 'position:absolute;right:0.7rem;top:50%;transform:translateY(-50%);' +
-        'background:none;border:none;color:#92400e;font-size:1.1rem;cursor:pointer;';
-      x.onclick = function () { bar.remove(); sessionStorage.setItem('catchup-dismissed', '1'); };
-      bar.appendChild(x);
-      document.body.insertBefore(bar, document.body.firstChild);
-    } catch (e) { /* banner must never break the page */ }
-  }
-
   // Determine path to data/metadata.json relative to current page
   const isSubpage = window.location.pathname.includes('/pages/');
   const basePath = isSubpage ? '../data/metadata.json' : 'data/metadata.json';
@@ -165,459 +98,89 @@
     }
   }
 
-  // ── User identity in the navbar — DUAL-MODE (legacy hfd_session ∪ EKD family SSO) ──
-  // [Phase 3.2] Purely additive. A VALIDATED legacy hfd_session ALWAYS wins (existing users keep
-  // their exact nav + in-site account link); otherwise the EKD popup provides family sign-in. ONE
-  // precedence helper owns the nav (D42) and re-runs on SDK login/logout + bfcache (D34). Nothing
-  // here removes the old login — the retained old form is the dark launch.
+  // ── User Widget in Navbar ──
   const API_BASE = 'https://api.hfdatalibrary.com';
-  const ACCOUNTS_BASE = 'https://accounts.elkassabgidata.com';
   const isSubpage2 = window.location.pathname.includes('/pages/');
   const downloadUrl = isSubpage2 ? 'download' : 'pages/download';
-  const accountUrl = isSubpage2 ? 'account' : 'pages/account';
-  const adminUrl = isSubpage2 ? 'admin' : 'pages/admin';
 
-  // G-11a: storage may throw (private mode / blocked) — never let it break the page.
-  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-  function safeDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
-  // G-11b/D56: every profile-derived value is escaped before it touches innerHTML.
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-
-  var EKD_READY = false, sdkSettled = false, paintGen = 0, paintedSignedIn = false, loggingOut = false;
-
-
-  // ── Camouflaged visitor counter ──
-  //
-  // Ahmed wanted the number present but not on display: readable if you select the text, and
-  // findable in the page source. Two mechanisms, because they are visible in different places:
-  //
-  //   1. A line in the footer coloured EXACTLY the footer background (#1a2332). Invisible while
-  //      unselected; drag across it and the selection highlight makes it readable. Deliberately
-  //      not `color:transparent` or `opacity:0` — several browsers keep transparent glyphs
-  //      transparent when selected, so the reveal would not work.
-  //   2. A comment node carrying the same numbers, so it shows in DevTools' element inspector.
-  //
-  // NOTE ON "VIEW SOURCE": view-source shows the raw HTML the server sent, and anything JS adds
-  // is NOT in it — it only appears in Inspect. The static comment baked into each page's footer
-  // at deploy time is what makes view-source work; this keeps the DOM copy current between
-  // deploys.
-  //
-  // Cost is nil: /v1/public-stats has been edge-cached for 5 minutes since 2026-08-01, so this
-  // is a cache hit for essentially every visitor and never touches D1.
-  function injectVisitorCounter() {
-    try {
-      var foot = document.querySelector('footer.footer .container') || document.querySelector('footer.footer');
-      if (!foot || document.getElementById('vc-line')) return;
-      fetch(API_BASE + '/v1/public-stats')
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) {
-          if (!d || !foot) return;
-          var v = Number(d.total_visitors || 0).toLocaleString();
-          var pv = Number(d.total_page_views || 0).toLocaleString();
-          var c = Number(d.visitor_country_count || 0).toLocaleString();
-          var txt = 'Visitors: ' + v + '  ·  Page views: ' + pv + '  ·  Countries: ' + c;
-          var el = document.createElement('p');
-          el.id = 'vc-line';
-          // Same colour as the footer background = invisible until selected.
-          el.style.cssText = 'color:#1a2332; font-size:0.72rem; margin:1.25rem 0 0; letter-spacing:0.02em; user-select:text;';
-          el.textContent = txt;
-          foot.appendChild(el);
-          foot.appendChild(document.createComment(' ' + txt + ' '));
-        })
-        .catch(function () { /* cosmetic — never disturb the page */ });
-    } catch (e) {}
-  }
-  if (document.readyState !== 'loading') injectVisitorCounter();
-  else document.addEventListener('DOMContentLoaded', injectVisitorCounter);
-
-  // ── §SILENT-RESUME — ask the IdP once whether this browser already has a family session ──
-  //
-  // Sign in on econdatalibrary, open hfdatalibrary, and you were told "Sign in". Not because
-  // the session had ended, but because nothing here could see it: ekd_session is host-only on
-  // accounts.elkassabgidata.com, and the SDK's tokens live in localStorage, which is
-  // per-origin. EKD.getAccessToken() returns null off an empty ekd_rt WITHOUT ever contacting
-  // the IdP, so hf concluded "signed out" from its own ignorance. The IdP knew; nobody asked.
-  //
-  // This asks, exactly once per browser session, by navigating to /authorize?prompt=none. A
-  // TOP-LEVEL navigation is the point: ekd_session is SameSite=Lax, which a top-level GET
-  // carries and a hidden iframe does not — and an iframe would additionally be third-party,
-  // so Safari, Firefox and Chrome-incognito would strip the cookie and report a signed-in
-  // user as signed out. The redirect costs a flash; an iframe costs correctness.
-  //
-  // The IdP answers immediately either way and comes straight back to /auth/callback, which
-  // redeems the code and returns the user to this exact URL.
-  //
-  // LOOP SAFETY, which is the thing that makes this dangerous if done casually: the callback
-  // sets ekd_silent_done BEFORE it can fail, on every path including login_required and a
-  // failed exchange. This function refuses to start when that flag is present. So a
-  // signed-out visitor pays one bounce per browser session and never a second, and a broken
-  // IdP degrades to "signed out" rather than to an infinite redirect.
-  (function silentResume() {
-    try {
-      // Only when this origin genuinely has nothing. A stored credential means the normal
-      // paths already work and must not be disturbed.
-      if (safeGet('hfd_session') || safeGet('ekd_rt')) return;
-      // An explicit logout this browser session means "stay out" — never auto-resume over it.
-      // Either store: sessionStorage is per-TAB, so a sign-out in one tab left every other
-      // tab (and any tab opened afterwards) unprotected — open the site in a new tab and the
-      // resume signed you straight back in. That only bites when server-side revocation did
-      // not land, which is exactly the case this marker exists to cover. localStorage is the
-      // durable copy; the sessionStorage read stays for tabs that predate this change.
-      if (sessionStorage.getItem('ekd_signed_out') || localStorage.getItem('ekd_signed_out')) return;
-      // Never bounce from the callback itself — that is the flow returning, not starting.
-      if (location.pathname.indexOf('/auth/callback') === 0) return;
-
-      // A "no session" ANSWER GOES STALE, so the flag has to re-arm.
-      //
-      // ekd_silent_done was a bare flag with no expiry: once a signed-out visit set it, this
-      // browser session never asked again. That produced exactly the sequence Ahmed reported on
-      // the econ side — log out of both, log back in to ONE, visit the OTHER, and be shown
-      // "Sign in" because the stale answer from before the sign-in was still on file.
-      //
-      // Re-armed on the two signals that mean the answer may have changed: arriving from a
-      // family site (the "I just signed in over there" case), and age (a bookmark, a typed
-      // address or an already-open tab carries no referrer). Bounded by a try counter so it can
-      // never run away — the clock decides responsiveness, the counter decides whether a loop is
-      // possible. Same division econ's older check settled on after the same bug.
-      // TEN minutes, not one. The time-based re-arm exists only for the case with NO referrer —
-      // a bookmark or typed address after signing in on another family site. The referrer check
-      // above handles the common case instantly and is unaffected by this number.
-      //
-      // At 60s it cost the majority of traffic real redirects: measured 2026-08-01, this library
-      // has 21,692 visitors against 603 accounts, so ~97% of arrivals are signed out and can
-      // never resume. Simulated over a 12-page, 10-minute visit, a 60s window produced THREE
-      // redirects; 10 minutes produces ONE — the unavoidable first ask. Making 97% of visitors
-      // pay three bounces to shorten a rare no-referrer case is the wrong trade.
-      var RESUME_RECHECK_MS = 10 * 60 * 1000, RESUME_MAX_TRIES = 3, TRIES_K = 'ekd_silent_tries';
-      var famRef = /^https:\/\/(www\.)?(econdatalibrary|elkassabgidata|ipdatalibrary)\.com(\/|$)/;
-      var doneAt = parseInt(sessionStorage.getItem('ekd_silent_done') || '0', 10) || 0;
-      var tries = parseInt(sessionStorage.getItem(TRIES_K) || '0', 10) || 0;
-      // '1' is what the first build wrote — treat as "checked, time unknown" and expire at once.
-      if (doneAt && tries < RESUME_MAX_TRIES &&
-          ((document.referrer && famRef.test(document.referrer)) || doneAt === 1 || (Date.now() - doneAt) > RESUME_RECHECK_MS)) {
-        sessionStorage.removeItem('ekd_silent_done');
-        doneAt = 0;
-      }
-      if (doneAt) return;
-      sessionStorage.setItem(TRIES_K, String(tries + 1));
-
-      // NEVER bounce a crawler. Googlebot renders JavaScript, so without this it would execute
-      // the redirect and be carried off hfdatalibrary.com to accounts.elkassabgidata.com on the
-      // first view of every page it visits — turning every indexable URL into a redirect to a
-      // noindex auth host. That is an SEO self-inflicted wound on a site whose whole purpose is
-      // being found, and it would be invisible in testing because a human browser is signed in
-      // or bounces once and forgets. A bot is never signed in, so it would pay it on every page,
-      // every crawl. navigator.webdriver additionally covers headless/automation.
-      var ua = (navigator.userAgent || '');
-      if (navigator.webdriver) return;
-      if (/bot|crawl|spider|slurp|bingpreview|duckduckbot|baiduspider|yandex|facebookexternalhit|embedly|quora link preview|showyoubot|outbrain|pinterest|slackbot|vkshare|w3c_validator|whatsapp|telegrambot|discordbot|googlebot|applebot|petalbot|semrush|ahrefs|mj12bot|dotbot|lighthouse|headless/i.test(ua)) return;
-      // PKCE needs SubtleCrypto, which needs a secure context. Without it, stay signed-out
-      // rather than start a flow that cannot be completed.
-      if (!(window.isSecureContext !== false && window.crypto && crypto.subtle && crypto.getRandomValues)) return;
-
-      var b64url = function (bytes) {
-        var s = '';
-        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-        return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      };
-      var rand = function () { return b64url(crypto.getRandomValues(new Uint8Array(32))); };
-
-      var verifier = rand(), state = rand();
-      crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (d) {
-        var challenge = b64url(new Uint8Array(d));
-        // Stored for the callback: the verifier it must present, the state it must match, and
-        // where to put the user back. sessionStorage (not localStorage) so a second tab cannot
-        // consume this tab's flow and the values die with the tab.
-        sessionStorage.setItem('ekd_silent_v', verifier);
-        sessionStorage.setItem('ekd_silent_s', state);
-        sessionStorage.setItem('ekd_silent_r', location.pathname + location.search + location.hash);
-
-        var redirectUri = location.origin + '/auth/callback';
-        var url = ACCOUNTS_BASE + '/authorize?response_type=code&prompt=none'
-          + '&client_id=' + encodeURIComponent(location.origin)
-          + '&redirect_uri=' + encodeURIComponent(redirectUri)
-          + '&state=' + encodeURIComponent(state)
-          + '&code_challenge=' + encodeURIComponent(challenge)
-          + '&code_challenge_method=S256';
-        // replace(), not assign(): the bounce must not become a history entry, or Back from
-        // the restored page would land the user right back in the redirect.
-        location.replace(url);
-      }).catch(function () {});
-    } catch (e) { /* storage blocked / crypto unavailable → stay signed-out, never throw */ }
-  })();
-
-  // Load the SDK for site.js's OWN use; feature-detect everywhere. onerror / a 4 s timeout still
-  // "settles" so the optimistic chip can never hang if accounts.* is blocked or slow.
-  function settleSdk() { if (!sdkSettled) { sdkSettled = true; paintUserWidget(); } }
-  (function loadSdk() {
-    try {
-      var s = document.createElement('script');
-      s.src = ACCOUNTS_BASE + '/sdk/ekd-sso.js';
-      s.onload = function () {
-        try {
-          if (window.EKD) {
-            EKD_READY = true;
-            window.EKD.init();                                          // clientId = this origin, callback /auth/callback
-            // D42: SDK events NEVER paint directly — they re-run the single nav owner.
-            window.EKD.on('login',  function (detail) {
-              // ONLY a DELIBERATE sign-in retires the "stay signed out" flag. This event ALSO
-              // fires for the automatic resume init() runs on every page load, and clearing the
-              // flag there defeated the whole suppression: sign out, reload, init() resumes,
-              // this handler wipes the flag, signed back in. The old comment here claimed it
-              // "suppresses only the AUTOMATIC path" - the code did exactly the opposite.
-              if (detail && detail.deliberate) {
-                try { sessionStorage.removeItem('ekd_signed_out'); } catch (e) {}
-                try { localStorage.removeItem('ekd_signed_out'); } catch (e) {}   // BOTH, or the
-                // durable copy outlives the sign-in and suppresses resume forever after.
-              }
-              safeDel('ekd_notice_demoted'); paintUserWidget();
-            });
-            window.EKD.on('logout', function () { paintUserWidget(); });
-          }
-        } catch (e) {}
-        settleSdk();
-      };
-      s.onerror = function () { settleSdk(); };
-      document.head.appendChild(s);
-      setTimeout(settleSdk, 4000);
-    } catch (e) { settleSdk(); }
-  })();
-
-  // Flash-fix: before the SDK settles, if a session token is stored show a neutral chip (not
-  // "Sign in") so a returning user never flashes signed-out → signed-in.
-  function optimisticPaint() {
-    var navLinks = document.querySelector('.nav-links');
-    if (!navLinks || document.getElementById('nav-user-widget')) return;
-    if (!(safeGet('hfd_session') || safeGet('ekd_rt'))) return;         // truly signed-out → paintUserWidget draws "Sign in"
-    var li = document.createElement('li');
-    li.id = 'nav-user-widget';
-    li.style.marginLeft = '0.75rem';
-    li.innerHTML = '<span style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.75rem; color:rgba(255,255,255,0.7); font-size:0.85rem;">&#8230;</span>';
-    navLinks.appendChild(li);
-  }
-
-  // The single nav owner. Precedence: validated-legacy → EKD family → signed-out.
-  async function paintUserWidget() {
-    var navLinks = document.querySelector('.nav-links');
+  async function buildUserWidget() {
+    const navLinks = document.querySelector('.nav-links');
     if (!navLinks) return;
-    var gen = ++paintGen;                                              // adversarial#1: only the newest paint renders
-    var user = null, mode = null;
 
-    // (1) VALIDATED-LEGACY wins — unchanged UX for existing users.
-    var legacy = safeGet('hfd_session');
-    if (legacy) {
-      try {
-        var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
-        if (r.ok) { user = await r.json(); mode = 'legacy'; }
-        else if (r.status === 401) { safeDel('hfd_session'); }         // D02/G-13: dead session → purge, fall through
-        // D02: any 5xx / non-401 → KEEP hfd_session, fall through to signed-out THIS pageview only (never delete).
-      } catch (e) { /* D02: network/timeout → KEEP, fall through (transient) */ }
-    }
+    const sessionToken = localStorage.getItem('hfd_session');
+    let user = null;
 
-    // (2) else EKD family session.
-    if (!user && EKD_READY && window.EKD) {
+    if (sessionToken) {
       try {
-        var at = await window.EKD.getAccessToken();
-        if (at) {
-          var r2 = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + at } });
-          if (r2.ok) { user = await r2.json(); mode = 'ekd'; }
-        }
+        const r = await fetch(API_BASE + '/v1/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + sessionToken }
+        });
+        if (r.ok) user = await r.json();
       } catch (e) {}
     }
 
-    if (gen !== paintGen) return;                                      // superseded by a newer paint
-    // EKD state still pending (SDK not settled) + a stored rt → keep the optimistic chip; the SDK
-    // settle re-runs this and resolves the real name (avoids …→"Sign in"→name).
-    if (!user && !sdkSettled && safeGet('ekd_rt')) return;
-    renderWidget(navLinks, user, mode);
-  }
-
-  function renderWidget(navLinks, user, mode) {
-    var existing = document.getElementById('nav-user-widget');
+    // Remove existing widget if any
+    const existing = document.getElementById('nav-user-widget');
     if (existing) existing.remove();
-    var li = document.createElement('li');
+
+    const li = document.createElement('li');
     li.id = 'nav-user-widget';
     li.style.marginLeft = '0.75rem';
 
     if (user) {
-      paintedSignedIn = true;
-      var vipBadge = user.is_vip
+      const vipBadge = user.is_vip
         ? '<span style="display:inline-block; background:linear-gradient(135deg,#d4a843,#f0d78c); color:#1a2332; font-size:0.6rem; font-weight:700; padding:0.1em 0.4em; border-radius:3px; margin-left:0.25rem; letter-spacing:0.05em; text-transform:uppercase;">&#9733;</span>'
         : '';
-      var firstName = esc((user.name || '').split(' ')[0]);
-      var initial = esc((user.name || 'U')[0].toUpperCase());
-      var acctHref = mode === 'ekd' ? (ACCOUNTS_BASE + '/account') : accountUrl;
-      var acctAttr = mode === 'ekd' ? ' target="_blank" rel="noopener"' : '';
-      var logoutLabel = mode === 'ekd' ? 'Log out (this site)' : 'Log out';
-      var logoutNote = mode === 'ekd'
-        ? '<div style="padding:0 1rem 0.45rem; font-size:0.72rem; color:var(--gray-500); line-height:1.35;">To log out of every library, use &ldquo;Log out everywhere&rdquo; on your account page.</div>'
-        : '';
+      const firstName = (user.name || '').split(' ')[0];
       li.style.position = 'relative';
       li.innerHTML =
-        '<div style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.6rem; color:#fff; font-size:0.85rem; cursor:pointer; white-space:nowrap;" onclick="var d=document.getElementById(\'user-dropdown\'); d.style.display = d.style.display===\'block\'?\'none\':\'block\'">' +
-          '<span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background:var(--gold); color:var(--navy); border-radius:50%; font-weight:700; font-size:0.7rem;">' + initial + '</span>' +
+        '<div style="display:inline-flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.1); border-radius:6px; padding:0.35rem 0.6rem; color:#fff; font-size:0.85rem; cursor:pointer; white-space:nowrap;" onclick="document.getElementById(\'user-dropdown\').style.display = document.getElementById(\'user-dropdown\').style.display === \'block\' ? \'none\' : \'block\'">' +
+          '<span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background:var(--gold); color:var(--navy); border-radius:50%; font-weight:700; font-size:0.7rem;">' + (user.name || 'U')[0].toUpperCase() + '</span>' +
           '<span>' + firstName + '</span>' + vipBadge +
           '<span style="font-size:0.65rem; opacity:0.7;">&#9660;</span>' +
         '</div>' +
         '<div id="user-dropdown" style="display:none; position:absolute; top:calc(100% + 0.5rem); right:0; background:#fff; border:1px solid var(--gray-200); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0.5rem 0; min-width:220px; z-index:101;">' +
           '<div style="padding:0.75rem 1rem; border-bottom:1px solid var(--gray-100);">' +
-            '<div style="font-weight:600; color:var(--navy);">' + esc(user.name) + '</div>' +
-            '<div style="font-size:0.8rem; color:var(--gray-500);">' + esc(user.email) + '</div>' +
+            '<div style="font-weight:600; color:var(--navy);">' + user.name + '</div>' +
+            '<div style="font-size:0.8rem; color:var(--gray-500);">' + user.email + '</div>' +
           '</div>' +
-          '<a href="' + acctHref + '"' + acctAttr + ' style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
+          '<a href="' + (isSubpage2 ? 'account' : 'pages/account') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">My Account</a>' +
           '<a href="' + downloadUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Downloads</a>' +
-          (user.is_admin ? '<a href="' + adminUrl + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
-          '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">' + logoutLabel + '</div>' +
-          logoutNote +
+          (user.is_admin ? '<a href="' + (isSubpage2 ? 'admin' : 'pages/admin') + '" style="display:block; padding:0.5rem 1rem; color:var(--gray-700); font-size:0.9rem;">Admin Panel</a>' : '') +
+          '<div onclick="window.__hfdLogout()" style="display:block; padding:0.5rem 1rem; color:var(--red); font-size:0.9rem; cursor:pointer; border-top:1px solid var(--gray-100); margin-top:0.25rem;">Log out</div>' +
         '</div>';
     } else {
-      // signed-out: EKD popup Sign-in (synchronous, G-12a) + a secondary "More sign-in options" link
-      // keeping Google/ORCID/password reachable until G-C is a WITNESSED live popup OAuth login.
       li.innerHTML =
-        '<span style="display:inline-flex; align-items:center; gap:0.55rem; white-space:nowrap;">' +
-          '<a id="nav-signin" href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600;">Sign in</a>' +
-        '</span>';
+        '<a href="' + downloadUrl + '#register" style="background:var(--gold); color:var(--navy); padding:0.4rem 0.875rem; border-radius:6px; font-size:0.85rem; font-weight:600; white-space:nowrap;">Sign in</a>';
     }
 
     navLinks.appendChild(li);
 
-    // logout: clears BOTH the legacy session and the EKD family session.
-    window.__hfdLogout = async function () {
-      loggingOut = true;                                               // suppress the demotion notice on INTENTIONAL logout
-      // Suppress the silent resume for the rest of this browser session.
-      //
-      // The resume fires exactly WHEN there is no local credential, and logout's whole job is
-      // to create that state — so without this, signing out bounced to the IdP on the very next
-      // page load and signed the user straight back in. The server ends the IdP session too, but
-      // that is a network call that can be slow, fail, or be raced by the reload below, and
-      // "did my logout work" must not depend on winning a race. Belt and braces, deliberately.
-      //
-      // Only a DELIBERATE sign-in clears this again — the SDK's 'login' event carries
-      // `deliberate`, and the listener below gates on it. It used to clear on ANY 'login',
-      // including the automatic resume init() runs on every page load, which is precisely the
-      // path this flag exists to suppress. Ledger R228.
-      try { sessionStorage.setItem('ekd_signed_out', '1'); } catch (e) {}
-      try { localStorage.setItem('ekd_signed_out', '1'); } catch (e) {}   // survives into OTHER tabs
-      var t = safeGet('hfd_session');
-      // LOCAL CREDENTIALS GO FIRST, before any network call. safeDel used to sit AFTER the
-      // await, so a revocation that was merely slow — or accepted and never answered — left
-      // hfd_session in localStorage AND never reached the reload below: the visitor pressed
-      // Sign out and simply stayed signed in, on a page still showing their account. Revoking
-      // server-side is best effort and follows. Ledger R228.
-      safeDel('hfd_session');
-      var revocations = [];
+    // Expose logout
+    window.__hfdLogout = async function() {
+      const t = localStorage.getItem('hfd_session');
       if (t) {
-        try {
-          revocations.push(fetch(API_BASE + '/v1/auth/logout', {
-            method: 'POST', headers: { 'Authorization': 'Bearer ' + t }
-          }).catch(function () {}));
-        } catch (e) {}
+        try { await fetch(API_BASE + '/v1/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } }); } catch (e) {}
       }
-      if (window.EKD) {
-        try { revocations.push(Promise.resolve(window.EKD.logout()).catch(function () {})); } catch (e) {}
-      }
-      // Bounded wait, matching econ's account page. Give the server a moment to hear about it,
-      // but never let a hung connection strand the visitor on a signed-in view whose credentials
-      // this function has already deleted.
-      try {
-        await Promise.race([
-          Promise.all(revocations),
-          new Promise(function (r) { setTimeout(r, 2500); })
-        ]);
-      } catch (e) {}
+      localStorage.removeItem('hfd_session');
       window.location.reload();
     };
 
-    if (user) {
-      if (mode === 'legacy') maybeShowTransitionNotice();             // D87 one-time upgrade notice
-    } else if (paintedSignedIn && !loggingOut) {
-      paintedSignedIn = false;
-      showDemotionNotice();                                            // D36 one-time NEUTRAL "session ended" notice
-    }
-
-    // signed-out Sign-in click → popup (synchronous G-12a); rejection copy per §9/D40.
-    if (!user) {
-      var btn = document.getElementById('nav-signin');
-      if (btn && EKD_READY && window.EKD) {
-        btn.addEventListener('click', function (e) {
-          e.preventDefault();
-          window.EKD.login().catch(function (err) { showSigninError(err); });
-        });
-      }
-    }
-
-    // VIP site-wide banner (unchanged behavior).
+    // VIP site-wide banner
     if (user && user.is_vip) {
-      if (!document.getElementById('vip-banner')) {
-        var banner = document.createElement('div');
+      const existingBanner = document.getElementById('vip-banner');
+      if (!existingBanner) {
+        const banner = document.createElement('div');
         banner.id = 'vip-banner';
         banner.style.cssText = 'background:linear-gradient(90deg,#1a2332 0%,#2a3a5a 50%,#1a2332 100%); color:#d4a843; padding:0.4rem 0; text-align:center; font-size:0.8rem; font-weight:500; letter-spacing:0.05em; border-bottom:1px solid #d4a843;';
         banner.innerHTML = '&#9733; VIP MEMBER &#9733; &nbsp;&nbsp; You have access to premium features and priority support.';
-        var navbar = document.querySelector('.navbar');
+        const navbar = document.querySelector('.navbar');
         if (navbar) navbar.parentNode.insertBefore(banner, navbar.nextSibling);
       }
-    } else {
-      var vb = document.getElementById('vip-banner'); if (vb) vb.remove();
     }
   }
 
-  // ── §9 notices (exact copy pack) ──
-  function showSigninError(err) {
-    var m = (err && err.message) || 'exchange_failed';
-    var msg = (m === 'popup_blocked')
-      ? 'Your browser blocked the sign-in window. Allow popups for this site, then click Sign in again.'
-      : (m === 'popup_closed')
-        ? 'The sign-in window was closed. If you just registered, check your email (and spam) to verify your address, then click Sign in.'
-        : 'Sign-in didn’t complete. Click Sign in to try again — if you just registered, one click is all it takes.';
-    showToast(msg);
-  }
-  function showDemotionNotice() {
-    var last = safeGet('ekd_notice_demoted');
-    if (last && (Date.now() - Number(last)) < 7 * 864e5) return;       // 7-day suppression (D36)
-    safeSet('ekd_notice_demoted', String(Date.now()));
-    showToast('Your sign-in for this site expired or was ended — click Sign in to reconnect (same email and password).');
-  }
-  function maybeShowTransitionNotice() {
-    if (safeGet('ekd_notice_transition') === '1') return;
-    if (document.getElementById('ekd-transition-banner')) return;
-    try {
-      var bar = document.createElement('div');
-      bar.id = 'ekd-transition-banner';
-      bar.style.cssText = 'background:#243b53; color:#e8eef6; padding:0.6rem 2.4rem 0.6rem 1rem; font-size:0.84rem; line-height:1.5; text-align:center; position:relative; z-index:1400;';
-      bar.innerHTML = 'Sign-in has been upgraded &mdash; one ElkassabgiData account now works across all our libraries. You&rsquo;re still signed in; nothing changes today. Next time, use the <strong>Sign in</strong> button (a quick popup) &mdash; same email and password.';
-      var x = document.createElement('button');
-      x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
-      x.style.cssText = 'position:absolute; right:0.7rem; top:50%; transform:translateY(-50%); background:none; border:none; color:#e8eef6; font-size:1.15rem; cursor:pointer;';
-      x.onclick = function () { bar.remove(); safeSet('ekd_notice_transition', '1'); };
-      bar.appendChild(x);
-      document.body.insertBefore(bar, document.body.firstChild);
-    } catch (e) {}
-  }
-  function showToast(text) {
-    try {
-      var t = document.createElement('div');
-      t.setAttribute('role', 'status');
-      t.style.cssText = 'position:fixed; top:80px; right:1.5rem; max-width:340px; background:#1e3a5f; color:#fff; padding:0.85rem 2.3rem 0.85rem 1rem; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:9999; font-size:0.86rem; line-height:1.45;';
-      t.textContent = text;
-      var x = document.createElement('button');
-      x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
-      x.style.cssText = 'position:absolute; right:0.6rem; top:0.45rem; background:none; border:none; color:#fff; font-size:1.1rem; cursor:pointer;';
-      x.onclick = function () { t.remove(); };
-      t.appendChild(x);
-      document.body.appendChild(t);
-      setTimeout(function () { if (t.parentNode) { t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 400); } }, 8000);
-    } catch (e) {}
-  }
-
-  // Let same-page login flows (e.g. download.html's old email/password form) repaint the nav WITHOUT
-  // a reload — they call checkAuth() after setting hfd_session, which then invokes this.
-  window.__hfdPaintNav = paintUserWidget;
-
-  // Initial paint: optimistic chip (sync, flash-fix) → real state (async) → bfcache re-run (D34/S21).
-  optimisticPaint();
-  paintUserWidget();
-  window.addEventListener('pageshow', function (e) { if (e.persisted) paintUserWidget(); });
+  buildUserWidget();
 
   // Populate all elements with data-meta attribute
   function populateData(meta) {
@@ -706,7 +269,6 @@
       buildStatusBar(meta);
       populateData(meta);
       buildUpdateNotice(meta);
-      injectCatchupBanner(meta);
     })
     .catch(function (err) {
       console.warn('Could not load metadata.json:', err);

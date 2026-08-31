@@ -10,12 +10,6 @@ both `raw` and `clean` versions across eight timeframes.
 pip install hfdatalibrary          # add pyarrow for parquet: pip install hfdatalibrary[parquet]
 ```
 
-Or straight from the repository, for the unreleased `main`:
-
-```bash
-pip install "git+https://github.com/elkassabgi/hfdatalibrary.git#subdirectory=clients/python"
-```
-
 ## Authenticate
 
 Get a free API key at <https://hfdatalibrary.com/pages/account>, then:

@@ -11,19 +11,19 @@
   <meta property="og:description" content="Usage statistics for the HF Data Library: registered users, most-downloaded tickers, and institutions using free 1-minute intraday US stock &amp; ETF data.">
   <meta property="og:url" content="https://hfdatalibrary.com/pages/stats">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta property="og:site_name" content="HF Data Library">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="HF Data Library Usage Stats - Free 1-Min Stock Data">
   <meta name="twitter:description" content="Usage statistics for the HF Data Library: registered users, most-downloaded tickers, and institutions using free 1-minute intraday US stock &amp; ETF data.">
-  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/style.css?v=20260714">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
   <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
   <style>
     .big-stat { text-align:center; padding:1.5rem; }
@@ -63,7 +63,7 @@
 
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="../" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="data">Data</a></li>
@@ -72,9 +72,9 @@
       <li><a href="api">API</a></li>
       <li><a href="download">Download</a></li>
       <li><a href="code">Code</a></li>
-      <li><a href="ai-prompts">AI Tools</a></li>
-      <li><a href="cite">Cite</a></li><li><a href="stats" class="active">Stats</a></li>
-      <li><a href="status">Status</a></li><li><a href="contact">Contact</a></li><li><a href="https://econdatalibrary.com">Econ Data</a></li><li><a href="https://ipdatalibrary.com">IP Data</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
+      <li><a href="stats" class="active">Stats</a></li>
+      <li><a href="contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -165,7 +165,6 @@
   <div class="container">
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
@@ -381,7 +380,7 @@ async function loadStats() {
       'University of Toronto': 'utoronto.ca',
       'National University of Singapore': 'nus.edu.sg',
       'Peking University': 'pku.edu.cn',
-      'Tsinghua University': 'www.tsinghua.edu.cn',
+      'Tsinghua University': 'tsinghua.edu.cn',
       'University of Hong Kong': 'hku.hk',
       'ETH Zurich': 'ethz.ch',
       'University of Texas at Austin': 'utexas.edu',
@@ -413,62 +412,25 @@ async function loadStats() {
       'IIITG': 'iiitg.ac.in',
       'Amazon': 'amazon.com',
       'NVIDIA': 'nvidia.com',
-      'MBBANK': 'www.mbbank.com.vn',
-      // added 2026-07-08: verified favicons for currently-registered institutions
-      // that were falling through to the (now-removed) .edu-guess fallback and
-      // therefore showing a WRONG or missing icon (e.g. "Heidelberg University"
-      // guessed heidelberg.edu = Heidelberg, Ohio — the wrong school).
-      'Heidelberg University': 'uni-heidelberg.de',
-      'Hanyang': 'hanyang.ac.kr',
-      'National Chengchi University': 'www.nccu.edu.tw',
-      'Abertay': 'abertay.ac.uk',
-      'CMU': 'cmu.edu',
-      // added 2026-08-12: verified favicons for newly-registered institutions
-      'Abertay University': 'abertay.ac.uk',
-      'Rensselaer Polytechnic Institute': 'rpi.edu',
-      'University of Leeds': 'leeds.ac.uk',
-      'University of Calgary': 'ucalgary.ca',
-      'University of Windsor': 'uwindsor.ca',
-      'Edhec Business School': 'edhec.edu',
-      'Brigham Young University': 'byu.edu',
-      'Beihang University': 'buaa.edu.cn',
-      'Babson College': 'babson.edu',
-      'Tennessee Tech': 'tntech.edu',
-      'Arcadia High School': 'ausd.net',
-      'IBM': 'ibm.com',
+      'MBBANK': 'mbbank.com.vn',
     };
 
-    // Only show an icon we can VERIFY: an explicit, checked entry in INST_DOMAINS.
-    // The old code guessed "<name>.edu" for anything unmapped, which showed the
-    // WRONG school's logo whenever that guess happened to resolve (e.g.
-    // "Heidelberg University" -> heidelberg.edu = Heidelberg, Ohio) — so any
-    // institution not in the map now renders no icon rather than an unverified
-    // one. A fixed-width slot keeps every name aligned whether the icon is
-    // present, absent, or fails to load.
-    // This page is PUBLIC and renders institution names that users type into their own
-    // profile, so every one of them must be escaped on the way into HTML. Until
-    // 2026-07-31 the name was concatenated raw, which made a profile field a stored-XSS
-    // vector executing on every visitor to the stats page.
-    function esc(s) {
-      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-      });
-    }
     function instIcon(name) {
-      // hasOwnProperty: a name like "constructor" would otherwise return an inherited
-      // Object.prototype member and throw on .indexOf, blanking the whole panel.
-      var val = Object.prototype.hasOwnProperty.call(INST_DOMAINS, name) ? INST_DOMAINS[name] : null;
-      var inner = '';
-      if (val) {
-        var url = val.indexOf('CUSTOM:') === 0
-          ? val.substring(7)
-          : 'https://www.google.com/s2/favicons?sz=32&domain=' + val;
-        inner = '<img src="' + url + '" width="20" height="20" ' +
-          'style="vertical-align:middle; border-radius:3px; object-fit:contain;" ' +
-          'onerror="this.style.display=\'none\'" alt="">';
+      var val = INST_DOMAINS[name];
+      var url;
+      if (val && val.startsWith('CUSTOM:')) {
+        url = val.substring(7);
+      } else {
+        var domain = val;
+        if (!domain) {
+          var words = name.toLowerCase().replace(/university of /g, '').replace(/university/g, '').trim().split(/\s+/);
+          domain = words.join('') + '.edu';
+        }
+        url = 'https://www.google.com/s2/favicons?sz=32&domain=' + domain;
       }
-      return '<span style="display:inline-block; width:20px; margin-right:8px; ' +
-        'text-align:center; vertical-align:middle;">' + inner + '</span>';
+      return '<img src="' + url + '" width="20" height="20" ' +
+        'style="vertical-align:middle; margin-right:8px; border-radius:3px; object-fit:contain;" ' +
+        'onerror="this.style.display=\'none\'" alt="">';
     }
 
     // Prestige ordering for the institutions panel. Lower rank = higher
@@ -541,71 +503,13 @@ async function loadStats() {
       'American Public University System': 360,
       'Kantonsschule Zug': 370,
       'College of Marin': 372,
-      // added 2026-08-12: ranks for newly-registered schools, same QS-flavored
-      // placement as above (specialty schools by domain reputation: EDHEC in
-      // finance, Babson in entrepreneurship).
-      'UCLA': 37,
-      'University of Leeds': 95,
-      'Boston University': 105,
-      'Rensselaer Polytechnic Institute': 155,
-      'Edhec Business School': 176,
-      'University of Calgary': 185,
-      'Babson College': 202,
-      'Beihang University': 242,
-      'Brigham Young University': 252,
-      'University of Windsor': 332,
-      'Tennessee Tech': 335,
-      'Arcadia High School': 373,
-      'Abertay University': 380,
       // real companies sink below universities (consistent with Creative Robots)
       'Amazon': 9000, 'NVIDIA': 9000, 'MBBANK': 9000, 'Soros Fund Management': 9000,
-      'Creative Robots': 9000, 'IBM': 9000, 'StealthAI': 9000, 'Arancorp': 9000,
-      'Area Europa Trading Company': 9000, 'BOC': 9000,
+      'Creative Robots': 9000,
     };
 
-    // Cleanup of the raw institutions feed, applied before sorting: junk
-    // placeholders users typed instead of a school disappear, and aliases /
-    // typos / casings of the same institution merge into ONE row. The API
-    // has the same two lists server-side (INSTITUTION_BLOCKLIST /
-    // INSTITUTION_ALIASES in api/src/index.js); these are the entries seen
-    // in live data since that worker last deployed — mirror them into the
-    // API on its next deploy so they stop consuming top-50 slots.
-    var INST_JUNK = {
-      '1': 1, '123': 1, 'ai': 1, 'ah': 1, 'academics': 1, 'bank': 1,
-      'personal research': 1, 'national university': 1,
-      'asesor independiente': 1,
-    };
-    var INST_ALIASES = {
-      'uca': 'University of Central Arkansas',
-      'nus': 'National University of Singapore',
-      'uiuc': 'University of Illinois',
-      'the hong kong university of science and technology': 'HKUST',
-      'university of maryland': 'University of Maryland, College Park',
-      'babson collage': 'Babson College',
-      'abertay': 'Abertay University',
-      'buaa': 'Beihang University',
-      'byu': 'Brigham Young University',
-      'ibm generative ai engineer': 'IBM',
-    };
-    var instByCanon = {};
-    var instClean = [];
-    (d.institutions || []).forEach(function (i) {
-      var raw = (i.institution || '').trim();
-      var lower = raw.toLowerCase();
-      if (!raw || INST_JUNK[lower]) return;
-      var canon = Object.prototype.hasOwnProperty.call(INST_ALIASES, lower)
-        ? INST_ALIASES[lower] : raw;
-      if (Object.prototype.hasOwnProperty.call(instByCanon, canon)) {
-        instByCanon[canon].users += (i.users || 0);
-        return;
-      }
-      var row = { institution: canon, users: i.users || 0 };
-      instByCanon[canon] = row;
-      instClean.push(row);
-    });
-
-    if (instClean.length > 0) {
-      var sorted = instClean.slice().sort(function(a, b) {
+    if (d.institutions && d.institutions.length > 0) {
+      var sorted = d.institutions.slice().sort(function(a, b) {
         var ar = INST_PRESTIGE[a.institution] || 9999;
         var br = INST_PRESTIGE[b.institution] || 9999;
         if (ar !== br) return ar - br;
@@ -617,7 +521,7 @@ async function loadStats() {
       function instRow(i) {
         return '<div style="display:flex; align-items:center; padding:0.3rem 0;">' +
           instIcon(i.institution) +
-          '<span class="inst-name">' + esc(i.institution) + '</span></div>';
+          '<span class="inst-name">' + i.institution + '</span></div>';
       }
       var html = '<div class="inst-list">' + top.map(instRow).join('');
       if (rest.length > 0) {

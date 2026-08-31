@@ -13,13 +13,13 @@
   <meta property="og:description" content="Cite the free 1-minute OHLCV US stock &amp; ETF dataset by its Zenodo DOI. Formatted citation, BibTeX, and CITATION.cff provided. CC BY 4.0.">
   <meta property="og:url" content="https://hfdatalibrary.com/pages/cite">
   <meta property="og:type" content="article">
-  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.svg">
   <meta property="og:site_name" content="HF Data Library">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Cite the HF Data Library - 1-Minute Stock Data (DOI)">
   <meta name="twitter:description" content="Cite the free 1-minute OHLCV US stock &amp; ETF dataset by its Zenodo DOI. Formatted citation, BibTeX, and CITATION.cff provided.">
-  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.png">
+  <meta name="twitter:image" content="https://hfdatalibrary.com/assets/og-image.svg">
 
   <script type="application/ld+json">
   {
@@ -44,14 +44,14 @@
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/style.css?v=20260714">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
 
 <nav class="navbar">
   <div class="container">
-    <span class="navbar-brand-group"><a href="../" class="navbar-brand">HF Data <span>Library</span></a><a class="navbar-fam" href="https://elkassabgidata.com" title="Part of the ElkassabgiData family — one account, every library">part of ElkassabgiData</a></span>
+    <a href="../" class="navbar-brand">HF Data <span>Library</span></a>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
     <ul class="nav-links">
       <li><a href="data">Data</a></li>
@@ -60,11 +60,10 @@
       <li><a href="api">API</a></li>
       <li><a href="download">Download</a></li>
       <li><a href="code">Code</a></li>
-      <li><a href="ai-prompts">AI Tools</a></li>
+      <li><a href="ai-prompts">AI Prompts</a></li>
       <li><a href="cite" class="active">Cite</a></li>
       <li><a href="stats">Stats</a></li>
-      <li><a href="status">Status</a></li>
-      <li><a href="contact">Contact</a></li><li><a href="https://econdatalibrary.com">Econ Data</a></li><li><a href="https://ipdatalibrary.com">IP Data</a></li>
+      <li><a href="contact">Contact</a></li>
     </ul>
   </div>
 </nav>
@@ -79,15 +78,16 @@
 <section class="section">
   <div class="container" style="max-width:800px;">
 
+    <p style="background:#f8fafc; border-left:3px solid var(--navy); padding:0.9rem 1.2rem; margin:0 0 2rem;">
+      Curious who already cites this? See <a href="used-by"><strong>Used by</strong></a> &mdash; papers,
+      products and code that use these libraries, each one checked against its source.
+    </p>
+
     <h2>Dataset citation</h2>
     <p>To cite the dataset:</p>
     <div class="citation-block">
       <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
       <p style="margin:0; font-family: var(--font-serif); line-height:1.8;">Elkassabgi, Ahmed. 2026. <em>HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)</em> (version 1.0) [Data set]. Zenodo. <a href="https://doi.org/10.5281/zenodo.19501605">https://doi.org/10.5281/zenodo.19501605</a></p>
-      <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--gray-200);">
-        <p style="margin:0 0 0.4rem;"><strong>Upstream source citation (bars dated 2022-03-07 onward):</strong> if you redistribute or provide access to this data, include: “Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.”</p>
-        <p style="margin:0; font-size:0.85rem; color:var(--gray-500);">Pre-2022 bars derive from the consolidated tape (PiTrading) and must not be attributed to IEX.</p>
-      </div>
     </div>
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
@@ -133,7 +133,7 @@ date-released: "2026-04-09"</code></pre>
       <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
       <p style="margin:0;"><a href="https://doi.org/10.5281/zenodo.19501605" style="font-family:var(--font-mono);">10.5281/zenodo.19501605</a></p>
     </div>
-    <p>Each major version receives its own DOI, ensuring citations reference a specific, immutable snapshot of the data. The record is indexed by <strong>OpenAIRE</strong> and carries structured Dataset metadata for <strong>Google Dataset Search</strong>; a submission to <strong>ICPSR</strong> is pending.</p>
+    <p>Each major version receives its own DOI, ensuring citations reference a specific, immutable snapshot of the data. The record is indexed by <strong>OpenAIRE</strong>, with submissions pending to <strong>re3data.org</strong>, <strong>Google Dataset Search</strong>, and <strong>ICPSR</strong>.</p>
     <p><strong>Zenodo record:</strong> <a href="https://zenodo.org/records/19501605">https://zenodo.org/records/19501605</a></p>
 
   </div>
@@ -143,11 +143,9 @@ date-released: "2026-04-09"</code></pre>
   <div class="container">
     <div class="footer-bottom">
       <p>&copy; 2026 Ahmed Elkassabgi. University of Central Arkansas.</p>
-      <p style="margin-top:0.4rem; font-size:0.82rem; opacity:0.85;">Post–March 2022 data: Data provided for free by IEX. By accessing or using IEX Historical Data, you agree to the <a href="https://www.iex.io/legal/hist-data-terms" rel="noopener">IEX Historical Data Terms of Use</a>.</p>
       <p class="orcid">ORCID: <a href="https://orcid.org/0000-0002-5926-7493">0000-0002-5926-7493</a></p>
     </div>
   </div>
-  <!-- visitor-count: 23,435 visitors | 51,240 page views | 133 countries (snapshot taken at deploy time; the live figure is on /pages/stats) -->
 </footer>
 
 <script>

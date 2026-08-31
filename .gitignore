@@ -19,18 +19,21 @@ data/cleaning_detail.csv
 data/variables/
 expansion-plan/
 
-# Internal planning/strategy docs — kept LOCAL ONLY, not for the public repo (2026-07-22)
-/WEBSITE_PLAN.md
-/SEO_STRATEGY.md
-/PARTNER_TOOLKIT_PLAN.md
-/TOOLKIT_IMPLEMENTATION_PLAN.md
-/IEX_PIPELINE_PLAN.md
+# keep-working Stop-hook sentinel + counter (machine-local, never committed)
+.claude/KEEP_WORKING
+.claude/.keep_working_count
+.claude/STOP_REASON
+
+# Correspondence with users. THIS REPO IS PUBLIC: these files carry real names and
+# email addresses, and were untracked-but-unignored, i.e. one `git add -A` away from
+# being published (the R135 trap, previously hit with MISTAKES.md).
+emails/
 
 # --- secret shapes (added 2026-08-24 after R455) ---------------------------------
 # A live USPTO API key reached a PUBLIC repo because .uspto_key was documented as
-# "gitignored" and never actually added to any .gitignore. .env* was covered here;
-# nothing else was. These patterns are about SHAPE, not about the one file that
-# leaked: the next secret will have a name nobody predicted.
+# "gitignored" and never actually added here. .env* was covered; nothing else was.
+# These patterns are about SHAPE, not about the one file that leaked: the next secret
+# will have a name nobody predicted, so ignore the shapes secrets normally take.
 *.key
 *.pem
 *.p12
@@ -42,3 +45,12 @@ credentials*
 *secret*
 *.token
 token.txt
+
+# local D1 scan-budget counter (volatile, machine-local)
+.claude/hooks/.d1_budget.json
+
+# reliability-system session state (machine-local receipts)
+.claude/state/
+
+# Internal operational docs - never in the public tree (2026-08-31, see R531)
+.claude/

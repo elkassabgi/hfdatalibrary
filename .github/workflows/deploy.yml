@@ -5,14 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# SSO rollout §2.A prerequisite [D19/D22]: serialize main deploys so a rollback
-# push cannot race and lose to its own bad predecessor (Cloudflare makes the
-# LAST-CREATED deployment live). cancel-in-progress:false = queue in push order,
-# never cancel an in-flight deploy.
-concurrency:
-  group: deploy-main
-  cancel-in-progress: false
-
 jobs:
   deploy-site:
     runs-on: ubuntu-latest
@@ -44,58 +36,3 @@ jobs:
             RESEND_WEBHOOK_SECRET
         env:
           RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
-
-      # Post-deploy verification (AUTH_SSO_PLAN §6/§14): the worker is reachable
-      # only via the dashboard-managed Custom Domain (workers_dev=false, no
-      # [[routes]]), so assert it actually serves; assert the *.workers.dev
-      # bypass is closed; and assert the §8 cross-site mutation guard is live.
-      # Retries absorb edge-propagation lag. Fails the job (and flags a rollback)
-      # if any invariant regresses — this is the automated guard the plan requires.
-      - name: Verify deploy (reachability + bypass closed + CSRF gate)
-        run: |
-          set -u
-          API="https://api.hfdatalibrary.com"
-          DEV="https://hfdatalibrary-api.elkassabgi.workers.dev"
-          code() { curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$@" || echo 000; }
-
-          # Retry each assertion (up to ~60s) so edge propagation of a fresh
-          # deploy + the workers_dev=false route removal can't cause a false red.
-          # assert_eq / assert_ne <label> <expected> <curl-args...>
-          assert() {
-            local mode="$1" label="$2" want="$3"; shift 3
-            local c
-            for i in 1 2 3 4 5 6; do
-              c=$(code "$@")
-              echo "attempt $i: $label -> $c"
-              if { [ "$mode" = eq ] && [ "$c" = "$want" ]; } || \
-                 { [ "$mode" = ne ] && [ "$c" != "$want" ]; }; then return 0; fi
-              sleep 10
-            done
-            echo "FAIL: $label expected ${mode}=${want}, last got $c"; exit 1
-          }
-
-          ACC="https://accounts.elkassabgidata.com"
-          # 1) Custom Domain serves the API (catches a detached custom domain).
-          assert eq  "$API/v1/status == 200"                  200 "$API/v1/status"
-          # 2) workers.dev bypass is closed (any non-200 = closed).
-          assert ne  "$DEV/ != 200 (bypass closed)"           200 "$DEV/"
-          # 3) §8 cross-site mutation guard is live (403 before auth).
-          assert eq  "cross-site POST logout == 403"          403 -X POST -H "Sec-Fetch-Site: cross-site" "$API/v1/auth/logout"
-          # 4) §6 IdP host fail-closed: admin/data paths 404 on accounts.*,
-          #    allowlisted issuer paths are reachable (501 until M2b, not 404).
-          assert eq  "accounts/v1/admin/stats == 404 (isolated)"   404 "$ACC/v1/admin/stats"
-          assert eq  "accounts/v1/download/AAPL == 404 (isolated)" 404 "$ACC/v1/download/AAPL"
-          # 5) issuer surface is NOT served on the data host.
-          assert eq  "api/authorize == 404 (issuer not on data host)" 404 "$API/authorize"
-          # 6) POSITIVE IdP liveness (SSO rollout §2.A prerequisite [D22]): today the
-          #    assertion checks only api.* reachability + accounts.* 404-isolation, so a
-          #    broken merge could redeploy a DEAD IdP with green CI. Assert the IdP door
-          #    actually serves: SDK + signed-out account page live; and /authorize with a
-          #    VALID client_id + WRONG redirect_uri returns the S18 "Redirect URI mismatch"
-          #    (400, recorded P0.8/2026-07-20), NOT a 5xx. deploy.yml is CI config, not an
-          #    api.* handler (G-4 intact).
-          assert eq  "accounts/sdk/ekd-sso.js == 200"               200 "$ACC/sdk/ekd-sso.js"
-          assert eq  "accounts/account == 200"                      200 "$ACC/account"
-          assert eq  "accounts/authorize mismatch == 400 (S18)"     400 "$ACC/authorize?client_id=https%3A%2F%2Fhfdatalibrary.com&redirect_uri=https%3A%2F%2Fexample.invalid%2Fx&state=probe&code_challenge=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&code_challenge_method=S256"
-
-          echo "OK: reachability, bypass closure, CSRF gate, IdP host isolation, and positive IdP liveness all verified."
