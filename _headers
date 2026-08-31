@@ -14,3 +14,8 @@
 # bounded by the 4 h default max-age. All ~21 includes are version-less.
 /js/site.js
   Cache-Control: no-cache
+
+# Same rule, same reason: pages/download.html includes it without a version query,
+# and it is the whole of the bundle-builder's download path.
+/js/zipstream.js
+  Cache-Control: no-cache

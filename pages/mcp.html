@@ -419,22 +419,10 @@ document.querySelectorAll('.cfg-copy').forEach(function (btn) {
   });
 });
 
-// ── Fill the user's real key into every snippet when signed in ──
-(function () {
-  var token = localStorage.getItem('hfd_session');
-  if (!token) return;
-  fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (u) {
-      if (!u || !u.api_key) return;
-      document.querySelectorAll('.ekey').forEach(function (el) { el.textContent = u.api_key; });
-      var kb = document.getElementById('keybar');
-      kb.classList.add('signed');
-      kb.innerHTML = '<strong>Signed in.</strong> Every command below now contains your real key &mdash; ' +
-        'just copy and paste. Treat these like a password: don\'t share or commit them.';
-    })
-    .catch(function () {});
-})();
+// Key substitution lives in js/site.js (window.HFDKeys), which is loaded below and
+// fills every .ekey span on DOMContentLoaded. The copy that used to sit here read
+// only localStorage['hfd_session'], so it silently did nothing for anyone signed in
+// through the family SSO — see the comment on HFDKeys for the full account.
 </script>
 
 <script src="../js/site.js"></script>

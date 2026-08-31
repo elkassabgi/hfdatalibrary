@@ -575,6 +575,9 @@ export default {
       if (path === '/v1/auth/resend-verification' && request.method === 'POST')
         return await handleResendVerification(request, env, cors);
 
+      if (path === '/v1/auth/api-key' && request.method === 'GET')
+        return await handleOwnApiKey(request, env, cors);
+
       if (path === '/v1/auth/reset-request' && request.method === 'POST')
         return await handleResetRequest(request, env, cors);
 
@@ -3286,8 +3289,13 @@ async function handleRegister(request, env, cors, ip, ua, country) {
     //
     // The response now reports it, so the UI can point at "resend verification" instead of
     // leaving someone to guess why nothing arrived.
+    //
+    // sendEmail RETURNS response.ok and only THROWS on a network fault, so catching
+    // the throw caught the rare half. A Resend 4xx/5xx — bad key, suppression list,
+    // quota — returned false and left this reporting `verification_email_sent: true`,
+    // and the page then promised a link that was never sent. Take the return value.
     try {
-      await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
+      verifyMailSent = await sendEmail(env, email.toLowerCase(), 'Verify your ElkassabgiData account', verificationEmail(name, verifyToken), FROM_EMAIL, 'ElkassabgiData');
     } catch (e) { verifyMailSent = false; }
 
   }
@@ -3310,10 +3318,16 @@ async function handleRegister(request, env, cors, ip, ua, country) {
   // anything that shifted those would blank out the "Account created!" panel for every
   // registrant during the window where the old page is talking to this worker.
   const payload = {
-    message: isAdmin ? 'Registration successful' : 'Registration successful. Please check your email to verify your account.',
+    message: 'Registration successful. Please check your email to verify your account.',
     api_key: apiKey,
     session: sessionId,
-    email_verified: isAdmin ? true : false,
+    // Reports the ROW, which the comment 70 lines up states plainly: "email_verified
+    // is 0 for EVERYONE, admins included." This said `isAdmin ? true : false`, left
+    // over from when admin rows were born verified, so an admin registrant was told
+    // they were verified while every download 403'd on a column that said 0 — and
+    // the page's new "check your email" modal, which keys off this field, was
+    // skipped for the one registrant guaranteed to need it.
+    email_verified: false,
     // False only when Resend actually refused. The account exists and is usable either way, so
     // this is informational, not an error — it lets the page point at "resend verification"
     // rather than leaving someone to wonder why no mail arrived.
@@ -3871,7 +3885,11 @@ async function handleDeleteAccount(request, env, cors) {
 }
 
 async function handleUpdateProfile(request, env, cors) {
-  const user = await getSessionUser(request, env);
+  // Accepts an HF-origin family token as well as a web session — see
+  // requireHfFirstPartyUser for why, and for why that is not a cross-site widening.
+  // This route is in MUTATION_GUARD_EXACT, so a genuinely cross-site browser call
+  // is still rejected upstream on Sec-Fetch-Site before it reaches here.
+  const user = await requireHfFirstPartyUser(request, env);
   if (!user) return jsonRes({ error: 'Session required' }, 401, cors);
 
   let body;
@@ -4039,8 +4057,88 @@ async function handleVerifyEmail(request, env, cors) {
   return jsonRes({ message: 'Email verified! You can now download data.' }, 200, cors);
 }
 
+// ── First-party user, however hfdatalibrary.com signed them in ────────────────
+// getSessionUser() accepts only a 'web' session, which is structurally right for
+// most account mutations but leaves the family (edl_at) sign-in a second-class
+// citizen ON HF'S OWN SITE: the visitor sees their name in the navbar and is then
+// refused by the very endpoints the page needs to unblock them. That is how 175
+// of 1,299 Google accounts ended up parked with profile_complete = 0 — the page
+// could not even offer them the form (pages/download.html deliberately skipped
+// the prompt because saving it could only 401).
+//
+// The widening is deliberately narrow: a family token is accepted ONLY when its
+// audience is one of HF's OWN origins. validateFamilyToken already requires
+// session_audience === the request's Origin, so a token minted for
+// econdatalibrary.com or ipdatalibrary.com cannot reach this — those sites keep
+// exactly the access they have today, and this grants nothing cross-site.
+// Deliberately NOT HF_OWNED_ORIGINS: that set exists for CORS and contains
+// 'http://localhost:8080', which is also an active row in sso_clients — so any
+// process on a developer's machine can complete /authorize for that audience and
+// be minted a family token. That is fine for reading a catalogue; it must not be
+// a route to somebody's durable API key or to mutating their profile. Production
+// hosts only.
+const HF_FIRST_PARTY_ORIGINS = new Set([
+  'https://hfdatalibrary.com',
+  'https://www.hfdatalibrary.com',
+]);
+
+async function requireHfFirstPartyUser(request, env) {
+  const web = await getSessionUser(request, env);
+  if (web) return web;
+  const fam = await validateFamilyToken(request, env);
+  if (fam && HF_FIRST_PARTY_ORIGINS.has(fam.session_audience)) return fam;
+  return null;
+}
+
+// GET /v1/auth/api-key — the caller's own API key, and nothing else.
+//
+// WHY A SEPARATE ROUTE. Every snippet on pages/mcp.html, ai-prompts.html, api.html
+// and code.html is supposed to arrive with the signed-in user's real key already
+// in it. The page scripts read it from /v1/auth/me, whose family-token branch nulls
+// api_key on purpose — so for a family session every snippet silently kept saying
+// YOUR_KEY while the navbar said the user was signed in. Rather than widen
+// /v1/auth/me — a response four other sites consume — this answers the one question
+// the pages actually ask, under the strictest condition that still answers it.
+//
+// THE TRADE-OFF, STATED PLAINLY: on an HF-owned origin this lets a 15-minute family
+// token fetch the long-lived key. Script running on hfdatalibrary.com could already
+// spend that token on the user's whole data entitlement, and could already read the
+// key from a legacy session or the first-party cookie; what is new is that an
+// XSS on hf against a family-only session now yields a durable credential instead
+// of a 15-minute one. That is the cost of showing a user their own key on the page
+// that documents it, which is the feature. Regenerating from the account page
+// revokes instantly.
+async function handleOwnApiKey(request, env, cors) {
+  const user = await requireHfFirstPartyUser(request, env);
+  if (!user) return jsonRes({ error: 'Not authenticated' }, 401, cors);
+  // validateFamilyToken() nulls api_key on the object it returns, so the row is
+  // re-read here rather than trusted — otherwise this would answer `null` for
+  // exactly the sessions it exists to serve.
+  const row = await env.DB.prepare(
+    'SELECT api_key, api_key_expires_at FROM users WHERE id = ? ' +
+    // The SAME expiry test getUserByApiKey applies when a key is USED. Without it
+    // this would hand back a lapsed key, the pages would paste it into every MCP
+    // config, curl line and code sample, and all of them would 401 — strictly
+    // worse than leaving YOUR_KEY visible, which at least explains itself. Keys
+    // last API_KEY_DAYS and nothing rotates them automatically, so this is a state
+    // real accounts reach.
+    'AND (api_key_expires_at IS NULL OR datetime(api_key_expires_at) > datetime("now"))'
+  ).bind(user.user_id || user.id).first();
+  if (!row || !row.api_key) {
+    return jsonRes({
+      error: 'No usable API key on this account. If yours has expired, regenerate it on your account page.'
+    }, 404, cors);
+  }
+  const res = jsonRes({ api_key: row.api_key, api_key_expires_at: row.api_key_expires_at }, 200, cors);
+  res.headers.set('Cache-Control', 'no-store');
+  return res;
+}
+
 async function handleResendVerification(request, env, cors) {
-  const user = await requireAuth(request, env);
+  // Same widening as update-profile: a family session that cannot ask for a new
+  // verification mail is stuck behind the email gate with no way through, and the
+  // resend button on pages/download.html is the way through.
+  const user = await requireHfFirstPartyUser(request, env) || await getUserByApiKey(request, env);
   if (!user) return jsonRes({ error: 'Not authenticated' }, 401, cors);
   if (user.email_verified) return jsonRes({ message: 'Email already verified' }, 200, cors);
 

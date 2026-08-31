@@ -713,3 +713,217 @@
     });
 
 })();
+
+/* ──────────────────────────────────────────────────────────────────────────────
+ * API key substitution — ONE implementation for the whole site.
+ *
+ * WHY THIS REPLACED THE PER-PAGE SCRIPTS. pages/mcp.html and pages/ai-prompts.html
+ * each carried their own copy of "fetch /v1/auth/me, drop api_key into .ekey".
+ * Both copies resolved the session the same wrong way:
+ *
+ *     var token = localStorage.getItem('hfd_session');
+ *     if (!token) return;                     // ← silent no-op
+ *
+ * hfdatalibrary.com has had TWO sign-in modes since the family SSO shipped. A
+ * visitor who arrives through accounts.elkassabgidata.com holds an EKD access
+ * token and has no 'hfd_session' at all, so both injectors returned at that first
+ * line — the navbar showed their name while every snippet on the page still read
+ * YOUR_KEY. Ahmed reported exactly that on 2026-08-31. Two copies of a rule also
+ * means two things to keep in step (ledger R65 is a storage-key mismatch between
+ * these very two pages), so this is now the only copy and the pages call it.
+ *
+ * It resolves a key through three routes, cheapest and least privileged first:
+ *   1. the legacy bearer in localStorage;
+ *   2. the first-party session COOKIE — api.hfdatalibrary.com is same-SITE, so a
+ *      SameSite=Lax cookie rides a credentialed fetch, and this alone recovers
+ *      anyone whose localStorage was cleared while their 30-day cookie lives;
+ *   3. the family token, via /v1/auth/api-key, which the worker answers only when
+ *      that token's audience is an HF-owned origin.
+ * Any route may be unavailable; the page simply keeps its placeholders and says
+ * so, which is the pre-existing behaviour.
+ * ────────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  var API_BASE = 'https://api.hfdatalibrary.com';
+  // Every spelling of the placeholder that appears in a snippet anywhere on the
+  // site. The reported example was YOUR_KEY on pages/mcp.html; a sweep of all
+  // pages found three more spellings and two more pages, so this list is the
+  // whole class rather than the one instance:
+  //   YOUR_API_KEY   pages/ai-prompts.html   (also inside .placeholder pills)
+  //   YOUR_KEY       pages/mcp.html, pages/ai-prompts.html, pages/api.html
+  //   your-key-here  pages/api.html:84, pages/code.html:81 (Python), :171 (R)
+  // Longest first, so a longer token can never be partly eaten by a shorter one
+  // that happens to be its prefix.
+  var PLACEHOLDERS = ['YOUR_API_KEY', 'your-key-here', 'YOUR_KEY'];
+  var keyPromise = null;
+
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  function keyFrom(json) {
+    return (json && typeof json.api_key === 'string' && json.api_key) ? json.api_key : null;
+  }
+
+  // The EKD SDK is injected dynamically by the block above (script.src set at
+  // runtime, appended to <head>), and a dynamically inserted script does NOT hold
+  // up DOMContentLoaded. So on the family sign-in path window.EKD is reliably
+  // still undefined when this module first runs — the exact case the whole key
+  // filler exists to serve. Wait for it, but only when there is a refresh token
+  // to suggest the SDK is going to matter, and only for a bounded time.
+  function waitForEkd(timeoutMs) {
+    return new Promise(function (resolve) {
+      if (window.EKD) { resolve(window.EKD); return; }
+      if (!safeGet('ekd_rt')) { resolve(null); return; }
+      var waited = 0, step = 150;
+      var t = setInterval(function () {
+        waited += step;
+        if (window.EKD) { clearInterval(t); resolve(window.EKD); }
+        else if (waited >= timeoutMs) { clearInterval(t); resolve(null); }
+      }, step);
+    });
+  }
+
+  // Resolve the signed-in user's API key, or null. Never throws, never rejects.
+  //
+  // A null is NOT memoised. Caching it was a real defect: the first call can lose
+  // the race with the SDK above, and a cached null would then keep every snippet
+  // on the page reading YOUR_KEY for the rest of its life with no way to retry.
+  // Only a real key is worth remembering.
+  function resolveApiKey() {
+    if (keyPromise) return keyPromise;
+    var pending = (async function () {
+      // Nothing to resolve for a visitor with no session marker, and asking anyway
+      // would spend a D1 read on every anonymous view of the four snippet pages.
+      // These are the same two markers the navbar gates on (paintUserWidget), so a
+      // page can never think it is signed in while this thinks otherwise.
+      if (!safeGet('hfd_session') && !safeGet('ekd_rt')) return null;
+      // (1) legacy bearer
+      var legacy = safeGet('hfd_session');
+      if (legacy) {
+        try {
+          var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
+          if (r.ok) { var k = keyFrom(await r.json()); if (k) return k; }
+        } catch (e) {}
+      }
+      // (2) first-party cookie (same-site subdomain; needs credentials)
+      try {
+        var r2 = await fetch(API_BASE + '/v1/auth/me', { credentials: 'include' });
+        if (r2.ok) { var k2 = keyFrom(await r2.json()); if (k2) return k2; }
+      } catch (e) {}
+      // (3) family/EKD session — the worker decides whether to answer.
+      try {
+        var ekd = await waitForEkd(8000);
+        if (ekd && typeof ekd.getAccessToken === 'function') {
+          var at = await ekd.getAccessToken();
+          if (at) {
+            var r3 = await fetch(API_BASE + '/v1/auth/api-key', { headers: { 'Authorization': 'Bearer ' + at } });
+            if (r3.ok) { var k3 = keyFrom(await r3.json()); if (k3) return k3; }
+          }
+        }
+      } catch (e) {}
+      return null;
+    })();
+    keyPromise = pending;
+    pending.then(function (k) {
+      if (!k && keyPromise === pending) keyPromise = null;   // never cache a miss
+    });
+    return pending;
+  }
+
+  // Replace placeholder TEXT inside snippet blocks with a marked span, so pages
+  // that never adopted the .ekey convention (pages/api.html) are covered too.
+  // Text nodes only, and only inside <pre>/<code>: prose that mentions YOUR_KEY
+  // to explain the convention must keep saying YOUR_KEY, and no form field is
+  // ever rewritten.
+  // ONE pass over the document's text nodes, keeping those inside a snippet.
+  //
+  // Walking `pre, code` separately looked equivalent and was not: the site's
+  // snippets are <pre><code>…</code></pre>, so the same text node is reached
+  // twice — once as a descendant of the <pre> and once of the <code> — and the
+  // second visit wrapped the span the first visit had just created. Verified in
+  // the browser: pages/api.html produced 8 nested spans for its 4 placeholders.
+  function wrapPlaceholderText(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var targets = [], n;
+    while ((n = walker.nextNode())) {
+      if (!n.nodeValue || !n.parentElement) continue;
+      if (!n.parentElement.closest('pre, code')) continue;   // snippets only, never prose
+      if (n.parentElement.classList.contains('ekey')) continue;  // already substituted
+      for (var p = 0; p < PLACEHOLDERS.length; p++) {
+        if (n.nodeValue.indexOf(PLACEHOLDERS[p]) !== -1) { targets.push(n); break; }
+      }
+    }
+    for (var t = 0; t < targets.length; t++) splitTextNode(targets[t]);
+  }
+
+  function splitTextNode(node) {
+    var text = node.nodeValue;
+    var frag = document.createDocumentFragment();
+    var i = 0;
+    while (i < text.length) {
+      var best = -1, bestTok = null;
+      for (var p = 0; p < PLACEHOLDERS.length; p++) {
+        var at = text.indexOf(PLACEHOLDERS[p], i);
+        if (at !== -1 && (best === -1 || at < best)) { best = at; bestTok = PLACEHOLDERS[p]; }
+      }
+      if (best === -1) { frag.appendChild(document.createTextNode(text.slice(i))); break; }
+      if (best > i) frag.appendChild(document.createTextNode(text.slice(i, best)));
+      var span = document.createElement('span');
+      span.className = 'ekey';
+      span.textContent = bestTok;              // still the placeholder; fill() sets the real value
+      frag.appendChild(span);
+      i = best + bestTok.length;
+    }
+    node.parentNode.replaceChild(frag, node);
+  }
+
+  function announce(signedIn) {
+    var bar = document.getElementById('keybar');
+    if (bar) {
+      if (signedIn) {
+        bar.classList.add('signed');
+        bar.textContent = '';
+        var strong = document.createElement('strong');
+        strong.textContent = 'Signed in.';
+        bar.appendChild(strong);
+        bar.appendChild(document.createTextNode(
+          ' Every command below now contains your real API key — just copy and paste. ' +
+          'Treat it like a password: do not share it or commit it to a repository.'));
+      }
+      // Not signed in → the page's own static wording already explains the placeholder.
+    }
+    var note = document.getElementById('key-note');
+    if (note && signedIn) {
+      note.textContent = 'You are signed in, so your real API key is already filled into every ' +
+        'prompt below. Yellow-pill tokens like AAPL are still yours to edit.';
+    }
+  }
+
+  async function fill() {
+    // Normalise first so .ekey is the single thing we fill, whether the page
+    // author wrote the span or wrote bare text in a code block.
+    try { wrapPlaceholderText(document); } catch (e) {}
+    var spans = document.querySelectorAll('.ekey, .placeholder');
+    if (!spans.length) return;
+    var key = await resolveApiKey();
+    if (!key) return;
+    for (var i = 0; i < spans.length; i++) {
+      var el = spans[i];
+      var txt = (el.textContent || '').trim();
+      // .placeholder is also used for editable sample values such as AAPL — only
+      // rewrite the ones that are actually a key placeholder.
+      if (PLACEHOLDERS.indexOf(txt) === -1) continue;
+      el.textContent = key;                    // textContent, never innerHTML
+      el.setAttribute('data-real-key', '1');
+    }
+    announce(true);
+  }
+
+  window.HFDKeys = { get: resolveApiKey, fill: fill };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { fill(); });
+  } else {
+    fill();
+  }
+})();

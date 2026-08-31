@@ -444,3 +444,12 @@ td.mono { font-family: var(--font-mono); font-size: 0.85rem; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
   .footer-bottom { flex-direction: column; gap: 0.5rem; text-align: center; }
 }
+
+/* ── Filled API key inside a snippet ──────────────────────────────────────────
+   js/site.js (window.HFDKeys) swaps every key placeholder in a <pre>/<code> for
+   the signed-in user's real key and tags it .ekey. pages/mcp.html and
+   pages/ai-prompts.html carry their own, more specific colours for their dark
+   code blocks; this is the base so pages/api.html and pages/code.html — which
+   had no .ekey rule at all when their placeholders started being filled — still
+   make the substituted value visibly deliberate rather than looking like a typo. */
+.ekey { font-weight: 600; color: #b45309; word-break: break-all; }

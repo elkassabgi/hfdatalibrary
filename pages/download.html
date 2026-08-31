@@ -102,6 +102,28 @@
   </div>
 </div>
 
+<!-- Standing "verify your email" banner. Hidden by default and shown by
+     maybePromptVerify() only when /v1/auth/me reports email_verified === false,
+     so it can never appear for a verified account or for a signed-out visitor. -->
+<div id="verify-banner" style="display:none; background:#fffbeb; border-bottom:2px solid #f59e0b; padding:1rem 0;">
+  <div class="container" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; justify-content:center; text-align:center;">
+    <div style="flex:1; min-width:280px; text-align:left;">
+      <div style="font-weight:700; color:#92400e; font-size:1.05rem; margin-bottom:0.2rem;">
+        &#128231; Check your email to unlock downloads
+      </div>
+      <div style="color:#78350f; font-size:0.92rem; line-height:1.5;">
+        We sent a verification link to <strong id="verify-banner-email"></strong>. Click it and your
+        downloads work immediately. Look in your spam or junk folder if it is not in your inbox.
+        <span id="verify-banner-msg" style="display:block; margin-top:0.35rem; font-weight:600;"></span>
+      </div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <button id="verify-resend" class="btn btn-sm" style="background:#f59e0b; color:#fff; padding:0.45rem 0.9rem; font-size:0.85rem;" onclick="resendVerification()">Resend email</button>
+      <button class="btn btn-sm btn-outline" style="color:#92400e; border-color:#f59e0b; padding:0.45rem 0.9rem; font-size:0.85rem;" onclick="recheckVerification()">I clicked the link</button>
+    </div>
+  </div>
+</div>
+
 <!-- Auth handled by navbar widget in site.js -->
 
 <!-- Search -->
@@ -149,7 +171,7 @@
 
     <!-- Custom Bundle Builder -->
     <h2 style="margin-bottom:0.5rem;">Build a custom bundle</h2>
-    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Select multiple tickers and download them all at once. Use the filters or type ticker symbols directly.</p>
+    <p style="color: var(--gray-600); margin-bottom:1.5rem;">Select multiple tickers and download them as a single <strong>.zip</strong> file. Use the filters or type ticker symbols directly.</p>
 
     <div class="card" style="padding:1.5rem; margin-bottom:2rem;">
       <!-- Quick filters -->
@@ -205,8 +227,8 @@
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <span id="bundle-count" style="font-size:0.9rem; color:var(--gray-600);">0 tickers selected</span>
         <div style="display:flex; gap:0.5rem;">
-          <button class="btn btn-primary" onclick="downloadBundle('parquet')">Download All (Parquet)</button>
-          <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="downloadBundle('csv')">Download All (CSV)</button>
+          <button class="btn btn-primary" onclick="downloadBundle('parquet')">Download All as .zip (Parquet)</button>
+          <button class="btn btn-outline" style="color:var(--blue); border-color:var(--blue);" onclick="downloadBundle('csv')">Download All as .zip (CSV)</button>
         </div>
       </div>
 
@@ -215,8 +237,19 @@
         <div style="background:var(--gray-200); border-radius:4px; height:8px; overflow:hidden;">
           <div id="bundle-bar" style="background:var(--blue); height:100%; width:0%; transition:width 0.3s;"></div>
         </div>
-        <p id="bundle-status" style="font-size:0.85rem; color:var(--gray-500); margin-top:0.5rem;">Preparing downloads...</p>
+        <p id="bundle-status" style="font-size:0.85rem; color:var(--gray-500); margin-top:0.5rem;">Preparing the archive&hellip;</p>
       </div>
+
+      <!-- Recovery note. Someone who used this page before 2026-08-31 was asked to
+           "allow multiple downloads" once per ticker, and anyone who answered Block
+           has had every download on this site refused silently ever since — by their
+           browser, not by us, so nothing on the page can detect it or put it back. -->
+      <p style="font-size:0.82rem; color:var(--gray-500); margin:0.9rem 0 0; line-height:1.5;">
+        A bundle downloads as <strong>one .zip file</strong>. If clicking Download does nothing at all,
+        your browser may still be blocking downloads from this site from an earlier visit:
+        click the padlock in the address bar &rarr; <em>Site settings</em> &rarr;
+        <em>Automatic downloads</em> &rarr; <em>Allow</em>, then try again.
+      </p>
     </div>
 
     <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--gray-200);">
@@ -1071,9 +1104,102 @@ async function checkAuth() {
   const banner = document.getElementById('free-access-banner');
   if (banner) banner.style.display = currentUser ? 'none' : '';
   if (window.__hfdPaintNav) window.__hfdPaintNav();            // repaint the site.js nav (old-form login shows the name without a reload)
+  maybePromptVerify();
   maybePromptProfile();
 }
 checkAuth();
+
+// ── Unverified email: say so on every visit, not once at sign-up ──────────────
+// The registration box did carry a verify-your-email line, but it sat inside a
+// green "Account created!" panel next to the API key, at the bottom of a long
+// page — and it appeared exactly once. Close the tab and the site never mentioned
+// it again, while every download answered 403 "Please verify your email". Ahmed
+// reported the instruction as not clearly shown; this is the missing half — a
+// standing banner that persists until the account is actually verified, with the
+// two things a stuck user needs: another email, and a re-check.
+function maybePromptVerify() {
+  const bar = document.getElementById('verify-banner');
+  if (!bar) return;
+  // email_verified is returned by BOTH branches of /v1/auth/me. Guard on an
+  // explicit false rather than falsiness: an older worker that omits the field
+  // would otherwise show this banner to every verified user, which is worse than
+  // showing it to none (the same mistake the field was added to fix).
+  if (!currentUser || currentUser.email_verified !== false) { bar.style.display = 'none'; return; }
+  document.getElementById('verify-banner-email').textContent = currentUser.email || 'your email address';
+  bar.style.display = 'block';
+}
+
+async function resendVerification() {
+  const btn = document.getElementById('verify-resend');
+  const out = document.getElementById('verify-banner-msg');
+  const a = await getDownloadAuth();
+  if (!a) { out.textContent = 'Your sign-in expired — sign in again first.'; return; }
+  btn.disabled = true;
+  out.textContent = 'Sending…';
+  try {
+    const r = await fetch(API + '/v1/auth/resend-verification', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + a.token }
+    });
+    const d = await r.json().catch(function () { return {}; });
+    // The worker returns its own wording for both the sent and the rate-limited
+    // case, so it is shown verbatim rather than second-guessed here.
+    out.textContent = d.message || d.error || (r.ok ? 'Sent.' : 'Could not send just now.');
+  } catch (e) {
+    out.textContent = 'Network error — try again in a moment.';
+  }
+  btn.disabled = false;
+}
+
+// Shown once, immediately after a successful email+password registration.
+//
+// The standing banner above is at the TOP of the page and the register form is at
+// the BOTTOM, so on the one screen where the instruction matters most the user
+// cannot see it — they read "Account created!", copy the API key, and leave. This
+// puts the single next step in front of them before anything else.
+function showVerifyModal(email) {
+  if (document.getElementById('verify-modal-overlay')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'verify-modal-overlay';
+  wrap.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,41,0.6); z-index:9998; display:flex; align-items:center; justify-content:center; padding:1rem;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff; border-radius:12px; max-width:460px; width:100%; padding:1.9rem; box-shadow:0 10px 40px rgba(0,0,0,0.25); text-align:center;';
+  const h = document.createElement('h3');
+  h.style.cssText = 'margin:0 0 0.6rem; font-size:1.3rem; color:var(--navy);';
+  h.textContent = '📧 Check your email to finish';
+  const p1 = document.createElement('p');
+  p1.style.cssText = 'margin:0 0 0.5rem; font-size:1rem; color:var(--gray-700); line-height:1.55;';
+  // textContent for the address — it is user input echoed straight back.
+  p1.appendChild(document.createTextNode('Your account exists, but downloads stay locked until you click the link we just sent to '));
+  const strong = document.createElement('strong');
+  strong.textContent = email;
+  p1.appendChild(strong);
+  p1.appendChild(document.createTextNode('.'));
+  const p2 = document.createElement('p');
+  p2.style.cssText = 'margin:0 0 1.2rem; font-size:0.88rem; color:var(--gray-500);';
+  p2.textContent = 'No email after a minute? Check your spam or junk folder — university mail filters catch it often.';
+  const close = document.createElement('button');
+  close.className = 'btn btn-primary';
+  close.style.cssText = 'width:100%;';
+  close.textContent = 'Got it';
+  close.onclick = function () { wrap.remove(); };
+  card.appendChild(h); card.appendChild(p1); card.appendChild(p2); card.appendChild(close);
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+}
+
+// "I clicked the link" — re-read the account instead of making the user reload.
+async function recheckVerification() {
+  const out = document.getElementById('verify-banner-msg');
+  out.textContent = 'Checking…';
+  await checkAuth();
+  if (currentUser && currentUser.email_verified !== false) {
+    const bar = document.getElementById('verify-banner');
+    if (bar) bar.style.display = 'none';
+    alert('Email verified — downloads are unlocked.');
+  } else {
+    out.textContent = 'Still not verified. Open the link in the email we sent, then check again.';
+  }
+}
 
 // ── Post-registration profile completion ──────────────────────────────────────
 // Google-registered accounts arrive with profile_complete=0 (institution/country/role
@@ -1086,14 +1212,15 @@ checkAuth();
 // either way, so the nag is strictly friendlier than the 403 it preempts.
 function maybePromptProfile() {
   if (!currentUser || currentUser.profile_complete) return;
-  // Family-token sessions (SSO popup resume, no hfd_session) cannot Save here:
-  // /v1/auth/update-profile authenticates via getSessionUser, which structurally
-  // rejects family bearers (kind IS NULL OR 'web'). Showing them a Save that can
-  // only 401 is worse than today's 403-with-advice, which already points at
-  // accounts.elkassabgidata.com/account — the completion form that DOES accept
-  // their session. Widening the mutation endpoint's auth surface is its own
-  // review, not a rider on this one (adversarial review 2026-08-26).
-  if (currentUser.isFamilyToken) return;
+  // Family-token sessions USED to be skipped here: /v1/auth/update-profile
+  // authenticated via getSessionUser, which structurally rejects family bearers,
+  // so the Save button could only ever 401 and the advice pointed people at
+  // accounts.elkassabgidata.com instead. That widening is now done (see
+  // requireHfFirstPartyUser in api/src/index.js — an HF-origin family token is
+  // accepted, a cross-site one still is not), so the prompt is shown to every
+  // signed-in visitor with an incomplete profile, which is the population it was
+  // always meant to catch: Ahmed reported reaching the site through the family
+  // sign-in and being told to complete a profile with nothing offering the form.
   if (sessionStorage.getItem('hfd_profile_later') === '1') return;
   if (document.getElementById('profile-complete-overlay')) return;
   const wrap = document.createElement('div');
@@ -1132,9 +1259,20 @@ function maybePromptProfile() {
     }
     this.disabled = true;
     try {
+      // Resolved at SAVE time, not at page load: a family access token lives 15
+      // minutes, and this modal can sit open far longer than that while someone
+      // looks up how their department is spelled. authBearer was captured in
+      // checkAuth() and would be stale.
+      const a = await getDownloadAuth();
+      if (!a) {
+        err.textContent = 'Your sign-in expired. Sign in again, then save.';
+        err.style.display = 'block';
+        this.disabled = false;
+        return;
+      }
       const r = await fetch(API + '/v1/auth/update-profile', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + authBearer, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': 'Bearer ' + a.token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ institution: inst, country: ctry, role: role })
       });
       const d = await r.json().catch(function () { return {}; });
@@ -1164,12 +1302,20 @@ let allTickers = [];
 let selectedTickers = new Set();
 let tickerMeta = {};
 
+// Byte size per ticker, as reported by /v1/symbols. NOTE THE SCOPE: that endpoint
+// lists the 1-minute CLEAN parquet objects only, so these numbers are the right
+// order of magnitude for any other version/timeframe/format but not the actual
+// size of one. They are used solely to warn before a bundle that a non-streaming
+// browser could not hold in memory, and the warning says "about".
+let tickerSizes = {};
+
 (async function loadAllTickers() {
   try {
     const r = await fetch(API + '/v1/symbols');
     if (r.ok) {
       const d = await r.json();
       allTickers = d.symbols.map(s => s.ticker);
+      d.symbols.forEach(s => { if (typeof s.size_bytes === 'number') tickerSizes[s.ticker] = s.size_bytes; });
     }
   } catch (e) {}
   // Also load ticker metadata for bundle filtering
@@ -1241,14 +1387,45 @@ function renderBundle() {
   count.textContent = selectedTickers.size + ' tickers selected';
 }
 
+function fmtBytes(n) {
+  if (!(n > 0)) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return (n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + u[i];
+}
+
+// A bundle collected in memory has to fit in the tab. 1.5 GB is well under where
+// a 64-bit Chrome tab dies but high enough to cover any ordinary selection; the
+// streaming path (Chrome/Edge) has no such limit and never consults this.
+const BLOB_FALLBACK_CAP = 1.5 * 1024 * 1024 * 1024;
+
 async function downloadBundle(format) {
-  const auth = await getDownloadAuth();
-  if (!auth) {
-    var c = document.getElementById('ekd-signin-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // ── ONE click must produce ONE file. ───────────────────────────────────────
+  // This used to request a signed URL per ticker and click a hidden <a download>
+  // for each, 300 ms apart. Every one of those is a separate cross-origin
+  // navigation download, so Chrome raised its "Download multiple files?" prompt —
+  // and kept raising it, because the loop kept starting new ones. Answering Block
+  // once writes automaticDownloads=block for hfdatalibrary.com, after which EVERY
+  // programmatic download on the site fails silently, including single-ticker
+  // ones. The page cannot read that setting or clear it; only the user can, from
+  // the padlock menu. Ahmed hit exactly this on 2026-08-31 and was left unable to
+  // download anything at all.
+  //
+  // So the files are now fetched with fetch() — no download is started per file —
+  // and written into a single .zip. On Chrome/Edge the archive streams straight
+  // to a location the user picks, so nothing is buffered and there is no size
+  // ceiling; elsewhere it is assembled in memory and handed over as one download
+  // at the end, which is why that path is capped.
+
+  // Cheap synchronous gates FIRST. Everything after the citation modal has to run
+  // inside the user's transient activation, because showSaveFilePicker() requires
+  // it — a network round-trip here would spend it and the save dialog would throw.
+  if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
+  if (!currentUser) {
+    var c0 = document.getElementById('ekd-signin-card'); if (c0) c0.scrollIntoView({ behavior: 'smooth', block: 'center' });
     alert('Please sign in to download — one free account works across every library.');
     return;
   }
-  if (selectedTickers.size === 0) { alert('No tickers selected.'); return; }
   if (!(await requireCitationAgreement())) return;
   const version = document.getElementById('bundle-version').value;
   const timeframe = document.getElementById('bundle-timeframe').value;
@@ -1258,7 +1435,53 @@ async function downloadBundle(format) {
   const status = document.getElementById('bundle-status');
   progress.style.display = 'block';
   status.style.whiteSpace = 'pre-line';   // the summary below is multi-line and set via textContent
+
+  if (!window.HFDZip) {
+    status.textContent = 'The bundle builder could not load (js/zipstream.js). Reload the page and try again, ' +
+      'or download tickers one at a time from the search box above.';
+    return;
+  }
+
+  // Warn before a selection the in-memory path cannot hold. The estimate comes
+  // from the 1-minute clean sizes /v1/symbols reports, so it is an order of
+  // magnitude for other timeframes rather than their real size — hence "about",
+  // and hence the hard stop on ACTUAL bytes further down, which does not rely on
+  // the estimate being right.
+  let estimate = 0;
+  for (const t of tickers) estimate += (tickerSizes[t] || 0);
+  if (!window.HFDZip.supportsStreaming && estimate > BLOB_FALLBACK_CAP) {
+    const goOn = confirm(
+      'This browser cannot stream a download to disk, so the archive has to be built in memory.\n\n' +
+      'You selected ' + tickers.length + ' tickers (about ' + fmtBytes(estimate) + '). Bundles over ' +
+      fmtBytes(BLOB_FALLBACK_CAP) + ' can run the tab out of memory here.\n\n' +
+      'Chrome or Edge will stream this to disk with no size limit. Continue anyway?');
+    if (!goOn) { progress.style.display = 'none'; return; }
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const archiveName = 'hfdatalibrary_' + version + '_' + timeframe + '_' + tickers.length + 'tickers_' + stamp + '.zip';
+  status.textContent = 'Choose where to save the archive…';
+  let sink;
+  try {
+    sink = await window.HFDZip.openArchiveSink(archiveName);
+  } catch (e) { sink = null; }
+  if (!sink) {                                   // user cancelled the save dialog
+    status.textContent = 'Cancelled — nothing was downloaded.';
+    bar.style.width = '0%';
+    return;
+  }
+  const zip = new window.HFDZip.ZipWriter(sink.writer);
+  // Set expectations before the first file, not after twenty minutes of silence.
+  // The floor is the server's own 100-per-minute cap, so it is a real minimum
+  // rather than a guess about bandwidth, and it is stated as "at least".
+  if (tickers.length > 100) {
+    status.textContent = 'Building ' + archiveName + '. The API allows 100 downloads a minute, ' +
+      'so ' + tickers.length + ' tickers will take at least ' + Math.ceil(tickers.length / 100) +
+      ' minutes. Keep this tab open — closing it stops the archive.';
+  }
+
   let completed = 0, failed = 0, authDead = null, authDeadReason = '';
+  let bytesWritten = 0, capHit = false;
   // The loop used to keep a bare `failed` count and discard the JSON body it had already parsed,
   // so every refusal — unverified email, incomplete profile, bad timeframe — collapsed into an
   // unexplained number. Each failure now records the server's own words alongside its status.
@@ -1267,9 +1490,64 @@ async function downloadBundle(format) {
   // for the next ticker would be refused identically, so firing 1,390 more doomed calls only wastes
   // the user's time and our rate budget. We stop and explain instead.
   let stopEarly = false;
-  for (const ticker of tickers) {
+
+  // ── The 100-downloads-per-minute cap, and why this loop must respect it ──────
+  // /v1/download charges 'api:download' = { max: 100, window: 60 } PER USER
+  // (api/src/index.js). The old loop slept 300 ms between tickers, which held it
+  // to ~200/min — over the cap, but the second hop was a browser navigation whose
+  // arrival rate the page never saw, so nothing here ever had to notice a 429.
+  // Fetching the bytes ourselves removes both the sleep and the blindness: on a
+  // fast link this would issue ~5 requests a second, collect 429s from the 101st
+  // ticker onward, and — because 429 is not 403 — quietly write a complete-LOOKING
+  // archive containing only the first hundred files. A silently short bundle is
+  // the worst possible outcome for a research dataset.
+  //
+  // So a 429 is treated as "wait", never as a failure: the server sends
+  // Retry-After (rateLimitResponse), and the same ticker is retried after it.
+  // The window is fixed rather than sliding, so the wait is bounded by 60 s.
+  let rateWaits = 0;
+  const RETRY_LIMIT = 3;
+  const retriesFor = {};
+  const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+  // Stay just under the cap rather than discovering it. The server's window is
+  // fixed (not sliding), so counting our own downloads inside a 60 s window and
+  // pausing at 95 keeps a long bundle out of 429 territory entirely; the handler
+  // below stays as the safety net for a window we mis-estimate or share with
+  // another tab.
+  const DL_PER_MIN = 95;
+  let winStart = Date.now(), winCount = 0;
+  async function paceDownloads() {
+    const now = Date.now();
+    if (now - winStart >= 60000) { winStart = now; winCount = 0; }
+    if (winCount >= DL_PER_MIN) {
+      let left = Math.ceil((60000 - (now - winStart)) / 1000);
+      for (; left > 0; left--) {
+        status.textContent = completed + ' / ' + tickers.length + ' added (' + fmtBytes(bytesWritten) + ')' +
+          '\nPacing to the 100-downloads-per-minute limit — continuing in ' + left + 's.';
+        await sleep(1000);
+      }
+      winStart = Date.now(); winCount = 0;
+    }
+    winCount++;
+  }
+  async function pauseForRateLimit(resp, ticker) {
+    // Retry-After is seconds. Clamp: a missing or absurd value must not park the
+    // user for an unbounded time, and must not spin either.
+    let secs = parseInt(resp.headers.get('Retry-After') || '', 10);
+    if (!(secs > 0) || secs > 120) secs = 60;
+    rateWaits++;
+    for (let left = secs; left > 0; left--) {
+      status.textContent = completed + ' / ' + tickers.length + ' added (' + fmtBytes(bytesWritten) + ')' +
+        '\nAt the 100-downloads-per-minute limit — resuming in ' + left + 's (' + ticker + ').';
+      await sleep(1000);
+    }
+  }
+
+  for (let ti = 0; ti < tickers.length; ti++) {
+    const ticker = tickers[ti];
     const a2 = await getDownloadAuth();                        // fresh per ticker (D38: 15-min edl_at)
-    if (!a2) { authDead = auth.kind; break; }
+    if (!a2) { authDead = 'family'; break; }
     try {
       const r = await fetch(API + '/v1/download-token/' + ticker + '?version=' + version + '&format=' + format + '&timeframe=' + timeframe, {
         headers: { 'Authorization': 'Bearer ' + a2.token }
@@ -1281,13 +1559,47 @@ async function downloadBundle(format) {
       try { data = await r.json(); } catch (e) { data = null; }
       const serverMsg = (data && typeof data.error === 'string') ? data.error : '';
       if (r.ok && data && data.url) {
-        const a = document.createElement('a');
-        a.href = data.url;
-        a.download = ticker + '_' + version + '_' + timeframe + '.' + format;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        await new Promise(resolve => setTimeout(resolve, 300));
+        // Hop 2 is now a fetch, not a navigation, so its status is finally
+        // OBSERVABLE — the old loop counted a ticker as downloaded the moment the
+        // token request succeeded and could not see a failure here at all.
+        // data.url is a signed URL on api.hfdatalibrary.com, which returns CORS
+        // headers for this origin, so the body is readable.
+        await paceDownloads();
+        const fr = await fetch(data.url);
+        if (fr.status === 429) {
+          // Not a failure — the cap. Wait it out and take this ticker again. The
+          // token just spent is single-use, so the retry re-runs BOTH hops.
+          await pauseForRateLimit(fr, ticker);
+          if (retriesFor[ticker] === undefined) retriesFor[ticker] = 0;
+          if (++retriesFor[ticker] <= RETRY_LIMIT) { ti--; continue; }
+          failed++;
+          failures.push({ ticker: ticker, status: 429, reason: 'Still rate-limited after ' + RETRY_LIMIT + ' waits.' });
+        } else if (!fr.ok) {
+          let ferr = '';
+          try { const fj = await fr.json(); if (fj && typeof fj.error === 'string') ferr = fj.error; } catch (e) {}
+          failed++;
+          failures.push({ ticker: ticker, status: fr.status, reason: ferr });
+          if (ferr && (fr.status === 403 || fr.status === 400)) stopEarly = true;
+        } else {
+          const bytes = new Uint8Array(await fr.arrayBuffer());
+          if (!window.HFDZip.supportsStreaming && bytesWritten + bytes.length > BLOB_FALLBACK_CAP) {
+            // Actual bytes, not the estimate. Stop cleanly and still emit a valid
+            // archive of what was fetched rather than losing the whole run.
+            capHit = true;
+            break;
+          }
+          await zip.add(ticker + '_' + version + '_' + timeframe + '.' + format, bytes);
+          bytesWritten += bytes.length;
+        }
+      } else if (r.status === 429) {
+        // Hop 1 is not charged against 'api:download' today, but a 429 here would
+        // mean some other limit engaged; the correct response is identical — wait
+        // and retry, never record it as a per-ticker failure.
+        await pauseForRateLimit(r, ticker);
+        if (retriesFor[ticker] === undefined) retriesFor[ticker] = 0;
+        if (++retriesFor[ticker] <= RETRY_LIMIT) { ti--; continue; }
+        failed++;
+        failures.push({ ticker: ticker, status: 429, reason: 'Still rate-limited after ' + RETRY_LIMIT + ' waits.' });
       } else if (r.status === 401) {                                // D38: session died mid-bundle → stop + recover
         authDead = a2.kind; authDeadReason = serverMsg; break;
       } else {
@@ -1312,26 +1624,51 @@ async function downloadBundle(format) {
     }
     completed++;
     bar.style.width = ((completed / tickers.length) * 100) + '%';
-    status.textContent = completed + ' / ' + tickers.length + ' downloaded' + (failed > 0 ? ' (' + failed + ' failed)' : '');
+    status.textContent = completed + ' / ' + tickers.length + ' added to the archive (' +
+      fmtBytes(bytesWritten) + ')' + (failed > 0 ? ' — ' + failed + ' failed' : '');
     if (stopEarly) break;                                          // after the progress update, so the bar reflects the attempt
   }
+
+  // The archive must be closed on EVERY exit path. An unfinished zip has no
+  // central directory and no reader will open it, so bailing out early without
+  // this would hand the user a corrupt file — worse than the failure that caused
+  // the bail-out, and indistinguishable from it.
+  const ok = completed - failed;
+  let finalizeError = '';
+  try {
+    await zip.finish();
+    await sink.deliver();
+  } catch (e) {
+    finalizeError = (e && e.message) ? e.message : String(e);
+  }
+
   if (authDead) {
-    status.textContent = 'Sign-in ended — ' + (completed - failed) + ' downloaded before it stopped.';
+    status.textContent = 'Sign-in ended — the archive was closed with the ' + ok + ' file(s) fetched before it stopped.';
     handleDownloadAuthDead(authDead, authDeadReason);
     return;
   }
-  const ok = completed - failed;
-  if (failures.length === 0) {
-    status.textContent = 'Done! ' + ok + ' files downloaded.';
+  if (finalizeError) {
+    status.textContent = 'The archive could not be written: ' + finalizeError +
+      '\nIf you are out of disk space, free some and try again with fewer tickers.';
     return;
   }
-  // Note: only the token request (hop 1) is observable from here. The file itself is fetched by a
-  // browser navigation to data.url, whose status JS cannot see, so a refusal at that second hop
-  // (missing file for that timeframe, or the 100/min rate limit) still counts as a success above.
+  const savedLine = 'Saved 1 archive — ' + archiveName + ' (' + fmtBytes(bytesWritten) + ', ' + ok + ' files inside).' +
+    (rateWaits > 0 ? ' Paused ' + rateWaits + '× for the per-minute download limit.' : '');
+  if (capHit) {
+    status.textContent = savedLine + '\nStopped at this browser\'s ' + fmtBytes(BLOB_FALLBACK_CAP) +
+      ' in-memory limit, so ' + (tickers.length - completed) + ' of ' + tickers.length +
+      ' tickers are not included. Use Chrome or Edge to save the whole selection in one archive, ' +
+      'or split the selection.';
+    return;
+  }
+  if (failures.length === 0) {
+    status.textContent = savedLine;
+    return;
+  }
   const head = (ok === 0)
-    ? 'No files downloaded — ' + failed + ' failed.'
-    : 'Done! ' + ok + ' files downloaded, ' + failed + ' failed.';
-  const stoppedNote = (completed < tickers.length)
+    ? 'No files could be fetched — ' + failed + ' failed. An empty archive was written.'
+    : savedLine + ' ' + failed + ' ticker(s) failed and are not in it.';
+  const stoppedNote = (completed < tickers.length && !capHit)
     ? ' Stopped after ' + completed + ' of ' + tickers.length + ' — the rest would be refused the same way.'
     : '';
   // The ONE failure that ended the run, or null if the loop went the whole way. The page and the
@@ -1462,6 +1799,53 @@ function handleRoleChange() {
 }
 
 // ── Signed download — request a short-lived token and open it ──
+// Save ONE signed URL to disk.
+//
+// This used to be `window.location.href = data.url`, and that is a navigation to
+// a Content-Disposition: attachment response — which Chrome routes through the
+// very same DownloadRequestLimiter as the old bundle loop's <a download> clicks
+// (content/browser/download/download_manager_impl.cc, InterceptNavigation ->
+// CheckDownloadAllowed). So a visitor who once answered Block to the bundle's
+// "download multiple files" prompt lost SINGLE-ticker downloads too, with no
+// error and nothing on the page able to see it. That is what Ahmed meant by
+// "downloads don't work anymore for hf".
+//
+// The File System Access path is the one download route that limiter never sees
+// (its permission is FILE_SYSTEM_WRITE_GUARD; it creates no DownloadItem), so on
+// Chrome and Edge this works even for someone still carrying that Block. The
+// navigation stays as the fallback for browsers without the API — where the
+// limiter also exists but the user has not been prompted 1,391 times, because
+// nothing on this page does that any more.
+async function saveSignedUrl(url, filename) {
+  if (typeof window.showSaveFilePicker === 'function') {
+    let handle = null;
+    try {
+      handle = await window.showSaveFilePicker({ suggestedName: filename });
+    } catch (e) {
+      // AbortError == the user cancelled the save dialog; respect that and stop.
+      // Anything else (most likely the transient activation having expired while
+      // the token request was in flight) falls through to the navigation.
+      if (e && e.name === 'AbortError') return;
+      handle = null;
+    }
+    if (handle) {
+      const fr = await fetch(url);
+      if (!fr.ok) {
+        let msg = '';
+        try { const j = await fr.json(); if (j && j.error) msg = j.error; } catch (e2) {}
+        alert(downloadFailureText(fr.status, msg) + '\n\n' + downloadFailureAdvice(fr.status, msg));
+        return;
+      }
+      const w = await handle.createWritable();
+      // Streamed, not buffered: a 1-minute parquet is tens of MB and there is no
+      // reason for any of it to sit in the tab.
+      await fr.body.pipeTo(w);
+      return;
+    }
+  }
+  window.location.href = url;
+}
+
 async function downloadViaToken(ticker, format) {
   const auth = await getDownloadAuth();
   if (!auth) {
@@ -1478,7 +1862,7 @@ async function downloadViaToken(ticker, format) {
     });
     const data = await r.json();
     if (r.ok && data.url) {
-      window.location.href = data.url;
+      await saveSignedUrl(data.url, ticker + '_' + version + '_' + timeframe + '.' + format);
     } else if (r.status === 401) {
       handleDownloadAuthDead(auth.kind, data.error);          // D38: dead session → recover, no retry loop
     } else if (r.status === 403) {
@@ -1646,6 +2030,11 @@ async function registerUser() {
         const orcidNote = document.getElementById('reg-orcid-notice');
         if (orcidNote) orcidNote.textContent = data.orcid_notice;
       }
+      // Unmissable version of the same instruction. The worker reports
+      // email_verified: false for everyone except an admin address, so the modal
+      // is skipped for the accounts that genuinely have nothing to verify rather
+      // than being shown to everyone unconditionally.
+      if (data.email_verified === false) showVerifyModal(email);
       checkAuth();
     } else {
       result.textContent = '';
@@ -1665,6 +2054,7 @@ async function registerUser() {
 }
 </script>
 
+<script src="../js/zipstream.js"></script>
 <script src="../js/site.js"></script>
 </body>
 </html>

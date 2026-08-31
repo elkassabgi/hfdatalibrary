@@ -669,29 +669,10 @@ document.querySelectorAll('.cfg-copy').forEach(function (btn) {
 });
 </script>
 
-<script>
-// Fill the signed-in user's real API key into every MCP config and prompt.
-(function () {
-  var token = localStorage.getItem('hfd_session');
-  if (!token) return;
-  fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (u) {
-      if (!u || !u.api_key) return;
-      document.querySelectorAll('.ekey').forEach(function (el) { el.textContent = u.api_key; });
-      var kb = document.getElementById('keybar');
-      if (kb) {
-        kb.classList.add('signed');
-        kb.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every command below — just copy and paste.';
-      }
-      var note = document.getElementById('key-note');
-      if (note) note.innerHTML = '<strong>Signed in.</strong> Your real API key is already filled into every prompt below &mdash; ' +
-        'just copy and paste. Treat these like a password — do not share prompts that contain your key. ' +
-        'Tokens like <span class="placeholder">AAPL</span> are still meant to be edited.';
-    })
-    .catch(function () {});
-})();
-</script>
+<!-- Key substitution lives in js/site.js (window.HFDKeys): one implementation for
+     every page, and one that resolves BOTH sign-in modes. The copy that used to sit
+     here read only localStorage['hfd_session'] and so did nothing at all for a
+     family-SSO session. -->
 <script src="../js/site.js"></script>
 </body>
 </html>
