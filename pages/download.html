@@ -1156,7 +1156,11 @@ async function resendVerification() {
 // the BOTTOM, so on the one screen where the instruction matters most the user
 // cannot see it — they read "Account created!", copy the API key, and leave. This
 // puts the single next step in front of them before anything else.
-function showVerifyModal(email) {
+// mailSent === false means the worker KNOWS Resend refused the message
+// (handleRegister now takes sendEmail's return value, not just its throw). In that
+// case promising "the link we just sent" would be a lie the user pays for with an
+// empty inbox — say what happened and point at the Resend button instead.
+function showVerifyModal(email, mailSent) {
   if (document.getElementById('verify-modal-overlay')) return;
   const wrap = document.createElement('div');
   wrap.id = 'verify-modal-overlay';
@@ -1169,14 +1173,18 @@ function showVerifyModal(email) {
   const p1 = document.createElement('p');
   p1.style.cssText = 'margin:0 0 0.5rem; font-size:1rem; color:var(--gray-700); line-height:1.55;';
   // textContent for the address — it is user input echoed straight back.
-  p1.appendChild(document.createTextNode('Your account exists, but downloads stay locked until you click the link we just sent to '));
+  p1.appendChild(document.createTextNode(mailSent === false
+    ? 'Your account exists, but downloads stay locked until your email is verified — and our first attempt to email '
+    : 'Your account exists, but downloads stay locked until you click the link we just sent to '));
   const strong = document.createElement('strong');
   strong.textContent = email;
   p1.appendChild(strong);
-  p1.appendChild(document.createTextNode('.'));
+  p1.appendChild(document.createTextNode(mailSent === false ? ' did not go through.' : '.'));
   const p2 = document.createElement('p');
   p2.style.cssText = 'margin:0 0 1.2rem; font-size:0.88rem; color:var(--gray-500);';
-  p2.textContent = 'No email after a minute? Check your spam or junk folder — university mail filters catch it often.';
+  p2.textContent = mailSent === false
+    ? 'Use the "Resend email" button in the banner at the top of this page in a minute or two — the account itself is fine.'
+    : 'No email after a minute? Check your spam or junk folder — university mail filters catch it often.';
   const close = document.createElement('button');
   close.className = 'btn btn-primary';
   close.style.cssText = 'width:100%;';
@@ -2026,7 +2034,7 @@ async function registerUser() {
       // email_verified: false for everyone except an admin address, so the modal
       // is skipped for the accounts that genuinely have nothing to verify rather
       // than being shown to everyone unconditionally.
-      if (data.email_verified === false) showVerifyModal(email);
+      if (data.email_verified === false) showVerifyModal(email, data.verification_email_sent);
       checkAuth();
     } else {
       result.textContent = '';
