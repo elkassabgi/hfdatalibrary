@@ -312,7 +312,13 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
         stats["ca_alert"] = (
             f"{ticker}: consistent {R_eff:.0f}:1 candidate split (x{r:.3f} overnight, "
             f"stable all day) — BELOW the 3:1 auto-apply floor (2:1 is crash-ambiguous). "
-            f"If confirmed a real split, run: python -m pipeline.manual_split {ticker} {snapped:.6g}")
+            # PRINT THE CA DATE. Without it the suggested command rescales the WHOLE history,
+            # and by the time a human confirms the split this function has already appended
+            # today's bars on the NEW basis (the caller concatenates whether or not the action
+            # was applied), so those bars would be rescaled a second time. The date is the first
+            # session already on the new basis, i.e. the bars being appended right now.
+            f"If confirmed a real split, run: python -m pipeline.manual_split {ticker} "
+            f"{snapped:.6g} {nb['datetime'].dt.normalize().min().date()}")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
         return existing_raw, False
     rescaled = existing_raw.copy()
