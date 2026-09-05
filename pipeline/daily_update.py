@@ -455,8 +455,13 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         try:
             # ca_rescaled: the whole history changed basis, so every historical
             # variables row is stale — full recompute, not just the new day.
+            # is_backfill: the clean file was re-cleaned in full (step 3), so every
+            # historical CLEAN variables row describes bars that no longer exist;
+            # without a full recompute here the served variables drift from the
+            # served bars on every backfill day (R745 finding 5; the fleet-wide
+            # staleness measured 2026-09-05, handoff section 15).
             _vs = sync_ticker_variables(client, _vver, ticker, _vbars,
-                                        force_full=ca_rescaled)
+                                        force_full=(ca_rescaled or is_backfill))
             stats[f"{_vver}_var_rows"] = _vs.get("new_rows", 0)
         except Exception as _ve:  # noqa: BLE001 - variables must never break OHLCV
             print(f"[variables] WARN {ticker} ({_vver}): {_ve}", flush=True)
