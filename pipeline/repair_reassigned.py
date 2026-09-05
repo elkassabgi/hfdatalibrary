@@ -10,8 +10,10 @@ vs the symbol's current owner on Yahoo):
 
     GOLD  Barrick through 2025-12-01, Gold.com, Inc. from 2025-12-02 (191 sessions)
     STI   SunTrust through 2019-12-06, Solidion Technology from 2024-02-05
-    IPW   a 2008-2017 instrument, iPower Inc. from 2021-05-12
-    SKK   a 2007-2015 instrument, SKK Holdings from 2024-10-08
+    IPW   SPDR S&P International Energy Sector ETF (2008-2017; SPDR Index Shares Funds 485BPOS 2008-07-16,
+          acc. 0000950135-08-004982), iPower Inc. from 2021-05-12
+    SKK   ProShares UltraShort Russell2000 Growth (2007-2015; ProShares Trust 497 2014-12-23,
+          acc. 0001193125-14-452796), SKK Holdings from 2024-10-08
     VRM   Vroom's cancelled equity through 2024-11-29, the post-Chapter-11 Vroom from 2025-02-20
     USLV  VelocityShares 3x Silver ETN through 2020-07-02, a Direxion ETF from 2026-05-27
     PARA  Paramount Global through 2025-08-06, Banzai International from 2026-08-07
