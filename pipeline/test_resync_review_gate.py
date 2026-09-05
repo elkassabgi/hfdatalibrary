@@ -165,43 +165,108 @@ def test_a_drifted_middle_reading_is_a_breach():
     assert srb._sibling_drift(out, _shas())
 
 
+@pytest.mark.parametrize("order", ["bad_first", "good_first"])
+def test_naming_a_module_twice_is_a_breach_in_either_order(order):
+    """R760 #1, the worst defeat found so far: `parse` built a dict, so a child could print a guarded
+    module TWICE - the drifted value and then the driver's value - and the last write won. The drift
+    vanished, the ticker was logged 0, and the next start skipped it forever. A dict cannot represent
+    "said twice", so the parser now returns the ordered names too."""
+    good, bad = _shas()["aggregate.py"][:12], "999999999999"
+    pair = (bad, good) if order == "bad_first" else (good, bad)
+    line = _reading().replace(f"aggregate {good}", f"aggregate {pair[0]}, aggregate {pair[1]}")
+    assert srb._sibling_drift(line, _shas()), f"a duplicate name passed with {order}"
+
+
+def test_a_one_character_hash_is_a_breach():
+    """R760 #2: the compare was `parent.startswith(short)`, so ANY prefix matched - a child printing
+    a single character as its hash was clean every time."""
+    assert srb._sibling_drift(_reading(aggregate="0"), _shas())
+
+
+def test_a_prefix_of_the_real_hash_is_still_a_breach():
+    """The same defect's sharpest form: a genuine prefix of the driver's own hash."""
+    real = _shas()["aggregate.py"][:12]
+    assert srb._sibling_drift(_reading(aggregate=real[:6]), _shas())
+
+
+def test_a_part_naming_no_guarded_module_is_a_breach():
+    """R760 #1's rider: `malformed` tested arity only, so a well-formed pair naming something outside
+    the guarded set passed - the check must know WHICH modules it verified."""
+    assert srb._sibling_drift(_reading() + ", something_else 0123456789ab", _shas())
+
+
+def test_a_non_hex_value_is_a_breach():
+    assert srb._sibling_drift(_reading(aggregate="zzzzzzzzzzzz"), _shas())
+
+
+# ---------------------------------------------------------------- revocation must fail OPPOSITE to approval
+
+@pytest.mark.parametrize("line", [
+    "    REVOKE-APPLY resync_variables.py {sha} {rid}",
+    "\tREVOKE-APPLY resync_variables.py {sha} {rid}",
+    "REVOKE-APPLY  resync_variables.py  {sha}  {rid}",
+    "see below: REVOKE-APPLY resync_variables.py {sha} {rid}",
+    "    REVOKE-APPLY resync_variables.py * {rid}",
+    "REVOKE-APPLY resync_variables.py {sha} *",
+])
+def test_a_revocation_is_honoured_however_it_is_written(passed, line):
+    """R760 #2: approval is anchored at column 0 and fails CLOSED, which is right. The revoke was
+    anchored the same way and so failed OPEN - an indented one, or one with a double space, was
+    silently ignored and the approval it withdrew still stood."""
+    assert passed(GOOD + "\n" + line.format(sha=SHA, rid=ID)) is False
+
+
+@pytest.mark.parametrize("word", [
+    "REVOKED", "revoking this approval", "supersede this", "supersedes AR-037", "superseded",
+    "withdrawn", "rescinded", "cancelled", "obsolete", "expired", "invalid", "NOT VALID",
+    "no longer applies", "do  not  use", "don't use",
+])
+def test_a_withdrawing_comment_on_the_token_refuses(passed, word):
+    assert passed(f"{GOOD}  # {word}") is False, word
+
+
+def test_an_innocent_comment_still_authorises(passed):
+    """The word list must not swallow ordinary notes - a gate that refuses everything is not a gate."""
+    assert passed(GOOD + "  # cleared; avoid rerunning during the daily window") is True
+
+
+def test_an_unparseable_revoke_mention_refuses_loudly(passed, capsys):
+    """We cannot tell which id it was meant for, so the safe reading of 'somebody tried to withdraw
+    this' is to stop - never to pass over it in silence."""
+    assert passed(GOOD + "\nREVOKE-APPLY resync_varibles.py oops") is False
+    assert "REVOKE-APPLY" in capsys.readouterr().out
+
+
+def test_a_bom_does_not_hide_the_first_line(passed):
+    """A UTF-8 BOM made line 1 unmatchable; harmless for an approval, but it would also swallow a
+    revocation written there."""
+    assert passed("﻿" + GOOD) is True
+
+
 # ---------------------------------------------------------------- the recode rule
 
-def _recode(rc, snapshot_ok):
-    """The driver's drift rule, mirrored so it can be asserted (the driver applies it inline)."""
-    return 4
+@pytest.mark.parametrize("rc", [0, 1, 2, 3, 5, 6, 7])
+def test_no_child_code_survives_a_drift(rc):
+    """THE REAL FUNCTION the driver calls, not a copy of the rule written here.
+
+    R760 #3: the previous version of these tests defined its own `_recode` and asserted that. It
+    passed while the driver did anything at all, including a complete revert to the child's own code.
+    Covers R754 #5 (the conclusion codes 0/2/3/6/7), R755 #4 (the write claims 1/5) and R759 (no
+    snapshot is still UNKNOWN, the deliberate deviation from R757 #6) in one rule, because the rule is
+    now one rule."""
+    assert srb.recode_on_drift(rc) == 4
 
 
-@pytest.mark.parametrize("rc", [0, 2, 3, 6, 7])
-def test_a_conclusion_past_the_snapshot_is_never_believed_from_a_drifted_child(rc):
-    """R754 #5, un-done by R757 #1's scoping and restored: these codes are the child CONCLUDING
-    something about served state, so a drift invalidates the conclusion."""
-    assert _recode(rc, snapshot_ok=True) == 4
-
-
-@pytest.mark.parametrize("rc", [1, 5])
-def test_past_the_snapshot_even_write_claims_are_unknown(rc):
-    """R755 #4: past the snapshot-success line, 'written then restored' and 'aborted' are unknown too."""
-    assert _recode(rc, snapshot_ok=True) == 4
-
-
-@pytest.mark.parametrize("rc", [0, 1, 2, 5])
-def test_a_drift_before_any_snapshot_is_still_unknown(rc):
-    """A deliberate deviation from R757 #6, which asked for 5 here. Under drift the child's stdout is
-    untrustworthy in both directions: a MISSING snapshot line is not evidence that no write happened,
-    because the code that prints it is the code that changed. 5 over a real write hides corruption;
-    4 over a child that did nothing costs one inspection. R757 #6's stated harm - the child's own 0
-    surviving into the log, which the next start reads as done - is fixed either way."""
-    assert _recode(rc, snapshot_ok=False) == 4
-
-
-def test_the_recode_rule_is_total_at_the_call_site():
-    """A source pin, because the rule lives in the driver, not here (R757 #1 shipped because nothing
-    asserted the call site)."""
+def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
+    """A source pin over the CALL SITE, hardened after R760 #3 showed the old one passing on 5 of 6
+    mutations - including `rc = 4` followed by `rc = raw_rc`, a total revert."""
     src = open(os.path.join(HERE, "seam_rebase_batch.py"), encoding="utf-8").read()
     block = src.split("if drift:", 1)[1].split("hash_breach = hash_breach or", 1)[0]
-    code = "\n".join(l for l in block.splitlines() if not l.strip().startswith("#"))
-    assert "snapshot_ok" not in code and "if " not in code, (
-        "the drift recode must be TOTAL - one unconditional rc = 4. Every branch added here so far "
-        "(on the child's exit code in R757 #1, on snapshot_ok after that) has un-done an earlier rule")
-    assert "rc = 4" in code
+    code = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith("#")]
+    assigns = [l for l in code if l.startswith("rc =") or l.startswith("rc=")]
+    assert assigns == ["rc = recode_on_drift(rc)"], (
+        f"the drift block must assign rc exactly once, through the shipped function; found {assigns}. "
+        "A second assignment is how a revert hides - the old pin accepted 'rc = 4' followed by "
+        "'rc = raw_rc'")
+    assert "snapshot_ok" not in " ".join(code), (
+        "the recode must not branch on snapshot_ok - that scoping un-did R754 #5 once already")

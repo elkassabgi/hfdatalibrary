@@ -155,9 +155,21 @@ import re as _re
 # authorised it - and so did the token quoted as an indented example inside a FAIL row, a fenced code
 # block, or an HTML comment. A real approval is written flush left and nowhere else.
 APPROVE_RE_FMT = r"^APPROVE-APPLY resync_variables\.py {sha} (\S+)[ \t]*(?:#(.*))?$"
-# and an approval can be withdrawn, either by a REVOKE line or by saying so in the token's own comment
-REVOKE_RE_FMT = r"^REVOKE-APPLY resync_variables\.py (?:{sha}|\*) (\S+)[ \t]*(?:#.*)?$"
-REVOKING_COMMENT_RE = _re.compile(r"\b(revoke[ds]?|superseded|do not use|withdrawn|void)\b", _re.I)
+# AN APPROVAL AND A REVOCATION MUST FAIL IN OPPOSITE DIRECTIONS (R760 #2). The approve token is
+# anchored at column 0 and fails CLOSED - a mis-typed approval simply does not authorise, which is
+# safe. The revoke was anchored the same way and therefore failed OPEN: an indented `REVOKE-APPLY`,
+# or one with a double space, was silently ignored and the approval it meant to withdraw still stood,
+# with no diagnostic. A revocation is now honoured ANYWHERE on a line, at any indentation, with any
+# run of whitespace between its fields and any text around it.
+REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+(\S+)"
+# ...and a line that MENTIONS a revocation we could not parse refuses outright rather than passing in
+# silence: we cannot tell who it was for, and the safe reading of "someone tried to withdraw this" is
+# to stop.
+REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
+REVOKING_COMMENT_RE = _re.compile(
+    r"(\brevok\w*|\bsupersed\w*|\bwithdraw\w*|\brescind\w*|\bcancel\w*|\bvoid\b|\bobsolete\b"
+    r"|\bexpired\b|\binvalid\b|\bnot\s+valid\b|\bno\s+longer\b|\bdo\s+not\s+use\b|\bdon'?t\s+use\b)",
+    _re.I)
 ID_RE = _re.compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
 
 
@@ -184,16 +196,23 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
         return False
     sha12 = _SOURCE_SHA[:12]
     want = _re.compile(APPROVE_RE_FMT.format(sha=_re.escape(sha12)))
-    revoke = _re.compile(REVOKE_RE_FMT.format(sha=_re.escape(sha12)))
+    revoke = _re.compile(REVOKE_ANY_FMT.format(sha=_re.escape(sha12)), _re.I)
     approved = False
+    unparsed_revokes: list = []
     try:
-        with open(passed_file, encoding="utf-8", errors="replace") as fh:
-            for ln in fh:
+        # utf-8-sig, because a BOM makes the FIRST line unmatchable and a first-line approval would
+        # then be silently ignored - harmless for an approval, but it would also swallow a revocation.
+        with open(passed_file, encoding="utf-8-sig", errors="replace") as fh:
+            for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
-                r = revoke.match(ln)
-                if r and r.group(1) in (rid, "*"):
-                    _say(f"  --reviewed {rid}: {passed_file} carries a REVOKE-APPLY line for it - refused")
-                    return False
+                r = revoke.search(ln)
+                if r:
+                    if r.group(1) in (rid, "*"):
+                        _say(f"  --reviewed {rid}: {passed_file}:{n} carries a REVOKE-APPLY line for "
+                             f"it - refused")
+                        return False
+                elif REVOKE_MENTION_RE.search(ln):
+                    unparsed_revokes.append((n, ln.strip()[:90]))
                 m = want.match(ln)
                 if m and m.group(1) == rid:
                     comment = (m.group(2) or "")
@@ -204,6 +223,17 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                     approved = True          # keep reading: a later REVOKE-APPLY still wins
     except OSError as ex:
         _say(f"  --reviewed {rid}: cannot read {passed_file} ({type(ex).__name__}) - refused")
+        return False
+    if unparsed_revokes:
+        # Never pass over one of these in silence. We cannot tell which id it was meant for, and the
+        # safe reading of "somebody tried to withdraw an approval here" is to stop.
+        _say(f"  --reviewed {rid}: {passed_file} mentions REVOKE-APPLY on "
+             f"{len(unparsed_revokes)} line(s) that do not parse as a revocation for this tool and "
+             f"hash - refusing rather than guessing who they were for:")
+        for n, text in unparsed_revokes[:5]:
+            _say(f"      line {n}: {text}")
+        _say(f"      a revocation reads: REVOKE-APPLY resync_variables.py {sha12} <id>   "
+             f"(or * for the hash, or * for the id)")
         return False
     if approved:
         return True

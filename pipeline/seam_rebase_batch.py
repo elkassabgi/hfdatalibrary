@@ -35,8 +35,10 @@ ANY BREACH - a wrong header hash, no header, a missing or incomplete sibling lin
 disagree - IS LOGGED 4 (served state unknown) and stops the batch, whatever the child's own exit code
 said and whether or not it printed a snapshot line. The reason is that under a breach the child's stdout
 is untrustworthy in both directions: a missing snapshot line is not evidence that no write happened,
-because the code that prints it is the code that changed. Exit 5 is therefore reserved for a CLEAN
-child's honest "aborted before any write" and for refusals the driver settles before a child runs.
+because the code that prints it is the code that changed. Exit 5 in the LOG therefore has exactly one
+producer: a CLEAN child's own honest "aborted before any write". (The driver's own pre-child refusals
+- an unreadable guarded module, a trailing exit 4, a bad argument - return 1 and write no log line at
+all; R760 corrected this sentence, which used to claim they were the other producer of 5.)
 """
 from __future__ import annotations
 import argparse, datetime as dt, os, re, subprocess, sys
@@ -64,6 +66,10 @@ def _utc() -> str:
 
 
 GUARDED = ("seam_rebase.py", "aggregate.py", "r2_client.py", "variables_sync.py", "compute_variables.py", "symbol_map.py")
+# How many hex characters the child prints per module. MUST match the `[:12]` in seam_rebase.py's and
+# resync_variables.py's `_imported_module_hashes`. The sibling check now compares for EQUALITY at this
+# width (R760 #2); it used to accept any prefix, so a one-character "hash" matched everything.
+SHORT = 12
 
 
 def _source_sha256s(names=GUARDED) -> dict:
@@ -84,6 +90,35 @@ def _source_sha256s(names=GUARDED) -> dict:
     return out
 
 
+SIBLINGS_DECL_RE = re.compile(r"^SIBLINGS\s*=\s*\(([^)]*)\)", re.M)
+
+
+def _assert_guarded_matches_tool() -> None:
+    """The driver's GUARDED and seam_rebase.py's SIBLINGS are separate literals in separate files.
+    Three reviews recorded that nothing compared them (R757, R760 lesser): drop a name from GUARDED and
+    the driver stops hashing a module the child still imports, silently, with no test failing. Both
+    tools print through seam_rebase._say_module_hashes, so there is exactly one literal to check.
+
+    Refuses rather than warns: a guard that notices a mismatch and continues is the R503 shape.
+    """
+    path = os.path.join(HERE, "seam_rebase.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError as ex:
+        raise SystemExit(f"source guard: cannot read {path} to cross-check SIBLINGS ({type(ex).__name__}: {ex})")
+    m = SIBLINGS_DECL_RE.search(src)
+    if not m:
+        raise SystemExit(f"source guard: {path} declares no SIBLINGS tuple, so the driver cannot confirm "
+                         f"it guards the same modules the child imports - refusing to run")
+    theirs = tuple(p.strip().strip("\"'") for p in m.group(1).split(",") if p.strip())
+    ours = tuple(n[:-3] for n in GUARDED)
+    if theirs != ours:
+        raise SystemExit(f"source guard: the guarded set and the tool's SIBLINGS disagree - driver "
+                         f"{ours} vs seam_rebase.py {theirs}. One of them was edited without the other; "
+                         f"whichever is short is a module nobody is hashing.")
+
+
 HEADER_RE = re.compile(r"tool source sha256 (\S+) \(.*\) pid (\d+)")
 # the child names the siblings it actually imported, at exit, when the set is complete (R748 finding 5)
 SIBLING_RE = re.compile(r"imported module sha256(?: at exit)?: (.+)$", re.M)
@@ -101,33 +136,49 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
         return "child printed no sibling-hash line - the modules it imported are unidentified"
 
     def parse(line):
-        d = {}
+        """name -> value, and the ORDERED list of names so a duplicate cannot hide behind the dict.
+
+        R760 #1: `d[name] = value` let a child print a guarded module TWICE - the drifted value first,
+        the driver's value second - and the last write won, so a real drift was logged 0 and the next
+        start skipped the ticker forever. A dict cannot represent "said twice", so the names come back
+        separately and the caller refuses on any repeat."""
+        d, names = {}, []
         for part in line.split(", "):
             bits = part.strip().split(" ")
             if len(bits) == 2:
+                names.append(bits[0])
                 d[bits[0]] = bits[1]
-        return d
+        return d, names
 
     # THE HEADER AND THE TRAILER MUST AGREE (R754 #3). Taking only the last reading threw away the
     # header - the one that can see a module swapped and restored inside a single child, which is
     # exactly the ~100 ms launch race the header check was added for. A disagreement is a breach.
-    readings = [parse(h) for h in hits]
-    # COVERAGE, not merely non-emptiness (R757 #2). Refusing only an EMPTY parse let a line that
-    # identified ONE module and then said HASHES-UNAVAILABLE read as clean, as did a line where every
-    # module said "not-imported" or "unreadable". A sibling line is believed only when every guarded
-    # module is named, none is unreadable, and at least one carries a real hash.
-    for i, (raw, r) in enumerate(zip(hits, readings)):
+    parsed = [parse(h) for h in hits]
+    readings = [p[0] for p in parsed]
+    # COVERAGE, and the STRENGTH of each entry (R757 #2, then R760 #1 and #2). Three fail-opens have
+    # been found here in three consecutive reviews, each because the check asked a WEAKER question
+    # than the guarantee needs. The guarantee is: this line names every guarded module exactly once,
+    # and each value is something that can actually be compared. So every clause below is required.
+    for i, (raw, (r, names)) in enumerate(zip(hits, parsed)):
         missing = [n for n in GUARDED if n[:-3] not in r]        # GUARDED holds "<name>.py"
-        unreadable = [k for k, v in r.items() if v == "unreadable"]
-        real = [v for v in r.values() if len(v) == 12 and all(c in "0123456789abcdef" for c in v)]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        unknown = [n for n in names if f"{n}.py" not in GUARDED]
+        # a value is comparable only if it is EXACTLY "not-imported" or EXACTLY a SHORT-length hash.
+        # "unreadable" is a breach by name; a 1-char "hash" used to pass because the comparison was
+        # startswith(), so any prefix matched - now both the shape and the compare are exact.
+        bad = sorted(k for k, v in r.items()
+                     if v != "not-imported" and not (len(v) == SHORT and all(c in "0123456789abcdef" for c in v)))
+        real = [v for v in r.values() if v != "not-imported"]
         malformed = [p.strip() for p in raw.split(", ")
                      if len(p.strip().split(" ")) != 2 and p.strip()]
-        if missing or unreadable or malformed or not real:
+        if missing or dupes or unknown or bad or malformed or not real:
             return (f"sibling reading {i} does not identify the guarded set"
                     + (f"; missing {missing}" if missing else "")
-                    + (f"; unreadable {unreadable}" if unreadable else "")
+                    + (f"; named more than once {dupes}" if dupes else "")
+                    + (f"; not a guarded module {unknown}" if unknown else "")
+                    + (f"; value is neither 'not-imported' nor a {SHORT}-hex hash {bad}" if bad else "")
                     + (f"; malformed {malformed[:3]}" if malformed else "")
-                    + ("; no module carries a real hash" if not real else ""))
+                    + ("; every module says not-imported, so nothing is verified" if not real else ""))
     # R755 #5: compare EVERY reading, not just the first and last. The blind spot had moved from
     # "last only" to "first and last only", so three lines with a drifted middle read as clean.
     disagree = []
@@ -144,11 +195,31 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
     drift = []
     for name, short in child.items():
         parent = shas.get(f"{name}.py")
-        if short in ("not-imported", "unreadable") or parent is None:
+        if short == "not-imported" or parent is None:
             continue
-        if not parent.startswith(short):
-            drift.append(f"{name} child {short} vs driver {parent[:12]}")
+        # EQUALITY on a fixed width, not startswith (R760 #2): `parent.startswith(short)` accepted any
+        # prefix, so a child printing a single character as its "hash" matched every time and a real
+        # drift was logged 0. The coverage check above has already refused any value that is not
+        # exactly SHORT hex characters, so this compare is total.
+        if short != parent[:SHORT]:
+            drift.append(f"{name} child {short} vs driver {parent[:SHORT]}")
     return "; ".join(drift) if drift else None
+
+
+def recode_on_drift(child_rc: int) -> int:
+    """What the driver logs when a hash/sibling breach means UNIDENTIFIED CODE RAN TO COMPLETION.
+
+    Always 4 - "served state UNKNOWN" - regardless of what the child claimed and regardless of whether
+    it printed a snapshot line. "No write reached" is not a fact the driver establishes; it is the
+    ABSENCE of a line in the child's own stdout, and under a breach that stdout is untrustworthy in
+    both directions, because the code that prints the line is the code that changed. Logging a calm 5
+    over a write that did happen hides corruption; logging 4 over a child that did nothing costs one
+    inspection. See R759 for the full argument and the deliberate deviation from R757 #6.
+
+    This lives in a function, not inline, because R760 #3 found the test that was supposed to guard it
+    had reimplemented the rule in the test file and so asserted nothing about the shipped code.
+    """
+    return 4
 
 
 RECORD_RE = re.compile(r"^(\S+)\t(?:pid=(\d+)\t)?(EXIT \d+.*)$")
@@ -230,10 +301,29 @@ def main() -> int:
         # it there gave the operator a command that exits 5, which in this grammar reads as "aborted
         # before any write" - i.e. a failure that looks like a safe decline (R754 #2). Both tools
         # write seam_rebase-format manifests, so one restore command covers both.
-        print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}){who} - its served "
-              f"state is UNKNOWN until `python seam_rebase.py {last_line[1]} --restore <its snapshot dir>` has run "
-              f"(that is the restore for BOTH tools; resync_variables.py has none of its own). "
-              f"Both tools write the same objects, so this blocks {a.tool} too. " + RELEASE)
+        # R760 #4: this used to say "UNKNOWN until --restore <its snapshot dir> has run" unconditionally.
+        # Since R759, an exit 4 also covers breaches where NO SNAPSHOT WAS EVER TAKEN, and for those
+        # the directory does not exist - so the only instruction the operator was given could not be
+        # followed, and RELEASE told them to append code 0 "if the restore succeeded". Branch on
+        # whether the directory is actually there, the same way STOP_TEXT[4] now does.
+        snap_dir = os.path.join(a.snapshot_root, last_line[1]) if a.snapshot_root else None
+        have_snap = bool(snap_dir and os.path.isdir(snap_dir) and os.listdir(snap_dir))
+        if have_snap:
+            how = (f"its served state is UNKNOWN until `python seam_rebase.py {last_line[1]} --restore "
+                   f"{snap_dir}` has run (that is the restore for BOTH tools; resync_variables.py has "
+                   f"none of its own). " + RELEASE)
+        else:
+            how = (f"its served state is UNKNOWN and THERE IS NO SNAPSHOT TO RESTORE FROM"
+                   + (f" ({snap_dir} is absent or empty)" if snap_dir else " (no --snapshot-root given)")
+                   + ". That means the breach happened before any snapshot was taken, so unidentified "
+                   f"code ran and nothing it printed about writing can be believed. Compare "
+                   f"{last_line[1]}'s served objects against the store yourself and decide; then "
+                   "release the batch by appending ONE line to the log in its own format - "
+                   "<UTC stamp>\\t<TICKER>\\t<code>\\t0s\\t<note> - with code 0 ONLY if you established "
+                   "that served state is correct (e.g. `...\\t0\\t0s\\tinspected, served == store, no "
+                   "write had happened`); any other code keeps the refusal.")
+        print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}){who} - {how} "
+              f"Both tools write the same objects, so this blocks {a.tool} too.")
         return 1
     todo = [t for t in cands if t not in done]
     print(f"candidates {len(cands)}; already exit-0 in log {len(done & set(cands))}; to do {len(todo)}; mode {a.mode}; apply {a.apply}")
@@ -243,6 +333,7 @@ def main() -> int:
     # THE SOURCE GUARD (R743, after R742): the tool file is hashed at start and re-hashed before every
     # child; a batch never runs bytes that were not there when it started. An edit under the batch
     # stops it - the edit waits, or the batch is restarted deliberately on the new file.
+    _assert_guarded_matches_tool()
     guarded = tuple(dict.fromkeys((a.tool,) + GUARDED))     # the launched tool first, then the live imports
     shas = _source_sha256s(guarded); tool_sha = shas[a.tool]
     print(f"tool {a.tool} source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())
@@ -341,7 +432,8 @@ def main() -> int:
             # here and in the drift block below: A BREACH ALWAYS LOGS 4 (served state UNKNOWN). 5 is
             # reserved for refusals the DRIVER settles before a child runs, where no child existed to
             # write anything. This corrects an incoherence the harness surfaced: NWHASH (the worse
-            # breach - the tool's own hash is wrong) logged 5 while NWNOHDR logged 4.
+            # breach - the tool's own hash is wrong) and NWNOHDR both logged 5, while a sibling drift
+            # on the same evidence logged 4. Measured on the predecessor f358795, not recalled.
             hdrs = HEADER_RE.findall(out)
             hdr = HEADER_RE.search(out)
             if hdr and (len({h[0] for h in hdrs}) > 1 or hdr.group(1) != tool_sha):
@@ -371,8 +463,7 @@ def main() -> int:
             # write that did happen hides corruption in served data and nobody looks; logging 4 over a
             # child that truly did nothing costs one wasted inspection. The errors are not symmetric.
             # R757 #6's actual harm - "the log keeps a 0 the next start skips" - is fixed either way.
-            # 5 stays reserved for breaches the driver settles BEFORE a child runs.
-            rc = 4
+            rc = recode_on_drift(rc)
             hash_breach = hash_breach or f"sibling drift under exit {raw_rc}"
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
