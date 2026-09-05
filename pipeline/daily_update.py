@@ -55,6 +55,9 @@ import pandas as pd
 N_PROCESSES = int(os.environ.get("PIPELINE_PROCESSES", "0") or 0) or min(8, max(2, os.cpu_count() or 2))
 N_IO_THREADS = 16          # I/O concurrency within each process
 CONTEXT_BARS = 100         # Context window for incremental cleaning
+MAX_OVERNIGHT_GAP_DAYS = 10  # split detection compares consecutive sessions only (R732): a longer
+                             # gap between the last served session and the first new print (a
+                             # reassigned symbol, a resumed listing, an outage) is not overnight
 
 # Pipeline modules (same directory)
 sys.path.insert(0, str(Path(__file__).parent))
@@ -330,6 +333,21 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
     if existing_raw is None or not len(existing_raw) or new_bars.empty:
         return existing_raw, False
     prev_last_day = existing_raw["datetime"].dt.normalize().max()
+    # OVERNIGHT means overnight (R732). The ratio below compares today's prints with the LAST
+    # SERVED session; when that session is weeks or years old - a symbol reassigned to another
+    # issuer after a gap (PARA: Paramount's last bar 2025-08-06, Banzai's first print 2026-08-07,
+    # rescaled x1/6 across Paramount's and the PiTrading half's whole history on 2026-08-12), a
+    # delisting that resumes, a long IEX outage - the ratio is not a corporate action of anything.
+    # Measured on 2026-09-05: STI 7.69/70.16 and USLV 16.85/66.59 would both have snapped (1/9,
+    # 1/4) on the next run. A gap longer than a week's sessions alerts and never applies.
+    first_new_day = pd.to_datetime(new_bars["datetime"]).dt.normalize().min()
+    gap_days = int((first_new_day - prev_last_day).days)
+    if gap_days > MAX_OVERNIGHT_GAP_DAYS:
+        stats["ca_alert"] = (f"{ticker}: served history ends {prev_last_day.date()}, new prints start "
+                             f"{first_new_day.date()} ({gap_days} days later) - an overnight ratio is meaningless "
+                             f"across that gap; split detection NOT applied, review the symbol")
+        print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        return existing_raw, False
     prev_close = float(
         existing_raw.loc[existing_raw["datetime"].dt.normalize() == prev_last_day, "Close"].median())
     today_close = float(new_bars["Close"].median())
