@@ -69,6 +69,28 @@ from r2_client import (
 )
 from variables_sync import sync_ticker_variables
 
+# A backfill re-cleans a ticker's whole clean file, so its clean variables must be recomputed in full
+# (R745 finding 5). That costs a measured 4.0 ms per session per version — 5.1 s at 1,330 sessions,
+# 24.1 s at 5,959, 36.3 s at 8,984 (OTLY/KO/DD, 2026-09-05 18:12Z) — and a retried missing day makes
+# EVERY ticker a backfill at once, which at 1,391 tickers is ~7.7 h of compute, ~116 min of wall clock
+# across four workers, against a job whose ceiling is 350 min and whose runs have reached 330 (R750
+# finding 2). So the recompute is BUDGETED per worker process rather than unbounded: past the budget a
+# ticker is named and deferred to pipeline/resync_variables.py instead of silently skipped or silently
+# blowing the ceiling. Each worker has its own counter, so the run's added wall clock is at most the
+# budget itself. PIPELINE_FULL_RECOMPUTE_BUDGET_S=0 disables the full recompute entirely.
+FULL_RECOMPUTE_BUDGET_S = float(os.environ.get("PIPELINE_FULL_RECOMPUTE_BUDGET_S", "1200"))
+_full_recompute_spent = 0.0
+
+
+def _full_recompute_budget_left() -> bool:
+    return _full_recompute_spent < FULL_RECOMPUTE_BUDGET_S
+
+
+def _spend_full_recompute_budget(seconds: float) -> None:
+    global _full_recompute_spent
+    _full_recompute_spent += seconds
+
+
 PIPELINE_DIR = Path(__file__).parent
 GO_EXTRACTOR = PIPELINE_DIR / "pcap_extract" / ("pcap_extract.exe" if os.name == "nt" else "pcap_extract")
 
@@ -453,15 +475,28 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     #    from the bars already in memory and merged per-ticker into R2.
     for _vver, _vbars in (("raw", merged_raw), ("clean", merged_clean)):
         try:
-            # ca_rescaled: the whole history changed basis, so every historical
-            # variables row is stale — full recompute, not just the new day.
-            # is_backfill: the clean file was re-cleaned in full (step 3), so every
-            # historical CLEAN variables row describes bars that no longer exist;
-            # without a full recompute here the served variables drift from the
-            # served bars on every backfill day (R745 finding 5; the fleet-wide
-            # staleness measured 2026-09-05, handoff section 15).
-            _vs = sync_ticker_variables(client, _vver, ticker, _vbars,
-                                        force_full=(ca_rescaled or is_backfill))
+            # ca_rescaled: the whole history changed basis (BOTH versions), so every
+            # historical variables row is stale — full recompute, not just the new day.
+            # is_backfill: step 3 re-cleaned the CLEAN file in full, so its historical
+            # variables describe bars that no longer exist; the RAW file was only merged,
+            # so raw needs no full recompute here (R750 finding 2 — the first version of
+            # this fix recomputed both and doubled a cost the daily job has a ceiling for).
+            # Without this the served clean variables drift from the served clean bars on
+            # every backfill (R745 finding 5; the fleet-wide staleness measured 2026-09-05,
+            # handoff section 15). Cost: ~4 ms per session per version, i.e. ~20 s for a
+            # 5,000-session ticker, and it lands ONLY on tickers that actually receive
+            # older bars — zero on an ordinary day, when is_backfill is false everywhere.
+            _full = ca_rescaled or (is_backfill and _vver == "clean" and _full_recompute_budget_left())
+            if is_backfill and _vver == "clean" and not _full:
+                # the budget is spent: say so and name the ticker, so the out-of-band repair
+                # (pipeline/resync_variables.py) has a list instead of silence
+                stats.setdefault("variables_full_deferred", []).append(ticker)
+                print(f"[variables] {ticker}: backfill full recompute DEFERRED - this worker's budget "
+                      f"({FULL_RECOMPUTE_BUDGET_S:.0f}s) is spent; repair with resync_variables.py", flush=True)
+            _t_full = time.time()
+            _vs = sync_ticker_variables(client, _vver, ticker, _vbars, force_full=_full)
+            if _full:
+                _spend_full_recompute_budget(time.time() - _t_full)
             stats[f"{_vver}_var_rows"] = _vs.get("new_rows", 0)
         except Exception as _ve:  # noqa: BLE001 - variables must never break OHLCV
             print(f"[variables] WARN {ticker} ({_vver}): {_ve}", flush=True)

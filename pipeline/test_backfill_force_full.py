@@ -84,9 +84,13 @@ def test_backfill_forces_a_full_variables_recompute(monkeypatch, harness):
         if not harness.calls:
             pytest.skip(f"merge_ticker could not reach step 6 in this harness: {type(ex).__name__}: {ex}")
     assert harness.calls, "sync_ticker_variables was never called"
-    assert all(c["force_full"] for c in harness.calls), (
-        "a backfill re-cleans the whole clean file, so every historical variables row is stale; "
-        f"force_full must be True on every version, got {harness.calls}")
+    by_version = {c["version"]: c["force_full"] for c in harness.calls}
+    assert by_version.get("clean") is True, (
+        "a backfill re-cleans the whole CLEAN file, so its historical variables describe bars that no "
+        f"longer exist; force_full must be True for clean, got {harness.calls}")
+    assert by_version.get("raw") is False, (
+        "a backfill only MERGES the raw file, so raw needs no full recompute - recomputing it doubles a "
+        f"cost the daily job has a 350-minute ceiling for (R750 finding 2), got {harness.calls}")
 
 
 def test_ordinary_day_does_not_force_a_full_recompute(monkeypatch, harness):
@@ -104,6 +108,26 @@ def test_ordinary_day_does_not_force_a_full_recompute(monkeypatch, harness):
         f"got {harness.calls}")
 
 
+def test_budget_exhaustion_defers_instead_of_recomputing(monkeypatch, harness):
+    """Past the per-worker budget the backfill recompute is DEFERRED and the ticker is named, so a
+    retried missing day cannot add unbounded wall clock to a job with a 350-minute ceiling (R750 #2)."""
+    monkeypatch.setattr(daily_update, "_full_recompute_spent", 10 ** 9, raising=False)
+    existing = _bars("2026-09-04 09:30", 60)
+    older = _bars("2026-06-01 09:30", 60)
+    stats = None
+    try:
+        stats = _run(monkeypatch, harness, existing.copy(), existing.copy(), older)
+    except Exception as ex:
+        if not harness.calls:
+            pytest.skip(f"merge_ticker could not reach step 6: {type(ex).__name__}: {ex}")
+    assert harness.calls, "sync_ticker_variables was never called"
+    assert not any(c["force_full"] for c in harness.calls), (
+        f"the budget was exhausted, so no full recompute may run; got {harness.calls}")
+    assert stats and "TEST" in (stats.get("variables_full_deferred") or []), (
+        "a deferred ticker must be NAMED in the run's stats so the out-of-band repair has a list, "
+        f"got {stats.get('variables_full_deferred') if stats else None}")
+
+
 def test_call_site_passes_the_or_of_both_flags():
     """A source-level guard: whatever the harness can reach, the call must not regress to ca_rescaled alone."""
     import ast
@@ -116,6 +140,10 @@ def test_call_site_passes_the_or_of_both_flags():
                 if kw.arg == "force_full":
                     found.append(ast.dump(kw.value))
     assert found, "no sync_ticker_variables(force_full=...) call found in daily_update.py"
+    # the flag is computed just above the call; the call site must not regress to ca_rescaled alone
+    src_tail = src[src.index("# 6. Academic variables"):] if "# 6. Academic variables" in src else src
+    assert "ca_rescaled or (is_backfill and" in src_tail, (
+        "force_full must be ca_rescaled OR (is_backfill AND the clean version) - R745 finding 5 with "
+        "R750 finding 2; the call site's flag expression was not found")
     for expr in found:
-        assert "BoolOp" in expr and "ca_rescaled" in expr and "is_backfill" in expr, (
-            "force_full must be (ca_rescaled or is_backfill) - R745 finding 5; found " + expr)
+        assert "ca_rescaled" in expr or "_full" in expr, "force_full lost its flag; found " + expr
