@@ -111,25 +111,31 @@ def event_steps(served_daily: pd.Series, y: pd.Series, spl) -> tuple[list, list,
     5 %, not 2 %: BYND's served $0.415 close sits 2 % off the official close by tick size alone, and a
     genuine split factor is at least 2x away from 1, so 5 % cannot confuse a market move with a split."""
     una, app, unm = [], [], []
+    idx = served_daily.index
     for ev, s in spl.items():
-        if ev > served_daily.index.max():
+        if ev > idx.max():
             continue                                   # event after the served range: nothing to test yet
-        prev = served_daily[served_daily.index < ev]
-        post = served_daily[served_daily.index >= ev]
-        if len(prev) == 0 or len(post) == 0:
-            unm.append((ev.date(), float(s), "no served session on one side")); continue
-        p_d, q_d = prev.index[-1], post.index[0]
-        if p_d not in y.index or q_d not in y.index:
-            unm.append((ev.date(), float(s), "no market session to match")); continue
-        served_step = float(post.iloc[0] / prev.iloc[-1]); y_step = float(y[q_d] / y[p_d])
-        rel = served_step / y_step
         raw_factor = 1.0 / float(s)
+        # Yahoo misdates some ETF splits by a session or more, and a raw step one session away from the
+        # recorded date would read "applied" at the recorded date. Test every session boundary within
+        # +-3 served sessions of the event and take the boundary whose served/Yahoo step is furthest from 1.
+        pos = idx.searchsorted(ev)
+        cands = []
+        for k in range(max(1, pos - 3), min(len(idx) - 1, pos + 3) + 1):
+            p_d, q_d = idx[k - 1], idx[k]
+            if p_d not in y.index or q_d not in y.index:
+                continue
+            rel = float(served_daily.iloc[k] / served_daily.iloc[k - 1]) / float(y[q_d] / y[p_d])
+            cands.append((abs(math.log(rel)), rel, q_d.date()))
+        if not cands:
+            unm.append((ev.date(), float(s), "no served/market session pair within +-3 sessions")); continue
+        _, rel, at = max(cands)
         if abs(rel / raw_factor - 1) <= 0.05:
-            una.append((ev.date(), float(s), rel))
+            una.append((ev.date(), float(s), rel) if at == ev.date() else (ev.date(), float(s), rel, f"step seen at {at}"))
         elif abs(rel - 1) <= 0.05:
             app.append((ev.date(), float(s), rel))
         else:
-            unm.append((ev.date(), float(s), f"rel {rel:.3f} is neither ~1 nor ~{raw_factor:.4g}"))
+            unm.append((ev.date(), float(s), f"largest nearby step rel {rel:.3f} at {at} is neither ~1 nor ~{raw_factor:.4g}"))
     return una, app, unm
 
 
