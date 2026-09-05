@@ -45,6 +45,15 @@ import seam_rebase                                                        # noqa
 _say, _record = seam_rebase._say, seam_rebase._record
 
 
+def _own_sha256() -> str:
+    import hashlib
+    with open(os.path.abspath(__file__), "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+_SOURCE_SHA = _own_sha256()          # taken at import, before anything else runs
+
+
 def served_obj(client, version: str, t: str, kind: str):
     data = download_to_buffer(client, f"{version}/{kind}/{t}.parquet")
     return pd.read_parquet(io.BytesIO(data)) if data else None
@@ -80,7 +89,7 @@ def main() -> int:
     ap.add_argument("--reviewed", default=None, help="the PASSED.md line id of the adversarial review that cleared this tool for --apply")
     ap.add_argument("--snapshot-dir", default=None)
     a = ap.parse_args(); t = a.ticker.upper()
-    _say(f"  tool source sha256 {seam_rebase._source_sha256()} ({os.path.abspath(__file__)}) pid {os.getpid()}")
+    _say(f"  tool source sha256 {_SOURCE_SHA} ({os.path.abspath(__file__)}) pid {os.getpid()}; seam_rebase.py sha256 {seam_rebase._source_sha256()}")
     if a.apply and not a.reviewed:
         _say("--apply needs --reviewed <PASSED.md id>: a fleet-wide rewrite of served objects runs only after its review (exit 5)"); return 5
     client = get_client()
