@@ -16,7 +16,11 @@ with a split **or a dividend** since March 2022 shows a step at 2022-03-07 that 
 move: AMZN 20× (split), MO ≈ 29 % (seventeen quarterly dividends), AVGO both. The 2026-09-04
 inventory's 223 tickers were only those with a step beyond a 0.80–1.25 band; measured across all
 1,391 served tickers on 2026-09-05, **1,118 could be measured and roughly three-quarters carry a
-seam** (216 none, 54 within 2 %, 401 at 2–10 %, 325 at 10–50 %, 122 beyond 50 %).
+seam** (216 none, 54 within 2 %, 401 at 2–10 %, 325 at 10–50 %, 122 beyond 50 %). The quantity banded is
+`|K − 1|` from `D:/temp/claude/seam_K.csv`, with "none" at ≤ 0.2 % — the same tolerance the tool uses to snap a
+measured ratio to an integer split — and the remaining cuts at 2 %, 10 % and 50 %; "measurable" excludes the
+rows flagged `no_seam_window`, `no_yahoo_history` or `no_overlap_with_yahoo`. Re-derived from the CSV on
+2026-09-05 (`verify_prose_distribution.py`, `find_prose_quantity.py`): all five buckets reproduce exactly.
 
 The published sentences (`index.html` "Prices are split/dividend adjusted"; `pages/versions.html`
 "The only modification is splice-boundary adjustment … adjusted by the source") are therefore false
