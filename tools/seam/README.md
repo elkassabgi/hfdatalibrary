@@ -22,3 +22,30 @@ constants at the top.
 The verification instruments for the rebase itself (`verify_applied_seam.py`, `verify_k_vs_events.py`,
 `verify_market_truth.py`, `verify_aggregates.py`) are not here yet; they read snapshot directories on
 `F:` that only the workstation has.
+
+## Did the repair work? An INDEPENDENT check, added 2026-09-05
+
+Everything above measures the seam or renders the disclosure. These answer a different question: after
+pass 1 was applied to served data, is the defect actually gone? They do not read the tool's own VERIFY
+line; they re-measure served objects against the pre-repair anchor `F:\hf_r2_snapshot_20260713`.
+
+| file | what it establishes |
+|---|---|
+| `seam_step_now.py` | the headline. Per rebased ticker, the SEAM STEP itself — first post-seam session close over last pre-seam session close, where 1.0 means continuous — before and after. Writes `seam_step_now.csv`. |
+| `seam_step_control.py` | **the control, and it changes the headline.** The seam spans 2022-03-04 to 03-07, a weekend in a violent week, so part of any residual is real market movement. Measures the same step on tickers the tool flagged as having NO seam and never touched. Writes `seam_step_control.csv`. |
+| `residual_is_dividend.py` | tests the CAUSAL story for what is left, instead of asserting it: does each ticker's residual step equal the dividend factor `D` that `seam_K.csv` recorded independently? Mostly yes, and it names the four where it does not. |
+| `verify_seam_live.py` | the bookkeeping cross-check: pre-seam bars must be exactly `K` times the anchor and volumes exactly `1/K`, post-seam bars unchanged. |
+| `check_sti_uslv.py`, `sti_uslv_profile.py` | not about the seam. They test whether the reassigned-symbol split hazard (R732) has fired on STI and USLV, and what would make it fire. See R761 — a deadline was given for this hazard before its precondition was measured. |
+
+What they measured on 2026-09-05T20:34-20:39Z, over all 67 rebased tickers, with none unmeasurable:
+
+| | median seam step | within 10 % of continuous |
+|---|---|---|
+| before the repair | 0.2964 | 0 of 67 |
+| after the repair | 0.9357 | 54 of 67 |
+| control, never had a seam | 0.9520 | 33 of 38 |
+
+Read that as: repaired tickers are now indistinguishable from tickers that never carried the defect.
+The gap that remains is the DIVIDEND factor, which split-mode deliberately leaves in place pending the
+price-basis convention decision. Do not quote the "after" column against a naive 1.0 — the control is
+the comparison, and quoting 1.0 overstates what is left by about five percentage points.
