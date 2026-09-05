@@ -15,6 +15,9 @@ Exit codes from seam_rebase.py and what the driver does with each (one meaning p
     6  prices verified, variables/quality sync FAILED                  -> record, continue, LIST at the end
     1  written then RESTORED from its snapshot; served = pre-rebase    -> record, STOP (read why)
     4  written and the RESTORE FAILED, or an inconsistent served set   -> record, STOP; --restore first
+    7  deferred: the daily window (resync_variables.py only)            -> record, continue, LIST at the end
+--tool resync_variables.py drives that tool instead (same header, same record grammar, its own snapshot);
+--mode / --convention-decided / --events-file are seam_rebase.py's; --reviewed is resync_variables.py's.
 The driver refuses to START while the log's last line is an exit 4. THE CHILD IS NOT KILLED BY AN
 INTERRUPT (R735): it runs in its own process group, and a Ctrl-C on the driver waits for the running
 ticker to finish (the tool restores itself if it must), logs it, and then stops the batch. One line
@@ -53,12 +56,12 @@ def _utc() -> str:
 GUARDED = ("seam_rebase.py", "aggregate.py", "r2_client.py", "variables_sync.py", "compute_variables.py", "symbol_map.py")
 
 
-def _source_sha256s() -> dict:
+def _source_sha256s(names=GUARDED) -> dict:
     """sha256 of the tool AND of every module it imports live (R744 finding 4): a guard that watched
     seam_rebase.py alone let an edited aggregate.py run under the batch."""
     import hashlib
     out = {}
-    for name in GUARDED:
+    for name in names:
         try:
             with open(os.path.join(HERE, name), "rb") as f:
                 out[name] = hashlib.sha256(f.read()).hexdigest()
@@ -103,7 +106,11 @@ def main() -> int:
     ap.add_argument("--log", default=r"D:\temp\claude\seam_rebase_batch.log")
     ap.add_argument("--snapshot-root", default=os.path.join("F:\\", f"hf_r2_snapshot_seam_{dt.datetime.now(dt.timezone.utc):%Y%m%d}"))
     ap.add_argument("--events-file", default=None, help="passed through to seam_rebase.py (issuer-recorded split events, see its docstring)")
+    ap.add_argument("--tool", default="seam_rebase.py", choices=("seam_rebase.py", "resync_variables.py"),
+                    help="the per-ticker tool to drive; both print the same header and write the same record grammar")
+    ap.add_argument("--reviewed", default=None, help="resync_variables.py only: the PASSED.md id passed through as --reviewed")
     a = ap.parse_args()
+    seam = a.tool == "seam_rebase.py"
     if a.mode == "full" and not a.convention_decided:
         print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided "
               "on the driver only once it is recorded (every ticker would exit 5 otherwise)."); return 1
@@ -134,27 +141,30 @@ def main() -> int:
     # THE SOURCE GUARD (R743, after R742): the tool file is hashed at start and re-hashed before every
     # child; a batch never runs bytes that were not there when it started. An edit under the batch
     # stops it - the edit waits, or the batch is restarted deliberately on the new file.
-    shas = _source_sha256s(); tool_sha = shas["seam_rebase.py"]
-    print(f"tool source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())
+    guarded = tuple(dict.fromkeys((a.tool,) + GUARDED))     # the launched tool first, then the live imports
+    shas = _source_sha256s(guarded); tool_sha = shas[a.tool]
+    print(f"tool {a.tool} source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())
           + "; the batch refuses to launch a child if any of them changes", flush=True)
-    n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []
+    n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []; deferred = []
     for t in todo:
         if a.limit is not None and n >= a.limit:
             break
-        now = _source_sha256s()
-        changed = [k for k in GUARDED if now.get(k) != shas.get(k)]
+        now = _source_sha256s(guarded)
+        changed = [k for k in guarded if now.get(k) != shas.get(k)]
         if changed:
             print(f"STOPPING before {t}: {', '.join(changed)} changed under the batch ("
                   + "; ".join(f"{k} {shas[k][:12]} -> {now.get(k, 'missing')[:12]}" for k in changed)
                   + "). Nothing launched on the new file(s); restart the batch deliberately if they are the ones to run.", flush=True)
             stopped = True; break
         hash_breach = None
-        cmd = [sys.executable, "-u", os.path.join(HERE, "seam_rebase.py"), t, "--mode", a.mode, "--apply",
-               "--snapshot-dir", os.path.join(a.snapshot_root, t)]
-        if a.mode == "full":
+        cmd = [sys.executable, "-u", os.path.join(HERE, a.tool), t] + (["--mode", a.mode] if seam else []) + \
+              ["--apply", "--snapshot-dir", os.path.join(a.snapshot_root, t)]
+        if seam and a.mode == "full":
             cmd += ["--convention-decided"]
-        if a.events_file:
+        if seam and a.events_file:
             cmd += ["--events-file", a.events_file]
+        if not seam and a.reviewed:
+            cmd += ["--reviewed", a.reviewed]
         t0 = dt.datetime.now(dt.timezone.utc)
         stamp = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
         rc, out, err, interrupted, child_pid = _run_child(cmd)
@@ -246,6 +256,8 @@ def main() -> int:
             refused.append(t)
         elif rc == 3:
             unmeasurable.append(t)
+        elif rc == 7:
+            deferred.append(t)                                   # resync_variables.py: the daily window; run again later
         elif rc != 0:
             print(f"STOPPING: undefined exit code {rc} from seam_rebase.py for {t}\n" + out[-2500:] + err[-1200:])
             stopped = True; break
@@ -262,6 +274,8 @@ def main() -> int:
         print(f"refused before any write (exit 2) - the manual list: {' '.join(refused)}")
     if unmeasurable:
         print(f"unmeasurable (exit 3) - the disclose list: {' '.join(unmeasurable)}")
+    if deferred:
+        print(f"deferred by the daily window (exit 7) - run again outside it: {' '.join(deferred)}")
     print(f"batch {'stopped' if stopped else 'done'}: {n} processed this run; log {a.log}; details in {detail_dir}/seam_detail_*.txt")
     return 1 if stopped else 0
 
