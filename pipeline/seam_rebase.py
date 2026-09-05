@@ -106,13 +106,23 @@ def _say(msg: str) -> None:
         pass
 
 
+def _source_sha256() -> str:
+    """The hash of THIS file as it runs - printed first thing, so a detail file names the code that
+    produced it rather than a commit time (R741: seven tickers ran an edited file before its commit)."""
+    try:
+        return hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
+    except Exception:                                           # noqa: BLE001
+        return "unknown"
+
+
 def _record(snap_dir: str, text: str) -> None:
     """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
-    the console is gone (R735). Never raises - not even for an interrupt (R738)."""
+    the console is gone (R735). Never raises - not even for an interrupt (R738). Every line carries
+    this process's pid so the driver can tell its own child's record from another actor's (R741)."""
     for attempt in (1, 2):
         try:
             with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:
-                f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\t{text}\n")
+                f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\tpid={os.getpid()}\t{text}\n")
             return
         except BaseException:                                   # noqa: BLE001
             # one retry (R739): an interrupt landing inside the first attempt kept the exit code
@@ -369,6 +379,8 @@ def main() -> int:
     ap.add_argument("--events-file", default=None,
                     help="CSV ticker,date,ratio,source of issuer-recorded split events to union with Yahoo's (old symbols after a rename have no Yahoo split history)")
     a = ap.parse_args(); t = a.ticker.upper()
+    # the code that produced this run, by content (R741 finding 2): the detail file keeps this line
+    _say(f"  tool source sha256 {_source_sha256()} ({os.path.abspath(__file__)}) pid {os.getpid()}")
     client = get_client()
     if a.restore:
         _STATE["wrote"] = True                                  # a restore IS a write to the served set
@@ -568,7 +580,7 @@ def main() -> int:
     if d_r_day not in dd.index:
         # refuse, never skip (R739, R503's class): a 1-minute session the daily does not carry is
         # itself an inconsistency between the two files
-        print(f"  REFUSED: the 1-minute raw file's last pre-seam session {d_r_day.date()} has no bar in the served daily - "
+        print(f"  REFUSED - LIVE DEFECT: the 1-minute raw file's last pre-seam session {d_r_day.date()} has no bar in the served daily - "
               f"the two files disagree on which sessions exist; re-aggregate or restore before rebasing"); return 2
     else:
         daily_close = float(dd.loc[d_r_day, "Close"])
@@ -605,7 +617,13 @@ def main() -> int:
     n_snap = snapshot(client, t, snap_dir)
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
 
-    raw2, clean2 = rescale(raw, K, V), rescale(clean, K, V)
+    try:
+        raw2, clean2 = rescale(raw, K, V), rescale(clean, K, V)
+    except BaseException as ex:                                 # noqa: BLE001
+        # after the snapshot exists but before any upload (R741 finding 4): recorded as 5, so the
+        # driver's record check reads "EXIT 5" rather than "died without its record"
+        _record(snap_dir, f"EXIT 5 aborted before any write (rescale): {type(ex).__name__}: {str(ex)[:200]}")
+        _say(f"  ABORTED before any write: rescale failed ({type(ex).__name__}: {str(ex)[:200]}) - exit 5"); return 5
     n = 0; sync_failed = []
     _STATE["wrote"] = True                                      # from here an escape is exit 4, never 5 (R738)
     # ONE try from the first upload through the last VERIFY print (R728 item 2, R731 finding 1).
@@ -688,7 +706,7 @@ def main() -> int:
         print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. Not restoring; run "
               f"sync_ticker_variables(force_full=True) for {t} - its serving is incomplete until then (a re-run of this "
               f"tool answers ALREADY on target and does not re-sync)"); return 6
-    _record(snap_dir, f"EXIT 0 DONE rebased ({a.mode}) K={K:.6g} V={V:g}")
+    _record(snap_dir, f"EXIT 0 DONE rebased ({a.mode}) K={K!r} P_int={P_int:g} V={V!r}")
     _say(f"  DONE: {t} rebased ({a.mode}); snapshot kept at {snap_dir}")
     return 0
 

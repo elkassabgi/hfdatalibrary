@@ -57,7 +57,7 @@ def _run_child(cmd: list[str]):
     while True:
         try:
             out, err = p.communicate()
-            return p.returncode, out or "", err or "", interrupted
+            return p.returncode, out or "", err or "", interrupted, p.pid
         except KeyboardInterrupt:
             interrupted = True
             try:
@@ -104,7 +104,7 @@ def main() -> int:
     if not a.apply:
         print("  first 20:", " ".join(todo[:20])); print("(dry run - pass --apply to run the batch)"); return 0
     detail_dir = os.path.dirname(os.path.abspath(a.log))
-    n = 0; stopped = False; incomplete = []; aborted = []
+    n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []
     for t in todo:
         if a.limit is not None and n >= a.limit:
             break
@@ -116,7 +116,7 @@ def main() -> int:
             cmd += ["--events-file", a.events_file]
         t0 = dt.datetime.now(dt.timezone.utc)
         stamp = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
-        rc, out, err, interrupted = _run_child(cmd)
+        rc, out, err, interrupted, child_pid = _run_child(cmd)
         last = (out.strip().splitlines() or [""])[-1]
         # THE RECORD OUTRANKS THE EXIT CODE (R738 finding 1). A child killed from outside
         # (TerminateProcess) exits 1 - the code that means "written then RESTORED" - with nothing
@@ -134,14 +134,24 @@ def main() -> int:
                 rec_last = lines[-1] if lines else None
             except OSError:
                 pass
-            rec_stamp = rec_last.split("\t", 1)[0] if rec_last and "\t" in rec_last else ""
-            said = rec_last.split("\t", 1)[1] if rec_last and "\t" in rec_last else (rec_last or "")
-            # the record must be THIS run's: same UTC stamp format as t0, so a string compare orders them
-            fresh = bool(rec_stamp) and rec_stamp >= stamp
+            parts = rec_last.split("\t") if rec_last else []
+            rec_stamp = parts[0] if parts else ""
+            # record lines are "<UTC>\tpid=<n>\tEXIT ..." from v5.4; older ones "<UTC>\tEXIT ..."
+            rec_pid = parts[1][4:] if len(parts) >= 3 and parts[1].startswith("pid=") else None
+            said = parts[-1] if len(parts) >= 2 else (rec_last or "")
+            # the record must be THIS run's: stamped at/after the child's start AND written by the child
+            # itself (R741 finding 5: another actor's "EXIT 1 RESTORED" line after t0 was believed)
+            fresh = bool(rec_stamp) and rec_stamp >= stamp and (rec_pid is None or rec_pid == str(child_pid))
             if not fresh or not (said.startswith(f"EXIT {rc} ") or said == f"EXIT {rc}"):
-                why = "stale record from an earlier run" if (said and not fresh) else "died without its record"
-                last = (f"{why} (exit {rc}, _RESULT.txt says {said[:80]!r} at {rec_stamp or 'no stamp'}) - served state UNKNOWN; "
-                        f"inspect {os.path.join(a.snapshot_root, t)} and --restore if the objects there differ from R2")
+                if not rec_last:
+                    why = "died without its record"
+                elif not fresh:
+                    why = "record from another run or actor" if (rec_pid and rec_pid != str(child_pid)) else "stale record from an earlier run"
+                else:
+                    why = "record disagrees with the exit code"
+                last = (f"{why} (exit {rc}, _RESULT.txt says {said[:80]!r} at {rec_stamp or 'no stamp'} pid {rec_pid or '?'} vs child "
+                        f"{child_pid}) - served state UNKNOWN; inspect {os.path.join(a.snapshot_root, t)} and --restore if the objects "
+                        f"there differ from R2")
                 rc = 4
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
@@ -160,7 +170,11 @@ def main() -> int:
             incomplete.append(t)
         elif rc == 5:
             aborted.append(t)
-        elif rc not in (0, 2, 3):
+        elif rc == 2:
+            refused.append(t)
+        elif rc == 3:
+            unmeasurable.append(t)
+        elif rc != 0:
             print(f"STOPPING: undefined exit code {rc} from seam_rebase.py for {t}\n" + out[-2500:] + err[-1200:])
             stopped = True; break
         if interrupted:
@@ -170,7 +184,12 @@ def main() -> int:
         print(f"SERVING INCOMPLETE for {len(incomplete)} ticker(s) - prices rebased and verified, variables/quality sync failed: "
               f"{' '.join(incomplete)}. Run sync_ticker_variables(force_full=True) for each (a re-run of the tool will not).")
     if aborted:
-        print(f"aborted before any write (exit 5), re-runnable: {' '.join(aborted)}")
+        print(f"aborted before any write (exit 5) - read each one's line before re-running (a malformed events file or a kept "
+              f"manifest is not fixed by a re-run): {' '.join(aborted)}")
+    if refused:
+        print(f"refused before any write (exit 2) - the manual list: {' '.join(refused)}")
+    if unmeasurable:
+        print(f"unmeasurable (exit 3) - the disclose list: {' '.join(unmeasurable)}")
     print(f"batch {'stopped' if stopped else 'done'}: {n} processed this run; log {a.log}; details in {detail_dir}/seam_detail_*.txt")
     return 1 if stopped else 0
 
