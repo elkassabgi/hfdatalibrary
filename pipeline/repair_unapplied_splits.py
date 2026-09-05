@@ -147,7 +147,7 @@ def main() -> int:
         if abs(m_raw / ratio - 1) > 0.25:
             print(f"  {t} {ca.date()}: SKIP - 1-minute step {m_raw:.4f} (10-bar medians) is neither ~1 nor ~ratio {ratio:g} (daily {rel:.4f}); look by hand")
             log(t, ca, ratio, "SKIP", f"1-min {m_raw:.4f} vs daily {rel:.4f}"); continue
-        print(f"  {t} {ca.date()}: pre-checks OK (daily rel {rel:.4f}, 1-min raw {m_raw:.4f} clean {m_clean:.4f} ~ {ratio:.4f}); plan manual_split {t} {ratio:g} {ca.date()}")
+        print(f"  {t} {ca.date()}: pre-checks OK (daily rel {rel:.4f}, 1-min raw {m_raw:.4f} clean {('%.4f' % m_clean) if m_clean is not None else 'n/a'} ~ {ratio:.4f}){clean_note}; plan manual_split {t} {ratio:g} {ca.date()}")
         if not a.apply:
             n += 1; continue
         st = daily_run_state()
