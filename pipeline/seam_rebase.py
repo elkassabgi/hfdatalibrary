@@ -552,13 +552,18 @@ def main() -> int:
         print(f"  REFUSED: raw and clean disagree on the pre-seam basis (P_raw={P_raw:.6f}, P_clean={P_clean:.6f}) - a previous run was interrupted; use --restore"); return 2
     # THE 1-MINUTE FILES MUST AGREE WITH THE DAILY THAT PRODUCED P (R738 finding 4): a daily at P = 1
     # over 1-minute files still at 20x is a surviving partial write, and both no-op exits below would
-    # have called it healthy. Same tolerance as everything else on this basis; the largest live
-    # disagreement seen today is 0.03 % (AMZN).
-    if abs(P_raw / P - 1) > 0.003:
-        print(f"  INCONSISTENT SERVED SET: the served daily measures P={P:.6f} against the market while the 1-minute raw "
-              f"file measures P_raw={P_raw:.6f} on its last pre-seam bar - the aggregates and the 1-minute objects sit on "
-              f"different bases (a partial earlier write). Restore that run's snapshot or re-aggregate from the 1-minute "
-              f"files; nothing touched"); return 4
+    # have called it healthy. SAME SESSION, both files: the daily close of the 1-minute file's last
+    # pre-seam session must equal that file's last bar close (the daily is aggregated from those
+    # minutes). Comparing P (a multi-session market ratio) with P_raw (one bar) is not that test -
+    # RENT differed by 0.39 % between the two with nothing wrong (v5.2's first form of this check).
+    d_r_day = pd.Timestamp(d_r).normalize()
+    if d_r_day in dd.index:
+        daily_close = float(dd.loc[d_r_day, "Close"])
+        if abs(c_r / daily_close - 1) > 0.003:
+            print(f"  INCONSISTENT SERVED SET: on {d_r_day.date()} the served daily close is {daily_close:.6f} while the 1-minute "
+                  f"raw file's last bar closes at {c_r:.6f} - the aggregates and the 1-minute objects sit on different bases "
+                  f"(a partial earlier write). Restore that run's snapshot or re-aggregate from the 1-minute files; nothing "
+                  f"touched"); return 4
     if abs(K - 1) <= 0.002 and abs(V - 1) <= 1e-9:
         print(f"  nothing to rebase in --mode {a.mode} (P_int=1{'; dividend/spin seam D=%.4f held for the convention decision' % D if abs(D - 1) > 0.002 else ''}); raw and clean agree"); return 0
     if abs(P_raw / target - 1) <= 0.003:
