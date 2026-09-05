@@ -81,8 +81,10 @@ def test_backfill_forces_a_full_variables_recompute(monkeypatch, harness):
     try:
         _run(monkeypatch, harness, existing.copy(), existing.copy(), older)
     except Exception as ex:                     # the surrounding steps are stubbed; the call site is the subject
+        # NOT a skip (R754 lesser): a harness that cannot reach step 6 proves nothing, and a green
+        # skip is indistinguishable from a passing test.
         if not harness.calls:
-            pytest.skip(f"merge_ticker could not reach step 6 in this harness: {type(ex).__name__}: {ex}")
+            raise AssertionError(f"merge_ticker never reached step 6: {type(ex).__name__}: {ex}") from ex
     assert harness.calls, "sync_ticker_variables was never called"
     by_version = {c["version"]: c["force_full"] for c in harness.calls}
     assert by_version.get("clean") is True, (
@@ -100,8 +102,11 @@ def test_ordinary_day_does_not_force_a_full_recompute(monkeypatch, harness):
     try:
         _run(monkeypatch, harness, existing.copy(), existing.copy(), newer)
     except Exception as ex:
+        # NOT a skip (R754 lesser): a harness that cannot reach step 6 proves nothing, and a green
+        # skip is indistinguishable from a passing test. If the stubs stop reaching the call site
+        # that is a failure to fix, not a result to hide.
         if not harness.calls:
-            pytest.skip(f"merge_ticker could not reach step 6 in this harness: {type(ex).__name__}: {ex}")
+            raise AssertionError(f"merge_ticker never reached step 6: {type(ex).__name__}: {ex}") from ex
     assert harness.calls, "sync_ticker_variables was never called"
     assert not any(c["force_full"] for c in harness.calls), (
         "an ordinary append must NOT recompute the whole history every day (cost); "
@@ -118,8 +123,11 @@ def test_first_ever_clean_file_also_forces_a_full_recompute(monkeypatch, harness
     try:
         _run(monkeypatch, harness, existing.copy(), clean, _bars("2026-09-05 09:30", 60))
     except Exception as ex:
+        # NOT a skip (R754 lesser): a harness that cannot reach step 6 proves nothing, and a green
+        # skip is indistinguishable from a passing test. If the stubs stop reaching the call site
+        # that is a failure to fix, not a result to hide.
         if not harness.calls:
-            pytest.skip(f"merge_ticker could not reach step 6: {type(ex).__name__}: {ex}")
+            raise AssertionError(f"merge_ticker never reached step 6: {type(ex).__name__}: {ex}") from ex
     assert harness.calls, "sync_ticker_variables was never called"
     by_version = {c["version"]: c["force_full"] for c in harness.calls}
     assert by_version.get("clean") is True, (
@@ -136,8 +144,11 @@ def test_budget_exhaustion_defers_instead_of_recomputing(monkeypatch, harness):
     try:
         stats = _run(monkeypatch, harness, existing.copy(), existing.copy(), older)
     except Exception as ex:
+        # NOT a skip (R754 lesser): a harness that cannot reach step 6 proves nothing, and a green
+        # skip is indistinguishable from a passing test. If the stubs stop reaching the call site
+        # that is a failure to fix, not a result to hide.
         if not harness.calls:
-            pytest.skip(f"merge_ticker could not reach step 6: {type(ex).__name__}: {ex}")
+            raise AssertionError(f"merge_ticker never reached step 6: {type(ex).__name__}: {ex}") from ex
     assert harness.calls, "sync_ticker_variables was never called"
     assert not any(c["force_full"] for c in harness.calls), (
         f"the budget was exhausted, so no full recompute may run; got {harness.calls}")
