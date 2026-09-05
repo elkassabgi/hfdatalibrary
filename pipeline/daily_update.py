@@ -288,7 +288,11 @@ def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = 
             return "no_match", None
         idx = pd.to_datetime(s.index).tz_localize(None).normalize()
         day = pd.Timestamp(day).normalize()
-        lo, hi = day - pd.Timedelta(days=5), day + pd.Timedelta(days=5)
+        # +-1 business day, not +-5 calendar days: the detector fires on the split session itself and
+        # recorded dates for listed equities are exact to the day; a wider window would let a genuine
+        # -50 % day three sessions after an already-applied 2:1 be re-applied (reviewer's replay).
+        bday = pd.tseries.offsets.BDay(1)
+        lo, hi = day - bday, day + bday
         for ev, shares in zip(idx, s.values):
             shares = float(shares)
             if not (lo <= ev <= hi and shares > 0):
@@ -309,7 +313,10 @@ def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = 
         return "lookup_failed", None
 
 
-_FRACTIONAL_SPLITS = (1.5, 1.25, 4.0 / 3.0, 2.5, 3.5)     # 3:2, 5:4, 4:3, 5:2, 7:2 — the fractional ratios that occur as real splits
+# 3:2, 5:2, 7:2 — fractional ratios that occur as real splits AND whose price move leaves the detector's
+# no-fire band (1/1.4 .. 1.4). 5:4 and 4:3 are excluded on purpose: their moves (0.8, 0.75) never fire the
+# detector, so they could only ever confirm a spin-off factor by accident (GE 2024-04-02 GEV factor 1.253).
+_FRACTIONAL_SPLITS = (1.5, 2.5, 3.5)
 
 
 def _split_shaped(shares: float) -> bool:
