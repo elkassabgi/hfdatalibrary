@@ -75,11 +75,7 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
   4. with --apply and no Daily Data Update in flight: content-checked snapshot of all 22 served
      objects (seam_rebase.snapshot; a directory that already holds a manifest exits 5), uploads
      1-minute parquet + CSV x2, 14 timeframe objects, variables/quality (force_full) - merge_ticker's
-     sequence - then VERIFY from the served side.
-
-EXIT CODES (one meaning each): 0 done and verified | 1 written then RESTORED | 2 refused before any
-write | 3 written, UNVERIFIABLE (market fetch failed), data live | 4 written and RESTORE FAILED |
-5 aborted before any write | 6 prices verified, variables/quality sync failed (stale objects named).
+     sequence - then VERIFY from the served side (the exit-code contract is at the top of this docstring).
 
   python repair_reassigned.py GOLD --cut 2025-12-02 --rebuild-from-cs B --until 2026-03-27 --verify-against B
   python repair_reassigned.py PARA --cut 2026-08-07 --unscale 6 --anchor 2025-08-06:11.07:1408409 --anchor 2022-03-04:34.07:12816002
@@ -544,7 +540,9 @@ def main() -> int:
     for d, _c, _v in anchors:
         c_day = new_clean[new_clean["datetime"].dt.date == d].sort_values("datetime")
         if c_day.empty:
-            continue
+            # refuse, never skip (AR-037 item iii, R503's class): an anchor session with no clean bars is
+            # itself something to explain before writing
+            print(f"  REFUSED: the anchor session {d} has no bars in the clean frame - explain before writing"); return 2
         last_dt = c_day["datetime"].iloc[-1]
         r_same = new_raw.loc[new_raw["datetime"] == last_dt, "Close"]
         if r_same.empty:
@@ -630,7 +628,15 @@ def main() -> int:
         #     (b) tests them against Yahoo at 1 %; this is the exact test, and it holds on exit 3 too.
         ok_e = True; e_rows = []
         if rebuilt_days and a.rebuild_from_cs:
-            for d in _pick(sorted(rebuilt_days), 4):
+            # EVERY rebuilt session on the served file vs the in-memory rebuilt frame, all columns (AR-037
+            # item ii): the frame is already here, so the whole window costs nothing to compare
+            srv_win = raw_srv[raw_srv["datetime"].dt.date >= cut][STANDARD_COLS].sort_values("datetime").reset_index(drop=True)
+            exp_win = rebuilt[STANDARD_COLS].sort_values("datetime").reset_index(drop=True)
+            full_ok = len(srv_win) == len(exp_win) and srv_win["datetime"].equals(exp_win["datetime"]) and all(
+                np.allclose(srv_win[c].astype(float), exp_win[c].astype(float), rtol=0, atol=1e-9) for c in ("Open", "High", "Low", "Close", "Volume"))
+            e_rows.append(("all rebuilt sessions", (len(exp_win),), (len(srv_win),), full_ok)); ok_e = ok_e and full_ok
+            # plus a re-parse of the class-share prints on --basis-samples sessions (independent of the frame)
+            for d in _pick(sorted(rebuilt_days), max(1, a.basis_samples)):
                 bars = _bars_from_cs(d, a.rebuild_from_cs, t)
                 srv = _session_stats(raw_srv, d)
                 if not bars or srv is None:
@@ -650,7 +656,8 @@ def main() -> int:
                 print(f"    {d} prints (close, volume, bars) {exp} vs served {got} -> {'OK' if okr else 'FAIL'}")
         verified = bool(ok_a and ok_c and ok_d and ok_e and (ok_b or unverifiable))
     except Unverifiable as ex:
-        unverifiable = str(ex); verified = None
+        # keep an earlier Yahoo failure text beside the read-back failure (AR-037 item v)
+        unverifiable = (unverifiable + " | " if unverifiable else "") + str(ex); verified = None
     except BaseException as ex:                              # noqa: BLE001
         # RESTORE FIRST, RECORD SECOND, PRINT LAST (R735/R738 applied here by R740): a print into a
         # dead console raises before the restore runs. Every print on this path is seam_rebase._say.
