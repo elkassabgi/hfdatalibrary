@@ -69,7 +69,16 @@ def minute_steps(client, t: str, ca: pd.Timestamp, y: pd.Series):
     common = r.index.intersection(c.index)
     prev = common[common < ca]; post = common[common >= ca]
     if len(prev) == 0 or len(post) == 0:
-        return None, None
+        # clean has no bars on one side of the event (the cleaner rejects whole sparse sessions on thin
+        # ETFs - RXD, SBB, SDP, SIJ, SZK): measure RAW alone; the caller logs clean as not measurable
+        rp = r.index[r.index < ca][-10:]; rq = r.index[r.index >= ca][:10]
+        if len(rp) == 0 or len(rq) == 0:
+            return None, None
+        p_d, q_d = rp[-1].normalize(), rq[0].normalize()
+        if p_d not in y.index or q_d not in y.index:
+            return None, None
+        ystep = float(y[q_d] / y[p_d])
+        return float(r[rq].median() / r[rp].median()) / ystep, None
     # medians of the last / first 10 common bars, not single bars: on a $0.30 stock one tick is 3 %
     # (CDLX read 10.89 against a daily step of 9.99 on single bars)
     pb, qb = prev[-10:], post[:10]
@@ -116,10 +125,16 @@ def main() -> int:
             print(f"  {t} {ca.date()}: pre-check: served/Yahoo daily step {rel:.4f} is not ~{ratio:.4f} - not unapplied as listed - SKIP")
             log(t, ca, ratio, "SKIP", f"daily rel {rel:.4f} != ratio"); continue
         m_raw, m_clean = minute_steps(client, t, ca, y)
-        if m_raw is None or m_clean is None:
-            print(f"  {t} {ca.date()}: cannot measure the 1-minute step on common bars - SKIP"); log(t, ca, ratio, "SKIP", "no common 1-min bars"); continue
+        if m_raw is None:
+            print(f"  {t} {ca.date()}: cannot measure the raw 1-minute step - SKIP"); log(t, ca, ratio, "SKIP", "no raw 1-min bars around the event"); continue
+        clean_note = ""
+        if m_clean is None:
+            # the served CLEAN file has no bars on one side of the event (thin ETF: the cleaner rejected every
+            # sparse post-split session) - the raw-vs-clean interruption check cannot run; say so and go on raw alone
+            clean_note = " [clean has no bars across the event - not comparable; clean ends before/at the event]"
+            print(f"  {t} {ca.date()}: NOTE clean 1-minute file has no bars across the event; raw-only check")
         # same two bars in both files: an untouched pair agrees to rounding; an interrupted run differs by >= 2x
-        if abs(m_raw / m_clean - 1) > 0.25:
+        if m_clean is not None and abs(m_raw / m_clean - 1) > 0.25:
             print(f"  {t} {ca.date()}: REFUSED - raw and clean 1-minute files disagree on the SAME bars across the event (raw {m_raw:.4f}, clean {m_clean:.4f}): an earlier run was interrupted; restore first")
             log(t, ca, ratio, "REFUSED", f"1-min raw {m_raw:.4f} vs clean {m_clean:.4f} on common bars"); return 1
         # what this guard is FOR: a 1-minute raw already on the new basis (an earlier run rescaled raw/1-min
