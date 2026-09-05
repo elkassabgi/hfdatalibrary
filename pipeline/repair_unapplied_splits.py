@@ -52,18 +52,30 @@ def daily_step(client, version: str, t: str, ca: pd.Timestamp, y: pd.Series):
     return float(post.iloc[0] / prev.iloc[-1]) / float(y[q_d] / y[p_d]), float(s.iloc[-1])
 
 
-def minute_step(client, version: str, t: str, ca: pd.Timestamp, y: pd.Series):
-    d = download_parquet(client, version, t); dtm = pd.to_datetime(d["datetime"])
-    if dtm.dt.tz is not None:
-        dtm = dtm.dt.tz_localize(None)
-    d = d.assign(_dt=dtm).sort_values("_dt")
-    prev = d[d["_dt"] < ca]; post = d[d["_dt"] >= ca]
-    if prev.empty or post.empty:
-        return None
-    p_d, q_d = prev["_dt"].iloc[-1].normalize(), post["_dt"].iloc[0].normalize()
+def minute_steps(client, t: str, ca: pd.Timestamp, y: pd.Series):
+    """Step across CA_DATE in the raw AND clean 1-minute files, measured on the SAME two bars (the
+    last pre-event minute and the first post-event minute present in BOTH files). The clean file
+    drops bars, so 'first bar on/after' can be a different minute in each file (SKK: 9.83 vs 10.34);
+    on common bars an untouched pair agrees to the rounding, and an interrupted earlier run differs
+    by the whole ratio (>= 2x)."""
+    raw = download_parquet(client, "raw", t); clean = download_parquet(client, "clean", t)
+    out = []
+    for d in (raw, clean):
+        dtm = pd.to_datetime(d["datetime"])
+        if dtm.dt.tz is not None:
+            dtm = dtm.dt.tz_localize(None)
+        out.append(d.assign(_dt=dtm).set_index("_dt")["Close"].sort_index())
+    r, c = out
+    common = r.index.intersection(c.index)
+    prev = common[common < ca]; post = common[common >= ca]
+    if len(prev) == 0 or len(post) == 0:
+        return None, None
+    p, q = prev[-1], post[0]
+    p_d, q_d = p.normalize(), q.normalize()
     if p_d not in y.index or q_d not in y.index:
-        return None
-    return float(post["Close"].iloc[0] / prev["Close"].iloc[-1]) / float(y[q_d] / y[p_d])
+        return None, None
+    ystep = float(y[q_d] / y[p_d])
+    return float(r[q] / r[p]) / ystep, float(c[q] / c[p]) / ystep
 
 
 def main() -> int:
@@ -97,12 +109,13 @@ def main() -> int:
         if abs(rel / ratio - 1) > 0.05:
             print(f"  {t} {ca.date()}: pre-check: served/Yahoo daily step {rel:.4f} is not ~{ratio:.4f} - not unapplied as listed - SKIP")
             log(t, ca, ratio, "SKIP", f"daily rel {rel:.4f} != ratio"); continue
-        m_raw = minute_step(client, "raw", t, ca, y); m_clean = minute_step(client, "clean", t, ca, y)
+        m_raw, m_clean = minute_steps(client, t, ca, y)
         if m_raw is None or m_clean is None:
-            print(f"  {t} {ca.date()}: cannot measure the 1-minute step - SKIP"); log(t, ca, ratio, "SKIP", "no 1-min session"); continue
-        if abs(m_raw / m_clean - 1) > 0.01:
-            print(f"  {t} {ca.date()}: REFUSED - raw and clean 1-minute files disagree across the event (raw {m_raw:.4f}, clean {m_clean:.4f}): an earlier run was interrupted; restore first")
-            log(t, ca, ratio, "REFUSED", f"1-min raw {m_raw:.4f} vs clean {m_clean:.4f}"); return 1
+            print(f"  {t} {ca.date()}: cannot measure the 1-minute step on common bars - SKIP"); log(t, ca, ratio, "SKIP", "no common 1-min bars"); continue
+        # same two bars in both files: an untouched pair agrees to rounding; an interrupted run differs by >= 2x
+        if abs(m_raw / m_clean - 1) > 0.25:
+            print(f"  {t} {ca.date()}: REFUSED - raw and clean 1-minute files disagree on the SAME bars across the event (raw {m_raw:.4f}, clean {m_clean:.4f}): an earlier run was interrupted; restore first")
+            log(t, ca, ratio, "REFUSED", f"1-min raw {m_raw:.4f} vs clean {m_clean:.4f} on common bars"); return 1
         if abs(m_raw / ratio - 1) > 0.05:
             print(f"  {t} {ca.date()}: REFUSED - 1-minute step {m_raw:.4f} disagrees with the daily step {rel:.4f} / ratio {ratio:g}")
             log(t, ca, ratio, "REFUSED", f"1-min {m_raw:.4f} vs daily {rel:.4f}"); return 1
