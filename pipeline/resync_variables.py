@@ -137,40 +137,57 @@ def snapshot4(client, t: str, out_dir: str) -> int:
     return len(keys)
 
 
-VERDICT_RE = __import__("re").compile(r"\*{0,2}(PASS-WITH-CHANGES|PASS|FAIL)\*{0,2}", __import__("re").I)
-ID_RE = __import__("re").compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
+import re as _re
+
+ID_RE = _re.compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
+# the verdict CELL, whole: "PASS", "**PASS**", "PASS - note". Never "PASSED", "PASSES",
+# "PASS with changes", "PASS-WITH-CHANGES" (the dash must be followed by SPACE to be a note,
+# or PASS-WITH-CHANGES reads as PASS plus a trailing note), or PASS anywhere else in the row.
+VERDICT_CELL_RE = _re.compile(r"^\s*\**\s*PASS\s*\**\s*(?:[-–]\s+\S.*)?$", _re.I)
+# the clearing cell must bind THIS tool's name to THIS file's hash, adjacently. A cell that clears
+# seam_rebase.py and merely mentions resync_variables in prose is not a clearance for us (R754 #1).
+CLEARS_RE_FMT = r"resync_variables(?:\.py)?\s+sha256\s+{sha}"
 
 
 def reviewed_ok(review_id: str, passed_file: str) -> bool:
-    """The id must LOOK like a review id, appear as a whole token on a PASSED.md line that names this tool,
-    carry this file's sha256, and that line's VERDICT FIELD must read exactly PASS.
+    """PASSED.md is a table. Parse the ROW into cells and judge the cells, not the line.
 
-    R750 #6 and R752 #2: a substring test accepted "A" and "-"; a whole-token test still accepted "PASS",
-    "sha256", a blank id (which strips to an empty regex matching everything) and - because the check was
-    "is the word PASS anywhere on the line" - both a FAIL line and a PASS-WITH-CHANGES line. The file is
-    named PASSED.md, so the word PASS is on every line by construction; only the verdict field decides."""
-    import re
+    R750 #6, R752 #2 and R754 #1 are the same defect getting narrower each time: a substring test took
+    "A"; a whole-token test took "PASS" and a blank id; a whole-LINE verdict test took "PASSED" (the file
+    is named PASSED.md, so that word is on every row), "PASSES", "Pass with changes", a row whose only
+    "PASS" sat inside the prose "nothing added to PASSED.md", and a PASS row for seam_rebase.py that
+    merely mentioned resync_variables in its description. The gate now requires, per row:
+      * the id as a whole token in some cell,
+      * a cell that names this tool AND carries this file's sha256 (the same cell, so a different
+        tool's row cannot borrow our hash from elsewhere in the table),
+      * a cell that is ENTIRELY a PASS verdict.
+    """
     rid = (review_id or "").strip()
     if not ID_RE.match(rid):
         _say(f"  --reviewed {review_id!r} is not shaped like a review id (e.g. AR-037) - refused")
         return False
-    token = re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(rid) + r"(?![0-9A-Za-z_-])")
+    token = _re.compile(r"(?<![0-9A-Za-z_-])" + _re.escape(rid) + r"(?![0-9A-Za-z_-])")
+    sha12 = _SOURCE_SHA[:12]
     try:
         for ln in open(passed_file, encoding="utf-8", errors="replace"):
-            if not token.search(ln) or "resync_variables" not in ln:
+            cells = [c.strip() for c in ln.split("|")]
+            if not any(token.search(c) for c in cells):
                 continue
-            verdicts = [m.group(1).upper() for m in VERDICT_RE.finditer(ln)]
-            if "PASS" not in verdicts or "FAIL" in verdicts or "PASS-WITH-CHANGES" in verdicts:
-                _say(f"  --reviewed {rid}: that line's verdict reads {verdicts or ['(none)']} - only a plain PASS authorises")
-                return False
-            if _SOURCE_SHA[:12] not in ln:
-                _say(f"  --reviewed {rid} names a PASS line for this tool, but that line does not carry this "
-                     f"file's sha256 {_SOURCE_SHA[:12]} - the review cleared different bytes")
-                return False
+            named = [c for c in cells if "resync_variables" in c]
+            if not named:
+                continue
+            clears = _re.compile(CLEARS_RE_FMT.format(sha=_re.escape(sha12)), _re.I)
+            if not any(clears.search(c) for c in named):
+                _say(f"  --reviewed {rid}: no cell reads 'resync_variables.py sha256 {sha12}' - a row that "
+                     f"clears another tool, or carries a different hash, does not clear this one"); return False
+            verdicts = [c for c in cells if VERDICT_CELL_RE.match(c)]
+            if not verdicts:
+                _say(f"  --reviewed {rid}: no cell in that row is a plain PASS verdict "
+                     f"(cells: {[c[:24] for c in cells if c][:6]}) - refused"); return False
             return True
     except OSError:
         return False
-    _say(f"  --reviewed {rid}: no line of {passed_file} names both this id and resync_variables")
+    _say(f"  --reviewed {rid}: no row of {passed_file} carries this id in a cell and names resync_variables")
     return False
 
 
@@ -189,7 +206,7 @@ def main() -> int:
     _say(f"  tool source sha256 {_SOURCE_SHA} ({os.path.abspath(__file__)}) pid {os.getpid()}; seam_rebase.py sha256 {seam_rebase._source_sha256()}")
     # the same sibling-hash contract the seam tool prints (R752 #3). The driver compares these against its
     # own start-time read and now treats their ABSENCE as a breach, so this line is not optional.
-    _say(f"  imported module sha256: {seam_rebase._imported_module_hashes()}")
+    seam_rebase._say_module_hashes("imported module sha256")
     if a.apply and not a.reviewed:
         _say("--apply needs --reviewed <PASSED.md id>: a rewrite of served objects runs only after its review (exit 5)"); return 5
     if a.apply and not reviewed_ok(a.reviewed, a.passed_file):
@@ -302,5 +319,5 @@ if __name__ == "__main__":
     _rc = _guarded_main()
     # the trailer, after every lazy import has happened (R748 #5 / R752 #3): the driver reads the LAST
     # occurrence, so the detail file names the sibling bytes that actually ran
-    _say(f"  imported module sha256 at exit: {seam_rebase._imported_module_hashes()}")
+    seam_rebase._say_module_hashes("imported module sha256 at exit")
     sys.exit(_rc)

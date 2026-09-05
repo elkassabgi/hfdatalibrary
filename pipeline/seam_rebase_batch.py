@@ -89,11 +89,26 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
     hits = SIBLING_RE.findall(out)
     if not hits:
         return "child printed no sibling-hash line - the modules it imported are unidentified"
-    child = {}
-    for part in hits[-1].split(", "):                            # the LAST line: the complete set
-        bits = part.strip().split(" ")
-        if len(bits) == 2:
-            child[bits[0]] = bits[1]
+
+    def parse(line):
+        d = {}
+        for part in line.split(", "):
+            bits = part.strip().split(" ")
+            if len(bits) == 2:
+                d[bits[0]] = bits[1]
+        return d
+
+    # THE HEADER AND THE TRAILER MUST AGREE (R754 #3). Taking only the last reading threw away the
+    # header - the one that can see a module swapped and restored inside a single child, which is
+    # exactly the ~100 ms launch race the header check was added for. A disagreement is a breach.
+    readings = [parse(h) for h in hits]
+    first, last = readings[0], readings[-1]
+    disagree = [f"{k} header {first[k]} vs trailer {last[k]}"
+                for k in set(first) & set(last)
+                if first[k] != last[k] and "not-imported" not in (first[k], last[k])]
+    if disagree:
+        return "the child's own header and exit trailer disagree: " + "; ".join(disagree)
+    child = dict(first); child.update(last)                      # trailer wins for lazily-imported names
     drift = []
     for name, short in child.items():
         parent = shas.get(f"{name}.py")
@@ -179,8 +194,13 @@ def main() -> int:
                 done.add(p[1])
     if last_line is not None and last_line[2] == "4":
         who = f" (written by {last_line_tool})" if last_line_tool != a.tool else ""
+        # the restore is ALWAYS seam_rebase.py's: resync_variables.py has no --restore, and printing
+        # it there gave the operator a command that exits 5, which in this grammar reads as "aborted
+        # before any write" - i.e. a failure that looks like a safe decline (R754 #2). Both tools
+        # write seam_rebase-format manifests, so one restore command covers both.
         print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}){who} - its served "
-              f"state is UNKNOWN until `python {last_line_tool} {last_line[1]} --restore <its snapshot dir>` has run. "
+              f"state is UNKNOWN until `python seam_rebase.py {last_line[1]} --restore <its snapshot dir>` has run "
+              f"(that is the restore for BOTH tools; resync_variables.py has none of its own). "
               f"Both tools write the same objects, so this blocks {a.tool} too. " + RELEASE)
         return 1
     todo = [t for t in cands if t not in done]
@@ -299,14 +319,20 @@ def main() -> int:
         drift = _sibling_drift(out, shas)
         if drift:
             last = f"SIBLING DRIFT: {drift} - a guarded module changed while the child ran; " + last
-            if rc == 0:
-                rc = 4                       # its output was produced partly by bytes the driver never hashed
+            # EVERY outcome, not only rc 0 (R754 #5). resync's exit 2 is "already consistent", a claim
+            # ABOUT SERVED STATE, and a ticker whose modules are unidentified was being printed in the
+            # success list. A breach invalidates whatever the child concluded.
+            if rc in (0, 2, 3, 6, 7):
+                rc = 4
+            hash_breach = hash_breach or f"sibling drift under exit {raw_rc}"
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
             with open(detail, "w", encoding="utf-8") as f:
                 f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}\n"
                         f"# driver read at start : " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items()) + "\n"
-                        f"# child imported       : " + (child_sibs[-1] if child_sibs else "(child printed no sibling line)") + "\n"
+                        f"# child header         : " + (child_sibs[0] if child_sibs else "(none)") + "\n"
+                        f"# child trailer        : " + (child_sibs[-1] if len(child_sibs) > 1 else
+                                                        ("(same as header)" if child_sibs else "(none)")) + "\n"
                         + (f"# SIBLING DRIFT       : {drift}\n" if drift else "")
                         + f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
         except Exception as e:                                   # noqa: BLE001

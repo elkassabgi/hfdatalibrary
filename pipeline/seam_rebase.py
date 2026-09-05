@@ -121,7 +121,27 @@ def _source_sha256() -> str:
     return _SOURCE_SHA256
 
 
-SIBLINGS = ("aggregate", "r2_client", "variables_sync", "compute_variables", "symbol_map")
+# seam_rebase is here for the RESYNC path, where it is a sibling supplying _say, _record, restore,
+# daily_run_state and this very function - its largest import, previously announced by nothing
+# (R754 #4). On the seam path it is the tool itself and the driver compares it as the launch hash
+# too; naming it twice is harmless and keeps one list.
+SIBLINGS = ("seam_rebase", "aggregate", "r2_client", "variables_sync", "compute_variables", "symbol_map")
+
+
+def _say_module_hashes(label: str) -> None:
+    """Print the sibling line without letting it change the process's outcome (R754 #7).
+
+    `_say` guards its print, but the f-string's ARGUMENT is evaluated first, so an exception inside
+    _imported_module_hashes() escaped both trailers. At exit that turns a verified 0 into a non-zero
+    code, which the driver reads as "record disagrees with the exit code - served state UNKNOWN": a
+    spurious 4 on a healthy ticker, which now also blocks the other tool."""
+    try:
+        _say(f"  {label}: {_imported_module_hashes()}")
+    except BaseException:                                       # noqa: BLE001
+        try:
+            _say(f"  {label}: unavailable")
+        except BaseException:                                   # noqa: BLE001
+            pass
 
 
 def _imported_module_hashes() -> str:
@@ -412,7 +432,7 @@ def main() -> int:
     a = ap.parse_args(); t = a.ticker.upper()
     # the code that produced this run, by content (R741 finding 2): the detail file keeps this line
     _say(f"  tool source sha256 {_source_sha256()} ({os.path.abspath(__file__)}) pid {os.getpid()}")
-    _say(f"  imported module sha256: {_imported_module_hashes()}")
+    _say_module_hashes("imported module sha256")
     client = get_client()
     if a.restore:
         _STATE["wrote"] = True                                  # a restore IS a write to the served set
@@ -773,5 +793,5 @@ if __name__ == "__main__":
     _rc = _guarded_main()
     # the trailer: the sibling set is complete only now (symbol_map is imported inside yahoo()). The
     # driver reads the LAST occurrence and records it, so the detail file names the bytes that ran (R748).
-    _say(f"  imported module sha256 at exit: {_imported_module_hashes()}")
+    _say_module_hashes("imported module sha256 at exit")
     sys.exit(_rc)

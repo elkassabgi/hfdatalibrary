@@ -883,6 +883,16 @@ def main():
         body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1, "
                  "stable all day). ALERT = needs review; a confirmed split below the "
                  "auto floor is applied with <code>pipeline/manual_split.py</code>.</p>")
+    # tickers whose full clean-variables recompute the per-worker budget deferred. Crossing the worker
+    # boundary was not enough (R754 #6): a key nothing reads is not "in the run's output", so it goes
+    # where ca_events goes — the summary a human actually opens.
+    vfd_all = sorted({t for r in results for t in (r.get("variables_full_deferred") or [])})
+    if vfd_all:
+        body += (f"<h3>Variables recompute deferred</h3><p>{len(vfd_all)} ticker(s) were re-cleaned in full "
+                 f"but their clean variables could not be recomputed within this run's per-worker budget "
+                 f"(<code>PIPELINE_FULL_RECOMPUTE_BUDGET_S</code>), so their variables and quality objects "
+                 f"are stale against their own bars until repaired with "
+                 f"<code>pipeline/resync_variables.py</code>:</p><p><code>{' '.join(vfd_all)}</code></p>")
     if nodata:
         body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
     if deferred:
