@@ -63,7 +63,8 @@
     <div class="card version-card raw" style="margin-bottom:2rem; padding:2.5rem;">
       <span class="version-tag raw">Version 1</span>
       <h2 style="margin-top:0.5rem;">Raw</h2>
-      <p style="font-size:1.05rem;">Data as received from the source. No outlier removal, no gap-filling. The only modification is splice-boundary adjustment at the PiTrading/IEX transition (March 2022). Prices are split and dividend adjusted by the source.</p>
+      <p style="font-size:1.05rem;">Data as received from the source. No outlier removal, no gap-filling. Prices are split- and dividend-adjusted: before 7 March 2022 by the vendor, as of 4 March 2022; from 7 March 2022 by us, through 27 March 2026.</p>
+      <p style="font-size:1.05rem;"><strong>Known issue (September 2026).</strong> Corporate actions after 4 March 2022 are not yet carried back into the earlier history, so a ticker that has split or paid a dividend since then shows a step at 7 March 2022 that is not a market move (AMZN: 20×). A per-ticker rebase is under way; until it lands, treat 7 March 2022 as a break in any such series. Bars after 27 March 2026 are not dividend-adjusted.</p>
 
       <div class="grid-2" style="margin-top:1.5rem; gap:1.5rem;">
         <div>
