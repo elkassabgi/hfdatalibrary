@@ -1,7 +1,17 @@
-"""repair_reassigned.py v2 - remove another company's prints from a served series whose IEX symbol
+"""repair_reassigned.py v3 - remove another company's prints from a served series whose IEX symbol
 was reassigned, put the kept half back on the ORIGINAL instrument's basis where a later owner's
 corporate action was applied to it, and (GOLD only) rebuild the window from the retained
-class-share extractions. Version 2 after adversarial review R732 (2026-09-05).
+class-share extractions. Version 3 after adversarial reviews R732, R736 and R740 (2026-09-05).
+
+EXIT CODES (one meaning each; every outcome after the snapshot is recorded in <snap_dir>/_RESULT.txt
+BEFORE anything is printed, every print on those paths survives a dead console, and the entry point
+maps any escape to 5 before the first upload and 4 after it - the seam tool's contract, R735/R738):
+0 done and verified | 1 written then RESTORED | 2 refused before any write | 3 written, UNVERIFIABLE
+(read-back or market fetch failed), data live | 4 restore FAILED or an escape after writes | 5 aborted
+before any write | 6 prices verified, variables/quality sync failed (stale objects named).
+The served contract is seven columns (datetime, Open, High, Low, Close, Volume, source) on both
+1-minute files: both frames are projected onto them before the gate and asserted, because the
+2026-07-13 clean snapshots carry four legacy flag columns (R740).
 
 WHY (2026-09-05, ledger R727). The daily path and the backfill filter IEX prints by EXACT symbol,
 so when a symbol passes to a different issuer the served series silently continues with the new
@@ -104,7 +114,9 @@ import seam_rebase                                                              
 CS_ROOT = "E:/iex_hist_backfill"
 SNAP_0713 = "F:/hf_r2_snapshot_20260713"
 WINDOW = (dt.date(2022, 3, 7), dt.date(2026, 3, 27))      # the retained-prints window
-CS_FALLBACK_FROM = dt.date(2025, 11, 1)                     # class-share anchor fallback only for the original's last sessions
+CS_FALLBACK_FROM = dt.date(2025, 5, 1)                      # Barrick printed as B from 2025-05-01 (symbol_map REMAP); the
+                                                            # class-share anchor fallback covers the original's B-era only
+STANDARD_COLS = ["datetime", "Open", "High", "Low", "Close", "Volume", "source"]   # the served contract (daily_update.py)
 PRICE_COLS = ("Open", "High", "Low", "Close")
 CLOSE_TOL = 0.0005                                          # 0.05 % on a session close
 
@@ -269,6 +281,17 @@ def pre_window_equality(frame: pd.DataFrame, version: str, ticker: str, cut: dt.
         else:
             mism += int((~np.isclose(both[f"{c}_f"].astype(float), both[f"{c}_s"].astype(float), rtol=0, atol=1e-9)).sum())
     return len(ours), len(snap), len(both), mism, int((m["_merge"] == "left_only").sum()), int((m["_merge"] == "right_only").sum())
+
+
+def _standard(df: pd.DataFrame, what: str) -> pd.DataFrame:
+    """Project onto the served contract's seven columns and refuse anything else (R740): the 2026-07-13
+    clean snapshots carry four legacy boolean flag columns (volume_spike, stale_quote, is_auction,
+    splice_artifact on 252 of 1,391 tickers), and a frame that keeps them uploads an 11-column clean
+    that nothing downstream ever strips again. The served objects have exactly these seven."""
+    missing = [c for c in STANDARD_COLS if c not in df.columns]
+    if missing:
+        raise SystemExit(f"{what}: missing served column(s) {missing} - aborted before any write")
+    return df[STANDARD_COLS].copy()
 
 
 def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_window: int, k_pre: int, own_splits=(), cs_symbol=None):
@@ -495,7 +518,15 @@ def main() -> int:
         print(f"  clean: {len(new_rows):,} of {len(rebuilt):,} rebuilt bars survive the cleaner")
     else:
         new_raw, new_clean = raw_keep.sort_values("datetime").reset_index(drop=True), clean_keep.sort_values("datetime").reset_index(drop=True)
-    print(f"  after: raw {len(new_raw):,} bars (last {new_raw['datetime'].max()}), clean {len(new_clean):,} bars (last {new_clean['datetime'].max()})")
+    # THE SERVED CONTRACT (R740): seven columns, in this order, on both files - the 2026-07-13 clean
+    # snapshot brings legacy flag columns along, and the window raw brings 'ticker'; neither may reach R2
+    try:
+        new_raw, new_clean = _standard(new_raw, "raw frame"), _standard(new_clean, "clean frame")
+    except SystemExit as e:
+        print(f"  {e}"); return 5
+    assert list(new_raw.columns) == STANDARD_COLS and list(new_clean.columns) == STANDARD_COLS
+    print(f"  after: raw {len(new_raw):,} bars (last {new_raw['datetime'].max()}), clean {len(new_clean):,} bars (last {new_clean['datetime'].max()}); "
+          f"columns {list(new_raw.columns)} on both")
     print(f"  bar-count delta for the record (metadata.json counters are increment-only): raw {len(new_raw) - len(raw):+,}  clean {len(new_clean) - len(clean):+,}")
 
     # THE BASIS GATE - on the frame that would be uploaded, in the dry run as well
@@ -505,7 +536,9 @@ def main() -> int:
         print(f"  REFUSED: the kept half is not on the original instrument's basis (or an anchor is unreachable) - "
               f"nothing written. A later owner's corporate action was applied to it (R732: PARA 1/6, IPW 72x, SKK 10x); "
               f"pass --unscale F or --kept-from SNAPDIR and re-run"); return 2
-    # clean must sit on the same basis as raw on the anchor sessions (in-place unscale, not re-cleaned).
+    # clean must sit on the same basis as raw on the anchor sessions (with --unscale the clean is
+    # REBUILT - pre-window from the 2026-07-13 clean, window re-cleaned - so this is the check that
+    # the rebuilt clean and the unscaled raw agree; without --unscale both halves are the served ones).
     # SAME MINUTE, not "session close": the cleaner drops closing minutes (PARA's clean session ends
     # 15:55, raw 15:59 - 11.01 vs 11.07 is timing, not basis).
     for d, _c, _v in anchors:
@@ -520,12 +553,17 @@ def main() -> int:
             print(f"  REFUSED: clean {float(c_day['Close'].iloc[-1])} vs raw {float(r_same.iloc[0])} at {last_dt} - "
                   f"the two files are on different bases"); return 2
     # FULL-FRAME EQUALITY of the pre-window half against the 2026-07-13 snapshot, raw and clean (R736).
+    # Named tautology (R740): with --unscale the pre-window CLEAN is taken from that very snapshot, so
+    # its equality proves only that the projection and concatenation kept it intact; the raw-side
+    # equality is the real test there (the unscale arithmetic against the pre-detector raw).
     for version, frame in (("raw", new_raw), ("clean", new_clean)):
         eq = pre_window_equality(frame, version, t, cut)
         if eq is None:
             print(f"  pre-window equality vs 2026-07-13 {version}: no snapshot file for {t} - REFUSED, no oracle for that half"); return 2
         n_f, n_s, n_b, mism, only_f, only_s = eq
-        ok_eq = mism == 0 and only_f == 0 and only_s == 0
+        # equal COUNTS too (R740): a duplicated minute merges onto one snapshot bar and left the
+        # mismatch counters at zero
+        ok_eq = mism == 0 and only_f == 0 and only_s == 0 and n_f == n_s == n_b
         print(f"  pre-window equality vs 2026-07-13 {version}: ours {n_f:,} / snapshot {n_s:,} / common {n_b:,}; "
               f"mismatched {mism:,}; only-ours {only_f:,}; only-snapshot {only_s:,} -> {'OK' if ok_eq else 'FAIL'}")
         if not ok_eq:
@@ -536,11 +574,12 @@ def main() -> int:
     st = seam_rebase.daily_run_state()
     if st == "in_progress" or (st == "queued" and not a.allow_queued) or st == "unknown":
         print(f"  REFUSED: Daily Data Update workflow is {st}; a repair inside its window is overwritten"); return 2
-    snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_reassigned_{pd.Timestamp.today():%Y%m%d}", t)
+    snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_reassigned_{dt.datetime.now(dt.timezone.utc):%Y%m%d}", t)
     n_snap = seam_rebase.snapshot(client, t, snap_dir)          # exits 5 on any pre-write failure
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
 
     n = 0; sync_failed = []
+    seam_rebase._STATE["wrote"] = True                       # from here an escape is exit 4, never 5 (R738/R740)
     stale = []
     unverifiable = None
     try:
@@ -613,35 +652,73 @@ def main() -> int:
     except Unverifiable as ex:
         unverifiable = str(ex); verified = None
     except BaseException as ex:                              # noqa: BLE001
-        print(f"  FAILED after the snapshot with {n} object(s) uploaded ({type(ex).__name__}: {str(ex)[:200]}) - restoring")
+        # RESTORE FIRST, RECORD SECOND, PRINT LAST (R735/R738 applied here by R740): a print into a
+        # dead console raises before the restore runs. Every print on this path is seam_rebase._say.
+        why = f"{type(ex).__name__}: {str(ex)[:200]}"
         try:
-            print(f"  restored {seam_rebase.restore(client, snap_dir)} objects; served state is the pre-repair state"); return 1
+            n_back = seam_rebase.restore(client, snap_dir)
         except BaseException as ex2:                         # noqa: BLE001
-            print(f"  RESTORE FAILED ({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+            seam_rebase._record(snap_dir, f"EXIT 4 RESTORE FAILED after {n} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
+            seam_rebase._say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) and the RESTORE FAILED "
+                             f"({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+        seam_rebase._record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n} upload(s); cause {why}")
+        seam_rebase._say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) - restored {n_back} objects; "
+                         f"served state is the pre-repair state"); return 1
     if verified is None:
         # a served object could not be read back (an R2 error, not a 404): the writes are not known
         # wrong, nothing is restored, a human re-verifies. The stale-variables list is printed FIRST
         # so an exit 3 never hides an exit 6 (R736).
+        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (read-back failed): {unverifiable[:200]}" + (f"; STALE {stale}" if sync_failed else ""))
         if sync_failed:
-            print(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
-        print(f"  UNVERIFIABLE, DATA LIVE: the served objects could not be read back for verification - {unverifiable}. "
-              f"Nothing restored; re-run the verification for {t} before calling this complete; snapshot kept at {snap_dir}"); return 3
+            seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
+        seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: the served objects could not be read back for verification - {unverifiable}. "
+                         f"Nothing restored; re-run the verification for {t} before calling this complete; snapshot kept at {snap_dir}"); return 3
     if not verified:
         try:
-            print(f"  NOT VERIFIED - restored {seam_rebase.restore(client, snap_dir)} objects from {snap_dir}; served state is the pre-repair state"); return 1
+            n_back = seam_rebase.restore(client, snap_dir)
         except BaseException as e:                           # noqa: BLE001
-            print(f"  NOT VERIFIED and restore FAILED ({type(e).__name__}: {e}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+            seam_rebase._record(snap_dir, f"EXIT 4 NOT VERIFIED and RESTORE FAILED: {type(e).__name__}: {str(e)[:200]}")
+            seam_rebase._say(f"  NOT VERIFIED and restore FAILED ({type(e).__name__}: {e}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+        seam_rebase._record(snap_dir, f"EXIT 1 NOT VERIFIED - restored {n_back} objects")
+        seam_rebase._say(f"  NOT VERIFIED - restored {n_back} objects from {snap_dir}; served state is the pre-repair state"); return 1
     if unverifiable:
+        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (market fetch): {unverifiable[:200]}" + (f"; STALE {stale}" if sync_failed else ""))
         if sync_failed:
-            print(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
-        print(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d)(e) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
-              f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
+            seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
+        seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d)(e) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
+                         f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
     if sync_failed:
-        print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}. Not restoring; run "
-              f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
-    print(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
+        seam_rebase._record(snap_dir, f"EXIT 6 verified, variables sync failed: {sync_failed}; STALE {stale}")
+        seam_rebase._say(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}. Not restoring; run "
+                         f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
+    seam_rebase._record(snap_dir, f"EXIT 0 DONE repaired cut={cut} unscale={a.unscale} kept_from={a.kept_from} rebuilt={len(rebuilt):,}")
+    seam_rebase._say(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
     return 0
 
 
+def _guarded_main() -> int:
+    """Exit 1 means 'written then restored' and nothing else (R738/R740): every upload sits inside
+    main()'s guarded block, which returns 1/3/4/6 itself, so an exception escaping main() before
+    the written flag is set happened before any write (5); after it, the served state is unknown
+    (4). SystemExit with a numeric code (snapshot()'s 5) passes through."""
+    st = seam_rebase._STATE
+    try:
+        return main()
+    except SystemExit as ex:
+        if isinstance(ex.code, int) or ex.code is None:
+            raise
+        seam_rebase._say(f"  {ex.code}")
+        seam_rebase._say("  ABORTED before any write (exit 5)" if not st["wrote"] else "  ESCAPED AFTER WRITES - served state UNKNOWN (exit 4)")
+        return 4 if st["wrote"] else 5
+    except KeyboardInterrupt:
+        if st["wrote"]:
+            seam_rebase._say("  interrupted AFTER writes began and outside the guarded block - served state UNKNOWN; read _RESULT.txt - exit 4"); return 4
+        seam_rebase._say("  interrupted before any write - exit 5"); return 5
+    except BaseException as ex:                              # noqa: BLE001
+        if st["wrote"]:
+            seam_rebase._say(f"  ESCAPED AFTER WRITES by an unhandled {type(ex).__name__}: {str(ex)[:300]} - served state UNKNOWN; read _RESULT.txt - exit 4"); return 4
+        seam_rebase._say(f"  ABORTED before any write by an unhandled {type(ex).__name__}: {str(ex)[:300]} - exit 5"); return 5
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_guarded_main())
