@@ -1,0 +1,524 @@
+"""repair_reassigned.py v2 - remove another company's prints from a served series whose IEX symbol
+was reassigned, put the kept half back on the ORIGINAL instrument's basis where a later owner's
+corporate action was applied to it, and (GOLD only) rebuild the window from the retained
+class-share extractions. Version 2 after adversarial review R732 (2026-09-05).
+
+WHY (2026-09-05, ledger R727). The daily path and the backfill filter IEX prints by EXACT symbol,
+so when a symbol passes to a different issuer the served series silently continues with the new
+issuer's prints. Measured by a census of every served ticker live in 2025-2026 (our daily close
+vs the symbol's current owner on Yahoo):
+
+    GOLD  Barrick through 2025-12-01, Gold.com, Inc. from 2025-12-02 (191 sessions)
+    STI   SunTrust through 2019-12-06, Solidion Technology from 2024-02-05
+    IPW   a 2008-2017 instrument, iPower Inc. from 2021-05-12
+    SKK   a 2007-2015 instrument, SKK Holdings from 2024-10-08
+    VRM   Vroom's cancelled equity through 2024-11-29, the post-Chapter-11 Vroom from 2025-02-20
+    USLV  VelocityShares 3x Silver ETN through 2020-07-02, a Direxion ETF from 2026-05-27
+    PARA  Paramount Global through 2025-08-06, Banzai International from 2026-08-07
+
+WHAT REVIEW R732 FOUND. Cutting the foreign prints is not enough: three of the seven serve the
+ORIGINAL instrument on the NEW owner's split basis across their whole history - PARA at 1/6 (the
+daily split detector fired on Banzai's $1.84 first day, 2026-08-12, and rescaled Paramount's and
+the PiTrading half's history), IPW at 72x and SKK at 10x (repair_unapplied_splits applied iPower's
+and SKK Holdings' splits to instruments that died in 2017 and 2015, 2026-09-05 02:07-02:46Z). The
+cut alone would have VERIFIED and kept serving them wrong. So v2:
+
+  * --unscale F (PARA: 6). Every kept bar, raw AND clean, price x F rounded to 4 decimals (exact
+    for what the detector wrote: 1.845 x 6 = 11.07, 5.678333 x 6 -> 34.07) and volume / F, which
+    must divide exactly on every bar or the tool refuses. Rescaled IN PLACE, not re-cleaned -
+    seam_rebase's contract: the clean set is not rescale-invariant, so re-cleaning would change
+    which bars exist, and the basis gate below proves the in-place result against the prints.
+  * --kept-from SNAPDIR (IPW: F:/hf_r2_snapshot_splits_20260905/IPW_20260522, SKK:
+    .../SKK_20260406). The kept half is taken from the pre-repair snapshot's raw__T / clean__T
+    (bars before the cut): a rounded volume (5,471 -> 76) cannot be inverted arithmetically.
+  * THE BASIS GATE, every ticker, in the dry run too. The frame about to be uploaded is compared
+    with INDEPENDENT anchors: for window sessions (2022-03-07..2026-03-27) the retained prints
+    E:/iex_hist_backfill/<ymd>/trades_<ymd>.csv rebuilt into bars with the daily path's own
+    parser and bar builder; for pre-window sessions the 2026-07-13 R2 snapshot
+    (F:/hf_r2_snapshot_20260713), which predates every split-detector fire; plus any explicit
+    --anchor DATE:CLOSE:VOLUME (R732's print-set and snapshot values). Session close within
+    0.05 %, session volume EXACT (bars and prints are the same numbers). Any deviation refuses.
+  * VERIFY runs inside the try (a crash restores, exit 1; a failed restore exits 4). A market
+    fetch failure DURING verification exits 3 - UNVERIFIED, DATA LIVE - without restoring:
+    nothing showed the writes wrong, and a restore on an empty Yahoo answer would undo a correct
+    repair. (a) covers raw AND clean daily; (c) covers the rebuild case; the anchors and the basis
+    samples are re-checked on the SERVED 1-minute file; a failed variables sync names the four
+    stale objects and exits 6.
+
+WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
+  1. reads the served raw/clean 1-minute files; drops every bar dated >= DATE (the foreign
+     prints), or replaces the kept half from --kept-from; applies --unscale;
+  2. GOLD only, --rebuild-from-cs B --until 2026-03-27: rebuilds Barrick's bars for DATE..until
+     from trades_cs_<ymd>.csv (the backfill's class-share pass; 2026-03-27 holds 10,363 B prints),
+     remaps B -> GOLD, appends them to raw, and cleans them exactly as merge_ticker does an
+     incremental day (CONTEXT_BARS of the existing clean tail through clean_bars);
+  3. runs the basis gate; prints the plan and the bar-count delta (metadata.json's counters are
+     increment-only and will not reflect it - record the delta);
+  4. with --apply and no Daily Data Update in flight: content-checked snapshot of all 22 served
+     objects (seam_rebase.snapshot; a directory that already holds a manifest exits 5), uploads
+     1-minute parquet + CSV x2, 14 timeframe objects, variables/quality (force_full) - merge_ticker's
+     sequence - then VERIFY from the served side.
+
+EXIT CODES (one meaning each): 0 done and verified | 1 written then RESTORED | 2 refused before any
+write | 3 written, UNVERIFIABLE (market fetch failed), data live | 4 written and RESTORE FAILED |
+5 aborted before any write | 6 prices verified, variables/quality sync failed (stale objects named).
+
+  python repair_reassigned.py GOLD --cut 2025-12-02 --rebuild-from-cs B --until 2026-03-27 --verify-against B
+  python repair_reassigned.py PARA --cut 2026-08-07 --unscale 6 --anchor 2025-08-06:11.07:1408409 --anchor 2022-03-04:34.07:12816002
+  python repair_reassigned.py IPW  --cut 2021-05-12 --kept-from F:/hf_r2_snapshot_splits_20260905/IPW_20260522 --anchor 2017-07-24:17.80:5471
+  python repair_reassigned.py SKK  --cut 2024-10-08 --kept-from F:/hf_r2_snapshot_splits_20260905/SKK_20260406 --anchor 2015-01-08:33.55:4056
+  python repair_reassigned.py STI  --cut 2024-02-05        (VRM --cut 2025-02-20, USLV --cut 2026-05-27)
+Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamps parquet metadata).
+Sequencing (R732 item 1): nothing is applied before PR #12's symbol map is on main - the next daily
+run would otherwise re-append the new owners and, on today's prices, rescale STI (1/9) and USLV (1/4).
+"""
+from __future__ import annotations
+import argparse
+import dataclasses
+import datetime as dt
+import math
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from r2_client import get_client, download_parquet, upload_parquet, upload_csv        # noqa: E402
+from aggregate import aggregate_all, TIMEFRAMES                                       # noqa: E402
+from clean_pipeline import clean_bars                                                 # noqa: E402
+from variables_sync import sync_ticker_variables                                      # noqa: E402
+from tops_parser import parse_trades_csv                                              # noqa: E402
+from build_bars import build_bars                                                     # noqa: E402
+import daily_update                                                                   # noqa: E402
+import seam_rebase                                                                    # noqa: E402
+
+CS_ROOT = "E:/iex_hist_backfill"
+SNAP_0713 = "F:/hf_r2_snapshot_20260713"
+WINDOW = (dt.date(2022, 3, 7), dt.date(2026, 3, 27))      # the retained-prints window
+PRICE_COLS = ("Open", "High", "Low", "Close")
+CLOSE_TOL = 0.0005                                          # 0.05 % on a session close
+
+
+def _bars_from_cs(day: dt.date, iex_symbol: str, ticker: str) -> list[dict]:
+    """Minute bars for one day from the class-share extraction, remapped to the dataset ticker."""
+    ymd = day.strftime("%Y%m%d")
+    path = os.path.join(CS_ROOT, ymd, f"trades_cs_{ymd}.csv")
+    if not os.path.exists(path):
+        return []
+    trades = [dataclasses.replace(t, symbol=ticker) for t in parse_trades_csv(path, universe={iex_symbol})]
+    if not trades:
+        return []
+    rows = []
+    for b in build_bars(trades).get(ticker, []):
+        rows.append({"ticker": ticker, "datetime": b.minute_start, "Open": b.open, "High": b.high,
+                     "Low": b.low, "Close": b.close, "Volume": b.volume, "source": "iex"})
+    return rows
+
+
+def _print_anchor(day: dt.date, symbol: str, cs_symbol: str | None = None):
+    """(last close, session volume, bars) of `symbol` on `day` from the retained main-pass prints; when the
+    main pass has none and a class-share symbol is given (GOLD: Barrick printed as B on 2025-12-01, its
+    last session, and the served bars for that day came from the cs pass), from trades_cs_<ymd>.csv."""
+    ymd = day.strftime("%Y%m%d")
+    for path, sym in ((os.path.join(CS_ROOT, ymd, f"trades_{ymd}.csv"), symbol),
+                      (os.path.join(CS_ROOT, ymd, f"trades_cs_{ymd}.csv"), cs_symbol)):
+        if sym is None or not os.path.exists(path):
+            continue
+        trades = list(parse_trades_csv(path, universe={sym}))
+        bars = build_bars(trades).get(sym, []) if trades else []
+        if bars:
+            # per-minute volumes keyed like the served file: naive New York wall time
+            minutes = {pd.Timestamp(b.minute_start).tz_convert("America/New_York").tz_localize(None): int(b.volume)
+                       for b in bars}
+            return float(bars[-1].close), int(sum(b.volume for b in bars)), len(bars), minutes
+    return None
+
+
+def _session_stats(df: pd.DataFrame, day: dt.date):
+    s = df[df["datetime"].dt.date == day]
+    if s.empty:
+        return None
+    s = s.sort_values("datetime")
+    minutes = dict(zip(s["datetime"], s["Volume"].astype(int)))
+    return float(s["Close"].iloc[-1]), int(s["Volume"].sum()), len(s), minutes
+
+
+def _minute_volume_match(ours: dict, theirs: dict, factor: float):
+    """Under an own split the served minute volumes are round(print / factor) - rounded per MINUTE, so a
+    session SUM is systematically below prints/factor (VRM 2024-01-02: 99 vs 9,746/80 = 121.8). The
+    honest test is per minute: |served - print/factor| <= 1 on >= 95 % of the common minutes, with the
+    common minutes covering >= 90 % of the print minutes. Returns (fraction_ok, coverage)."""
+    # a print minute whose volume / factor rounds to 0 is legitimately absent from the served file
+    # (the rescale wrote 0 and the merge keeps no zero-volume raw bar): coverage is measured over the
+    # minutes that survive the rounding, and the per-minute test over the common ones.
+    survivors = {m: v for m, v in theirs.items() if v / factor >= 0.5}
+    common = [m for m in survivors if m in ours]
+    if not survivors or not common:
+        return 0.0, 0.0
+    ok = sum(1 for m in common if abs(ours[m] - survivors[m] / factor) <= 1.0)
+    return ok / len(common), len(common) / len(survivors)
+
+
+def _pick(days: list, k: int) -> list:
+    if len(days) <= k:
+        return list(days)
+    idx = np.linspace(0, len(days) - 1, k).round().astype(int)
+    return [days[i] for i in sorted(set(idx))]
+
+
+def _sessions(a: dt.date, b: dt.date):
+    d = a
+    while d <= b:
+        if d.weekday() < 5:
+            yield d
+        d += dt.timedelta(days=1)
+
+
+def _yahoo_close(symbol: str, start: dt.date, end: dt.date) -> pd.Series:
+    import yfinance as yf
+    h = yf.Ticker(symbol).history(start=start.isoformat(), end=(end + dt.timedelta(days=1)).isoformat(), auto_adjust=False)
+    s = h["Close"]
+    s.index = [x.date() for x in s.index]
+    return s
+
+
+def _load_snapshot_bars(snap_dir: str, version: str, ticker: str) -> pd.DataFrame:
+    p = os.path.join(snap_dir, f"{version}__{ticker}.parquet")
+    if not os.path.exists(p):
+        raise FileNotFoundError(p)
+    df = pd.read_parquet(p)
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    return df
+
+
+def _unscale(df: pd.DataFrame, F: float) -> pd.DataFrame:
+    """price x F rounded to 4 dp, volume / F exact - refuses when any volume does not divide."""
+    out = df.copy()
+    vol = out["Volume"].to_numpy()
+    rem = np.mod(vol, F)
+    if (rem != 0).any():
+        bad = int((rem != 0).sum())
+        raise SystemExit(f"--unscale {F:g}: {bad:,} kept bar(s) have a volume not divisible by {F:g} "
+                         f"(first at {out.loc[rem != 0, 'datetime'].iloc[0]}) - the history is not uniformly "
+                         f"scaled by {F:g}; refusing, aborted before any write")
+    for c in PRICE_COLS:
+        out[c] = (out[c].astype(float) * F).round(4)
+    out["Volume"] = (vol / F).round().astype("int64")
+    return out
+
+
+DIV_BAND = (0.70, 1.0005)   # a dividend-adjusted window session sits below the raw print by the cumulative payout
+
+
+def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_window: int, k_pre: int, own_splits=(), cs_symbol=None):
+    """Compare the kept half of `frame` (raw 1-minute, what will be uploaded) with independent anchors.
+
+    WHAT THE FIRST DRY RUNS PROVED (2026-09-05 12:38-12:41Z), and what the rule therefore is:
+      * PARA after x6: window sessions sit at x0.915 (2022-03-07), x0.964 (2023-04-26), x0.977
+        (2024-06-13) against the raw prints, volumes EQUAL, and the last kept session 2025-08-06 at
+        exactly x1. That is the library's dividend-adjusted convention (the window was conformed to
+        the adjusted series; the factor is the cumulative payout after the session and tends to 1),
+        not a corporate action of anyone. A dividend factor never touches volume.
+      * VRM: window sessions before 2024-02 sit at x80.000 with volume near 1/80, the 2024-11-29
+        session at x1 - Vroom's OWN 1-for-80 reverse split applied to its own history under the
+        current-basis convention: correct, and declared with --own-split DATE:FACTOR (with its source
+        in the run record) rather than guessed by the tool.
+      * A FOREIGN action (PARA 1/6, IPW 72x, SKK 10x) is uniform across the whole kept half, so it
+        shows on the pre-window sessions against the 2026-07-13 snapshot and on the last kept
+        session against its anchor - both of which must be EXACT.
+    Rule per row: pre-window and explicit anchors and the LAST kept session: close within 0.05 %,
+    volume exact. Window sessions: expected = product of declared own-split factors dated after the
+    session; ratio/expected must lie in DIV_BAND with volume exact (expected 1) or within 10 % of
+    anchor/expected (an own split rounds per-minute volumes). Returns (rows, ok); each row:
+    (day, source, our_close, anchor_close, ratio, our_vol, anchor_vol, ok)."""
+    kept_days = sorted(d for d in set(frame["datetime"].dt.date) if d < cut)
+    last_kept = kept_days[-1] if kept_days else None
+    win = [d for d in kept_days if WINDOW[0] <= d <= WINDOW[1]
+           and os.path.exists(os.path.join(CS_ROOT, d.strftime("%Y%m%d"), f"trades_{d.strftime('%Y%m%d')}.csv"))]
+    pre = [d for d in kept_days if d < WINDOW[0]]
+    rows = []
+    sample = _pick(win, k_window)
+    if last_kept in win and last_kept not in sample:
+        sample.append(last_kept)
+    for d in sample:
+        expected = 1.0
+        for sd, f in own_splits:
+            if d < sd:
+                expected *= f
+        anc = _print_anchor(d, ticker, cs_symbol)
+        ours = _session_stats(frame, d)
+        rows.append(_cmp(d, "prints" if d != last_kept else "prints/last", ours, anc,
+                         expected=expected, exact=(d == last_kept)))
+    snap_path = os.path.join(SNAP_0713, "raw", f"{ticker}.parquet")
+    if pre and os.path.exists(snap_path):
+        snap = pd.read_parquet(snap_path)
+        snap["datetime"] = pd.to_datetime(snap["datetime"])
+        snap_days = set(snap["datetime"].dt.date)
+        pre_sample = _pick([d for d in pre if d in snap_days], k_pre)
+        if last_kept in pre and last_kept in snap_days and last_kept not in pre_sample:
+            pre_sample.append(last_kept)
+        for d in pre_sample:
+            rows.append(_cmp(d, "snapshot-0713", _session_stats(frame, d), _session_stats(snap, d)))
+    elif pre:
+        rows.append((None, "snapshot-0713", None, None, None, None, None, False))
+    for d, close, vol in anchors:
+        rows.append(_cmp(d, "anchor", _session_stats(frame, d), (close, vol, None)))
+    ok = bool(rows) and all(r[-1] for r in rows)
+    return rows, ok
+
+
+def _cmp(d, source, ours, anc, expected=1.0, exact=True):
+    if ours is None or anc is None:
+        return (d, source, ours[0] if ours else None, anc[0] if anc else None, None,
+                ours[1] if ours else None, anc[1] if anc else None, False)
+    ratio = ours[0] / anc[0] if anc[0] else float("nan")
+    if not math.isfinite(ratio):
+        return (d, source, ours[0], anc[0], ratio, ours[1], anc[1], False)
+    if exact or source in ("snapshot-0713", "anchor"):
+        ok = abs(ratio - 1) <= CLOSE_TOL and ours[1] == anc[1]
+    else:
+        r_adj = ratio / expected
+        if expected == 1.0:
+            vol_ok = ours[1] == anc[1]
+        else:
+            # Under an own split the served history's volume basis is LOSSY: VRM's pre-2024-02
+            # minutes agree with round(print/80) within one share on only 73-85 % of minutes
+            # (coverage 100 %) and the session sums sit 4-19 % below prints/80 - rounded at a
+            # finer grain than the minute when the split was applied. Price at exactly the declared
+            # factor is the test (a foreign split on top would move it by >= 2x); volume is a coarse
+            # band on the session sum, with the per-minute figures printed for the record.
+            frac, cover = _minute_volume_match(ours[3], anc[3], expected) if (len(ours) > 3 and len(anc) > 3 and anc[3]) else (0.0, 0.0)
+            vol_ratio = ours[1] * expected / anc[1] if anc[1] else float("nan")
+            vol_ok = math.isfinite(vol_ratio) and 0.60 <= vol_ratio <= 1.05 and cover >= 0.90
+            source = f"{source} /{expected:g} sum x{vol_ratio:.3f} min {frac:.0%}/{cover:.0%}"
+        ok = DIV_BAND[0] <= r_adj <= DIV_BAND[1] and vol_ok
+    return (d, source, ours[0], anc[0], ratio, ours[1], anc[1], ok)
+
+
+def _print_gate(rows, title):
+    print(f"  {title}")
+    for d, src, oc, ac, r, ov, av, ok in rows:
+        rs = f"x{r:.5f}" if r is not None and math.isfinite(r) else "n/a"
+        note = ""
+        if ok and r is not None and math.isfinite(r) and src.startswith("prints") and r < 0.9995:
+            note = "  (dividend-adjusted window session)"
+        print(f"    {str(d):10} {src:14} close ours {oc} vs {ac} ({rs})  volume ours {ov} vs {av} -> {'OK' if ok else 'FAIL'}{note}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ticker")
+    ap.add_argument("--cut", required=True, help="first session of the NEW owner; every bar dated >= this is dropped")
+    ap.add_argument("--rebuild-from-cs", default=None, help="IEX symbol of the ORIGINAL company in trades_cs_<ymd>.csv (GOLD: B)")
+    ap.add_argument("--until", default=None, help="last session to rebuild (the backfill window ends 2026-03-27)")
+    ap.add_argument("--verify-against", default=None, help="Yahoo symbol of the ORIGINAL company for the rebuilt range (GOLD: B)")
+    ap.add_argument("--unscale", type=float, default=None, help="undo a later owner's split applied to the kept half: price x F (4 dp), volume / F exact (PARA: 6)")
+    ap.add_argument("--kept-from", default=None, help="take the kept half (bars before the cut) from this pre-repair snapshot dir (IPW, SKK)")
+    ap.add_argument("--anchor", action="append", default=[], help="DATE:CLOSE:VOLUME the kept half must show (session last close, session volume); repeatable")
+    ap.add_argument("--basis-samples", type=int, default=4, help="window sessions checked against the retained prints (default 4; pre-window: 3 vs the 2026-07-13 snapshot)")
+    ap.add_argument("--own-split", action="append", default=[], help="DATE:FACTOR - a split of the ORIGINAL instrument inside the kept half (VRM 1-for-80 in Feb 2024: 2024-02-14:80); window sessions before DATE are expected at FACTOR x the raw prints. Cite the source in the run record.")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--snapshot-dir", default=None)
+    ap.add_argument("--allow-queued", action="store_true")
+    a = ap.parse_args()
+    t = a.ticker.upper()
+    cut = dt.date.fromisoformat(a.cut)
+    until = dt.date.fromisoformat(a.until) if a.until else None
+    if bool(a.rebuild_from_cs) != bool(a.until):
+        print("--rebuild-from-cs and --until go together"); return 5
+    anchors = []
+    for s in a.anchor:
+        d, c, v = s.split(":")
+        anchors.append((dt.date.fromisoformat(d), float(c), int(v)))
+    own_splits = []
+    for s in a.own_split:
+        d, f = s.split(":")
+        own_splits.append((dt.date.fromisoformat(d), float(f)))
+    if own_splits:
+        print(f"  declared own split(s) of the original instrument: {[(str(d), f) for d, f in own_splits]}")
+    client = get_client()
+
+    raw = download_parquet(client, "raw", t)
+    clean = download_parquet(client, "clean", t)
+    if raw is None or raw.empty or clean is None or clean.empty:
+        print(f"{t}: served raw/clean 1-minute file missing - aborted before any write"); return 5
+    raw["datetime"] = pd.to_datetime(raw["datetime"]); clean["datetime"] = pd.to_datetime(clean["datetime"])
+    rd, cd = raw["datetime"].dt.date, clean["datetime"].dt.date
+    n_raw_drop, n_clean_drop = int((rd >= cut).sum()), int((cd >= cut).sum())
+    first_drop = rd[rd >= cut].min() if n_raw_drop else None
+    last_keep = rd[rd < cut].max()
+    print(f"{t}: served raw {len(raw):,} bars, clean {len(clean):,}; cut {cut}: dropping raw {n_raw_drop:,} / clean {n_clean_drop:,} bars "
+          f"({first_drop}..{rd.max()}); last kept session {last_keep}")
+    if a.kept_from:
+        try:
+            raw_keep = _load_snapshot_bars(a.kept_from, "raw", t)
+            clean_keep = _load_snapshot_bars(a.kept_from, "clean", t)
+        except FileNotFoundError as e:
+            print(f"{t}: --kept-from snapshot object missing: {e} - aborted before any write"); return 5
+        raw_keep = raw_keep[raw_keep["datetime"].dt.date < cut].copy()
+        clean_keep = clean_keep[clean_keep["datetime"].dt.date < cut].copy()
+        print(f"  kept half taken from {a.kept_from}: raw {len(raw_keep):,} / clean {len(clean_keep):,} bars before the cut "
+              f"(served kept half: raw {int((rd < cut).sum()):,} / clean {int((cd < cut).sum()):,})")
+        if raw_keep.empty or clean_keep.empty:
+            print("  the snapshot holds no bars before the cut - aborted before any write"); return 5
+    else:
+        raw_keep = raw[rd < cut].copy()
+        clean_keep = clean[cd < cut].copy()
+    if a.unscale:
+        try:
+            raw_keep, clean_keep = _unscale(raw_keep, a.unscale), _unscale(clean_keep, a.unscale)
+        except SystemExit as e:
+            print(f"  {e}"); return 5
+        print(f"  kept half UNSCALED x{a.unscale:g} on price (4 dp) and /{a.unscale:g} on volume (exact), raw and clean, in place")
+
+    rebuilt = pd.DataFrame()
+    if a.rebuild_from_cs:
+        rows, days_with, days_without = [], 0, []
+        for d in _sessions(cut, until):
+            r = _bars_from_cs(d, a.rebuild_from_cs, t)
+            if r:
+                rows += r; days_with += 1
+            else:
+                days_without.append(d)
+        rebuilt = pd.DataFrame(rows)
+        if not rebuilt.empty:
+            # build_bars stamps minute_start tz-aware in America/New_York; the served parquet
+            # carries naive New York wall time (last bar 15:59:00). tz_localize(None) keeps the
+            # wall clock and drops the zone, which is exactly the served convention.
+            rebuilt["datetime"] = pd.to_datetime(rebuilt["datetime"], utc=True).dt.tz_convert("America/New_York").dt.tz_localize(None)
+            rebuilt = rebuilt.sort_values("datetime").reset_index(drop=True)
+        print(f"  rebuild {t} from IEX '{a.rebuild_from_cs}' prints {cut}..{until}: {len(rebuilt):,} minute bars over {days_with} sessions; "
+              f"{len(days_without)} weekday(s) without prints/file: {[str(x) for x in days_without[:8]]}{'...' if len(days_without) > 8 else ''}")
+        if rebuilt.empty:
+            print("  rebuild produced no bars - refusing (check E:/iex_hist_backfill and the symbol); aborted before any write"); return 5
+
+    if not rebuilt.empty:
+        new_raw = pd.concat([raw_keep, rebuilt[raw_keep.columns.intersection(rebuilt.columns)]], ignore_index=True) \
+                    .sort_values("datetime").reset_index(drop=True)
+        # clean the rebuilt bars exactly as merge_ticker cleans an incremental day
+        context = clean_keep.tail(daily_update.CONTEXT_BARS)
+        to_clean = pd.concat([context, rebuilt[context.columns.intersection(rebuilt.columns)]], ignore_index=True)
+        cleaned = clean_bars(to_clean)
+        new_rows = cleaned[cleaned["datetime"] > context["datetime"].max()]
+        new_clean = pd.concat([clean_keep, new_rows], ignore_index=True).drop_duplicates(subset=["datetime"], keep="last") \
+                      .sort_values("datetime").reset_index(drop=True)
+        print(f"  clean: {len(new_rows):,} of {len(rebuilt):,} rebuilt bars survive the cleaner")
+    else:
+        new_raw, new_clean = raw_keep.sort_values("datetime").reset_index(drop=True), clean_keep.sort_values("datetime").reset_index(drop=True)
+    print(f"  after: raw {len(new_raw):,} bars (last {new_raw['datetime'].max()}), clean {len(new_clean):,} bars (last {new_clean['datetime'].max()})")
+    print(f"  bar-count delta for the record (metadata.json counters are increment-only): raw {len(new_raw) - len(raw):+,}  clean {len(new_clean) - len(clean):+,}")
+
+    # THE BASIS GATE - on the frame that would be uploaded, in the dry run as well
+    gate_rows, gate_ok = basis_gate(new_raw, t, cut, anchors, a.basis_samples, 3, own_splits, a.rebuild_from_cs)
+    _print_gate(gate_rows, f"basis gate ({len(gate_rows)} check(s)) -> {'OK' if gate_ok else 'FAIL'}")
+    if not gate_ok:
+        print(f"  REFUSED: the kept half is not on the original instrument's basis (or an anchor is unreachable) - "
+              f"nothing written. A later owner's corporate action was applied to it (R732: PARA 1/6, IPW 72x, SKK 10x); "
+              f"pass --unscale F or --kept-from SNAPDIR and re-run"); return 2
+    # clean must sit on the same basis as raw on the anchor sessions (in-place unscale, not re-cleaned).
+    # SAME MINUTE, not "session close": the cleaner drops closing minutes (PARA's clean session ends
+    # 15:55, raw 15:59 - 11.01 vs 11.07 is timing, not basis).
+    for d, _c, _v in anchors:
+        c_day = new_clean[new_clean["datetime"].dt.date == d].sort_values("datetime")
+        if c_day.empty:
+            continue
+        last_dt = c_day["datetime"].iloc[-1]
+        r_same = new_raw.loc[new_raw["datetime"] == last_dt, "Close"]
+        if r_same.empty:
+            print(f"  REFUSED: clean's last bar {last_dt} on {d} has no raw bar at the same minute"); return 2
+        if abs(float(c_day["Close"].iloc[-1]) / float(r_same.iloc[0]) - 1) > CLOSE_TOL:
+            print(f"  REFUSED: clean {float(c_day['Close'].iloc[-1])} vs raw {float(r_same.iloc[0])} at {last_dt} - "
+                  f"the two files are on different bases"); return 2
+    if not a.apply:
+        print("(dry run - pass --apply to write)"); return 0
+
+    st = seam_rebase.daily_run_state()
+    if st == "in_progress" or (st == "queued" and not a.allow_queued) or st == "unknown":
+        print(f"  REFUSED: Daily Data Update workflow is {st}; a repair inside its window is overwritten"); return 2
+    snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_reassigned_{pd.Timestamp.today():%Y%m%d}", t)
+    n_snap = seam_rebase.snapshot(client, t, snap_dir)          # exits 5 on any pre-write failure
+    print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
+
+    n = 0; sync_failed = []
+    stale = []
+    unverifiable = None
+    try:
+        for version, df in (("raw", new_raw), ("clean", new_clean)):
+            upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n += 2
+            aggs = aggregate_all(df)
+            for tf in TIMEFRAMES:
+                if tf in aggs and not aggs[tf].empty:
+                    upload_parquet(client, aggs[tf], version, t, tf); n += 1
+            for attempt in (1, 2):
+                try:
+                    sync_ticker_variables(client, version, t, df, force_full=True); n += 2; break
+                except Exception as ex:                      # noqa: BLE001
+                    if attempt == 2:
+                        sync_failed.append(f"{version}: {str(ex)[:120]}")
+                        stale += [f"{version}/variables/{t}.parquet", f"{version}/quality/{t}.parquet"]
+        print(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
+
+        # VERIFY from the served side - inside the try (R732 item 5)
+        d2 = download_parquet(client, "raw", t, "daily"); c2 = download_parquet(client, "clean", t, "daily")
+        if d2 is None or d2.empty or c2 is None or c2.empty:
+            raise RuntimeError("served daily file unreadable after the upload")
+        d2["datetime"] = pd.to_datetime(d2["datetime"]); c2["datetime"] = pd.to_datetime(c2["datetime"])
+        rebuilt_days = set(rebuilt["datetime"].dt.date) if not rebuilt.empty else set()
+        stray_r = sorted(d for d in set(d2["datetime"].dt.date) if d >= cut and d not in rebuilt_days)
+        stray_c = sorted(d for d in set(c2["datetime"].dt.date) if d >= cut and d not in rebuilt_days)
+        ok_a = not stray_r and not stray_c
+        ok_b = True; matched = total = 0
+        if a.verify_against and rebuilt_days:
+            try:
+                y = _yahoo_close(a.verify_against, min(rebuilt_days), max(rebuilt_days))
+            except Exception as ex:                          # noqa: BLE001
+                unverifiable = f"Yahoo fetch for {a.verify_against} failed: {type(ex).__name__}: {str(ex)[:160]}"
+                y = pd.Series(dtype=float)
+            if unverifiable is None and y.empty:
+                unverifiable = f"Yahoo returned no sessions for {a.verify_against}"
+            dd2 = d2.set_index(d2["datetime"].dt.date)["Close"]
+            for d in sorted(rebuilt_days):
+                if d in y.index and d in dd2.index:
+                    total += 1
+                    matched += int(abs(float(dd2[d]) / float(y[d]) - 1) <= 0.01)
+            ok_b = unverifiable is None and total > 0 and matched / total >= 0.95
+        raw_srv = download_parquet(client, "raw", t); clean_srv = download_parquet(client, "clean", t)
+        if raw_srv is None or raw_srv.empty or clean_srv is None or clean_srv.empty:
+            raise RuntimeError("served 1-minute file unreadable after the upload")
+        raw_srv["datetime"] = pd.to_datetime(raw_srv["datetime"]); clean_srv["datetime"] = pd.to_datetime(clean_srv["datetime"])
+        expected_last = max(rebuilt_days) if rebuilt_days else last_keep
+        ok_c = set(clean_srv["datetime"]).issubset(set(raw_srv["datetime"])) and raw_srv["datetime"].max().date() == expected_last \
+            and len(raw_srv) == len(new_raw) and len(clean_srv) == len(new_clean)
+        # (d) the anchors and the basis samples on the SERVED file - what a user downloads
+        srv_rows, ok_d = basis_gate(raw_srv, t, cut, anchors, a.basis_samples, 3, own_splits, a.rebuild_from_cs)
+        print(f"  VERIFY (a) served daily bars dated >= {cut} that are not rebuilt: raw {len(stray_r)} {stray_r[:4]} clean {len(stray_c)} -> {'OK' if ok_a else 'MISMATCH'}")
+        print(f"  VERIFY (b) rebuilt sessions vs Yahoo {a.verify_against}: {matched}/{total} within 1 % -> "
+              f"{'OK' if ok_b else ('n/a' if not (a.verify_against and rebuilt_days) else ('UNVERIFIABLE' if unverifiable else 'MISMATCH'))}")
+        print(f"  VERIFY (c) served clean ⊆ raw, raw ends {raw_srv['datetime'].max().date()} (expected {expected_last}), "
+              f"bar counts raw {len(raw_srv):,}/{len(new_raw):,} clean {len(clean_srv):,}/{len(new_clean):,} -> {'OK' if ok_c else 'MISMATCH'}")
+        _print_gate(srv_rows, f"VERIFY (d) basis gate on the SERVED 1-minute file -> {'OK' if ok_d else 'MISMATCH'}")
+        verified = bool(ok_a and ok_c and ok_d and (ok_b or unverifiable))
+    except BaseException as ex:                              # noqa: BLE001
+        print(f"  FAILED after the snapshot with {n} object(s) uploaded ({type(ex).__name__}: {str(ex)[:200]}) - restoring")
+        try:
+            print(f"  restored {seam_rebase.restore(client, snap_dir)} objects; served state is the pre-repair state"); return 1
+        except BaseException as ex2:                         # noqa: BLE001
+            print(f"  RESTORE FAILED ({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+    if not verified:
+        try:
+            print(f"  NOT VERIFIED - restored {seam_rebase.restore(client, snap_dir)} objects from {snap_dir}; served state is the pre-repair state"); return 1
+        except BaseException as e:                           # noqa: BLE001
+            print(f"  NOT VERIFIED and restore FAILED ({type(e).__name__}: {e}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+    if unverifiable:
+        print(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
+              f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
+    if sync_failed:
+        print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}. Not restoring; run "
+              f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
+    print(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
