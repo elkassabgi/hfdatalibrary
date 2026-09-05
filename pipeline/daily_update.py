@@ -69,6 +69,28 @@ from r2_client import (
 )
 from variables_sync import sync_ticker_variables
 
+# A backfill re-cleans a ticker's whole clean file, so its clean variables must be recomputed in full
+# (R745 finding 5). That costs a measured 4.0 ms per session per version — 5.1 s at 1,330 sessions,
+# 24.1 s at 5,959, 36.3 s at 8,984 (OTLY/KO/DD, 2026-09-05 18:12Z) — and a retried missing day makes
+# EVERY ticker a backfill at once, which at 1,391 tickers is ~7.7 h of compute, ~116 min of wall clock
+# across four workers, against a job whose ceiling is 350 min and whose runs have reached 330 (R750
+# finding 2). So the recompute is BUDGETED per worker process rather than unbounded: past the budget a
+# ticker is named and deferred to pipeline/resync_variables.py instead of silently skipped or silently
+# blowing the ceiling. Each worker has its own counter, so the run's added wall clock is at most the
+# budget itself. PIPELINE_FULL_RECOMPUTE_BUDGET_S=0 disables the full recompute entirely.
+FULL_RECOMPUTE_BUDGET_S = float(os.environ.get("PIPELINE_FULL_RECOMPUTE_BUDGET_S", "1200"))
+_full_recompute_spent = 0.0
+
+
+def _full_recompute_budget_left() -> bool:
+    return _full_recompute_spent < FULL_RECOMPUTE_BUDGET_S
+
+
+def _spend_full_recompute_budget(seconds: float) -> None:
+    global _full_recompute_spent
+    _full_recompute_spent += seconds
+
+
 PIPELINE_DIR = Path(__file__).parent
 GO_EXTRACTOR = PIPELINE_DIR / "pcap_extract" / ("pcap_extract.exe" if os.name == "nt" else "pcap_extract")
 
@@ -399,7 +421,13 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
 
     existing_clean_count = len(existing_clean) if existing_clean is not None and not existing_clean.empty else 0
 
-    if existing_clean is not None and not existing_clean.empty and not is_backfill:
+    # `clean_rebuilt` names the thing that actually matters to step 6: was the WHOLE clean file
+    # regenerated? It is True on a backfill AND on a first-ever/empty-clean run, which `is_backfill`
+    # alone never covered (R752 finding 4) — the flag now names the condition it guards, so the branch
+    # below and the variables recompute cannot drift apart again.
+    clean_rebuilt = not (existing_clean is not None and not existing_clean.empty and not is_backfill)
+
+    if not clean_rebuilt:
         # Incremental: only clean new bars using context window
         context = existing_clean.tail(CONTEXT_BARS)
         to_clean = pd.concat([context, new_bars], ignore_index=True)
@@ -453,10 +481,28 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     #    from the bars already in memory and merged per-ticker into R2.
     for _vver, _vbars in (("raw", merged_raw), ("clean", merged_clean)):
         try:
-            # ca_rescaled: the whole history changed basis, so every historical
-            # variables row is stale — full recompute, not just the new day.
-            _vs = sync_ticker_variables(client, _vver, ticker, _vbars,
-                                        force_full=ca_rescaled)
+            # ca_rescaled: the whole history changed basis (BOTH versions), so every
+            # historical variables row is stale — full recompute, not just the new day.
+            # is_backfill: step 3 re-cleaned the CLEAN file in full, so its historical
+            # variables describe bars that no longer exist; the RAW file was only merged,
+            # so raw needs no full recompute here (R750 finding 2 — the first version of
+            # this fix recomputed both and doubled a cost the daily job has a ceiling for).
+            # Without this the served clean variables drift from the served clean bars on
+            # every backfill (R745 finding 5; the fleet-wide staleness measured 2026-09-05,
+            # handoff section 15). Cost: ~4 ms per session per version, i.e. ~20 s for a
+            # 5,000-session ticker, and it lands ONLY on tickers that actually receive
+            # older bars — zero on an ordinary day, when is_backfill is false everywhere.
+            _full = ca_rescaled or (clean_rebuilt and _vver == "clean" and _full_recompute_budget_left())
+            if clean_rebuilt and _vver == "clean" and not _full:
+                # the budget is spent: say so and name the ticker, so the out-of-band repair
+                # (pipeline/resync_variables.py) has a list instead of silence
+                stats.setdefault("variables_full_deferred", []).append(ticker)
+                print(f"[variables] {ticker}: backfill full recompute DEFERRED - this worker's budget "
+                      f"({FULL_RECOMPUTE_BUDGET_S:.0f}s) is spent; repair with resync_variables.py", flush=True)
+            _t_full = time.time()
+            _vs = sync_ticker_variables(client, _vver, ticker, _vbars, force_full=_full)
+            if _full:
+                _spend_full_recompute_budget(time.time() - _t_full)
             stats[f"{_vver}_var_rows"] = _vs.get("new_rows", 0)
         except Exception as _ve:  # noqa: BLE001 - variables must never break OHLCV
             print(f"[variables] WARN {ticker} ({_vver}): {_ve}", flush=True)
@@ -595,6 +641,7 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
     total_new_clean = 0
     ticker_stats = []  # per-ticker cleaning stats for the log
     ca_events = []     # (kind, message) corporate-action applications/alerts
+    variables_deferred = []   # tickers whose full clean-variables recompute the budget deferred (R752 #7)
     per_ticker = new_bars.groupby("ticker")
     total_tickers = len(per_ticker)
 
@@ -631,6 +678,11 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
                         if data.get(k):
                             ca_events.append(("APPLIED" if k == "ca_applied" else "ALERT",
                                               data[k]))
+                    # a ticker whose full clean-variables recompute was deferred by the per-worker
+                    # budget must reach the run's OUTPUT, not just a line in a 1,391-ticker log
+                    # (R752 finding 7): without this the list dies at the worker boundary and the
+                    # out-of-band repair has nothing to work from.
+                    variables_deferred.extend(data.get("variables_full_deferred") or [])
                 else:
                     print(f"  {ticker} FAILED: {data}")
 
@@ -642,10 +694,15 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
     if not dry_run:
         update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
 
+    if variables_deferred:
+        print(f"[variables] {len(variables_deferred)} ticker(s) had their full clean-variables recompute "
+              f"DEFERRED by the per-worker budget and are still stale against their bars; repair with "
+              f"pipeline/resync_variables.py: {' '.join(sorted(variables_deferred))}", flush=True)
     return {"date": d, "status": "ok", "tickers": tickers_updated,
             "new_bars": len(new_bars), "uploaded_mb": total_uploaded / 1e6,
             "elapsed_min": (time.time() - day_start) / 60,
-            "ca_events": ca_events}
+            "ca_events": ca_events,
+            "variables_full_deferred": sorted(variables_deferred)}
 
 
 def read_pipeline_state() -> tuple[Optional[date], List[date]]:
@@ -826,6 +883,16 @@ def main():
         body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1, "
                  "stable all day). ALERT = needs review; a confirmed split below the "
                  "auto floor is applied with <code>pipeline/manual_split.py</code>.</p>")
+    # tickers whose full clean-variables recompute the per-worker budget deferred. Crossing the worker
+    # boundary was not enough (R754 #6): a key nothing reads is not "in the run's output", so it goes
+    # where ca_events goes — the summary a human actually opens.
+    vfd_all = sorted({t for r in results for t in (r.get("variables_full_deferred") or [])})
+    if vfd_all:
+        body += (f"<h3>Variables recompute deferred</h3><p>{len(vfd_all)} ticker(s) were re-cleaned in full "
+                 f"but their clean variables could not be recomputed within this run's per-worker budget "
+                 f"(<code>PIPELINE_FULL_RECOMPUTE_BUDGET_S</code>), so their variables and quality objects "
+                 f"are stale against their own bars until repaired with "
+                 f"<code>pipeline/resync_variables.py</code>:</p><p><code>{' '.join(vfd_all)}</code></p>")
     if nodata:
         body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
     if deferred:
