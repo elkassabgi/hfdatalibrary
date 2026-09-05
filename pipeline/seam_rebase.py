@@ -1,43 +1,47 @@
 """seam_rebase.py — put ONE ticker's pre-2022-03-07 (PiTrading) history on the basis of its
-post-2022-03-07 (IEX) history. Version 2, after adversarial review (2026-09-05).
+post-2022-03-07 (IEX) history. Version 3, after two adversarial reviews (2026-09-05).
 
 WHY. The pre-2022 half is split+dividend+spin-off adjusted as of 2022-03-04 (the vendor's file
-end); the later half is adjusted through 2026-03-27 by our merge step. Nothing back-propagated the
-later corporate actions into the earlier half, so every ticker with a split or a dividend since
-March 2022 carries a step at the seam (AMZN 20x, MO ~29%).
+end). The later half was conformed to the previously served series through 2026-03-27 by the merge
+step, and is appended raw since. Nothing back-propagated later corporate actions into the earlier
+half, so tickers with a split or dividend since March 2022 carry a step at the seam (AMZN 20x).
 
-TWO MODES, because the dividend part is a convention decision that is Ahmed's, not the tool's:
-  --mode split  (DEFAULT)  fix the SPLIT part only. Correct under either convention.
-        P      = median(served PiTrading close / Yahoo close) over the last 3 PiTrading sessions
-                 (Yahoo daily Close, auto_adjust=False = today's split basis, no dividends; the
-                 last 3 sessions avoid any ex-dividend step inside the window)
-        P_int  = P snapped to an INTEGER split ratio n or 1/n within 0.2 %; refused otherwise
-        check  = P_int must equal the product of Yahoo's recorded split events after 2022-03-04
-                 (all of them, or all but those after 2026-07-13 - the daily path applied later
-                 ones to the full history); refused otherwise. Spin-off pseudo-splits (T 1.324)
-                 never pass the integer test, which is the point.
-        price x 1/P_int, volume x P_int, on every bar STRICTLY BEFORE 2022-03-07.
-  --mode full   also fold in the dividend/spin factor D measured on the first 3 IEX sessions
-        (price x D/P_int). NOT before the convention decision is recorded; the tool insists on
-        --convention-decided to run this mode.
+TWO MODES. --mode split (DEFAULT) fixes the split part only, which is correct under either price
+convention. --mode full also folds in the dividend/spin factor D and refuses without
+--convention-decided, because that is Ahmed's decision, not the tool's.
 
-WHAT IT REWRITES, AND WHY NOT MORE. The clean set is NOT rescale-invariant (MAD ties on the cent
-grid flip under x K: 13,051 bars for MO), so this tool rescales RAW and the SERVED CLEAN in place
-and re-aggregates each - it does not re-clean. A change of units must not change which bars are
-kept.
+WHAT THE SECOND REVIEW FOUND, AND WHAT V3 DOES ABOUT IT
+  * D-BLINDNESS. Some tickers carry a split UNAPPLIED inside the served later half (BKNG 25:1 on
+    2026-04-06, BYND 1:30 on 2026-08-14 — after the daily fix). There P looks like a missing split
+    but the seam is already consistent; v2 would have manufactured a 25x step, and both
+    verifications would have passed. v3 walks every Yahoo split event after the seam that falls
+    inside the served range and measures the served close step across it against Yahoo's; a step
+    within 2 % of the raw split factor means the split is unapplied in the later half -> REFUSE and
+    name it (that is a separate live defect to repair with manual_split + CA_DATE).
+  * IDEMPOTENCY. v3 measures the 1-minute RAW and CLEAN files' own last pre-seam session against
+    the market before touching them; if either already sits on target, or they disagree with each
+    other by more than 0.3 %, it refuses. A crash between uploads therefore cannot be doubled by a
+    re-run. --restore SNAPDIR re-uploads every snapshotted object verbatim.
+  * SNAPSHOT. Includes csv/raw/T.csv and csv/clean/T.csv (served by /v1/download?format=csv) and
+    everything under raw/, clean/, variables/, quality/; each object's MD5 is compared to its ETag
+    when the ETag is a single-part MD5, else Content-Length is compared.
+  * EX-DATES. If a Yahoo ex-dividend date falls inside the pre-seam window, the window is the
+    sessions strictly after the last such ex-date; fewer than 2 sessions -> REFUSE naming the date.
+  * The clean set is not rescale-invariant (measured: 12,479 MO bars flip at K=0.714), so raw and
+    the served clean are rescaled in place and re-aggregated; nothing is re-cleaned.
 
-ORDER. snapshot every served object (byte-count verified) -> dry-run print -> [--apply] rescale
-raw + clean -> upload 1min parquet+csv x2 -> aggregate_all x2 -> upload every timeframe ->
-sync_ticker_variables(force_full) x2 -> VERIFY two ways from the served side: (a) daily seam step
-== old/K; (b) independent re-measure: rebased P' over the same 3 sessions vs Yahoo must be
-1.000 +- 0.3 % in split mode (or D in full mode). Non-zero exit names the snapshot to restore.
+ORDER. measure -> refuse or print plan -> [--apply] snapshot (content-checked) -> rescale raw+clean
+-> upload 1min parquet+csv x2 -> aggregate_all x2 -> upload every timeframe -> sync variables x2
+-> VERIFY: (a) served daily seam step == old/K; (b) rebased P' over the same window == 1.000
+(split) or D (full) within 0.3 %; (c) served clean 1-minute last pre-seam session agrees with raw.
 
-Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamps the citation and
-IEX-attribution parquet metadata). Credentials from the environment / .env.
+Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamps parquet metadata).
     python seam_rebase.py TICKER [--mode split|full] [--apply] [--snapshot-dir DIR]
+    python seam_rebase.py TICKER --restore SNAPDIR
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import math
 import os
 import sys
@@ -49,12 +53,13 @@ from variables_sync import sync_ticker_variables
 
 TIMEFRAMES = ["5min", "15min", "30min", "hourly", "daily", "weekly", "monthly"]
 SEAM = pd.Timestamp("2022-03-07")
-FIX = pd.Timestamp("2026-07-13")          # daily path applies detected splits to the full history from here
+FIX = pd.Timestamp("2026-07-13")
 PRICE_COLS = ("Open", "High", "Low", "Close")
 BUCKET = "hfdatalibrary-data"
 INTS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 60, 100, 200, 250, 500, 1000, 2000]
 CANON_INT = sorted(set([1.0] + [float(n) for n in INTS] + [1.0 / n for n in INTS]))
 WIN = 3
+SNAP_PREFIXES = ("raw/", "clean/", "variables/", "quality/", "csv/")
 
 
 def snap_int(p: float):
@@ -63,56 +68,105 @@ def snap_int(p: float):
 
 
 def yahoo(t: str):
+    """Daily Close (today's split basis, no dividends) 2022-02-14..today, split events, ex-dates."""
     import yfinance as yf
     tk = yf.Ticker(t.replace(".", "-"))
-    h = tk.history(start="2022-02-14", end="2022-03-25", auto_adjust=False, actions=False)
+    h = tk.history(start="2022-02-14", auto_adjust=False, actions=True)
     if h is None or len(h) == 0:
-        return None, None
+        return None, None, None
     h.index = pd.to_datetime(h.index).tz_localize(None).normalize()
-    s = tk.splits
-    if s is not None and len(s):
-        s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
-        s = s[s.index > pd.Timestamp("2022-03-04")]
-    else:
-        s = pd.Series(dtype=float)
-    return h, s
+    spl = h["Stock Splits"][h["Stock Splits"] > 0] if "Stock Splits" in h else pd.Series(dtype=float)
+    spl = spl[spl.index > pd.Timestamp("2022-03-04")]
+    div = h["Dividends"][h["Dividends"] > 0] if "Dividends" in h else pd.Series(dtype=float)
+    return h, spl, div
 
 
-def measure(daily: pd.DataFrame, h: pd.DataFrame):
-    """P over the last WIN PiTrading sessions, D over the first WIN IEX sessions, vs Yahoo Close."""
-    d = daily.set_index("datetime").sort_index()
-    pre = d[d.index < SEAM].tail(WIN); post = d[d.index >= SEAM].head(WIN)
-    y = h[["Close"]].rename(columns={"Close": "y"})
-    jp = pre[["Close"]].rename(columns={"Close": "s"}).join(y, how="inner")
-    jd = post[["Close"]].rename(columns={"Close": "s"}).join(y, how="inner")
-    if len(jp) < 2 or len(jd) < 2:
-        return None
-    rp = jp["s"] / jp["y"]; rd = jd["s"] / jd["y"]
-    return dict(P=float(rp.median()), D=float(rd.median()),
-                spread_P=float(rp.max() / rp.min() - 1), spread_D=float(rd.max() / rd.min() - 1),
-                pre_dates=[x.date() for x in jp.index], post_dates=[x.date() for x in jd.index])
+def pre_window(daily_idx, div) -> tuple[list, str | None]:
+    """The pre-seam sessions used for P: the last WIN sessions, cut to those strictly after the last
+    ex-dividend date that falls inside them. Returns (sessions, ex_date_note)."""
+    pre = [d for d in daily_idx if d < SEAM][-WIN:]
+    if div is None or len(div) == 0 or not pre:
+        return pre, None
+    ex_in = [d for d in div.index if pre[0] <= d <= pre[-1]]
+    if not ex_in:
+        return pre, None
+    last_ex = max(ex_in)
+    return [d for d in pre if d > last_ex], f"ex-dividend {last_ex.date()} inside the window"
+
+
+def ratio_over(served: pd.Series, y: pd.Series, sessions) -> tuple[float | None, float | None, int]:
+    s = served.reindex(sessions).dropna(); yy = y.reindex(s.index).dropna(); s = s.reindex(yy.index)
+    if len(s) < 2:
+        return None, None, len(s)
+    r = (s / yy).astype(float)
+    return float(r.median()), float(r.max() / r.min() - 1), len(s)
+
+
+def unapplied_splits(served_daily: pd.Series, y: pd.Series, spl) -> list[tuple]:
+    """For each Yahoo split event inside the served range: served close step across the event vs
+    Yahoo's. Yahoo is fully adjusted (no step); a served step within 2 % of the raw factor 1/s means
+    the split was never applied to the served later half."""
+    out = []
+    for ev, s in spl.items():
+        prev = served_daily[served_daily.index < ev]
+        post = served_daily[served_daily.index >= ev]
+        if len(prev) == 0 or len(post) == 0:
+            continue
+        p_d, q_d = prev.index[-1], post.index[0]
+        if p_d not in y.index or q_d not in y.index:
+            continue
+        served_step = float(post.iloc[0] / prev.iloc[-1]); y_step = float(y[q_d] / y[p_d])
+        rel = served_step / y_step            # 1.0 if the served half is adjusted like Yahoo across the event
+        raw_factor = 1.0 / float(s)           # what an UNAPPLIED forward s:1 split looks like (price drops by s)
+        # 5 %, not 2 %: BYND's served $0.415 close sits 2 % off the official close by tick size alone, and
+        # a genuine split factor is at least 2x away from 1, so 5 % cannot confuse a market move with a split
+        if abs(rel / raw_factor - 1) <= 0.05:
+            out.append((ev.date(), float(s), rel))
+    return out
+
+
+def md5_of(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def snapshot(client, ticker: str, out_dir: str) -> int:
     os.makedirs(out_dir, exist_ok=True)
+    names = {f"{ticker}.parquet", f"{ticker}.csv", f"{ticker}.csv.gz", f"{ticker}.json"}
     keys = []
-    for page in client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET):
-        for o in page.get("Contents", []):
-            k = o["Key"]; base = k.rsplit("/", 1)[-1]
-            if base in (f"{ticker}.parquet", f"{ticker}.csv", f"{ticker}.csv.gz", f"{ticker}.json") and \
-                    k.split("/")[0] in ("raw", "clean", "variables", "quality"):
-                keys.append((k, o["Size"]))
+    for pref in SNAP_PREFIXES:
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=pref):
+            for o in page.get("Contents", []):
+                if o["Key"].rsplit("/", 1)[-1] in names:
+                    keys.append((o["Key"], o["Size"], o["ETag"].strip('"')))
     if not keys:
         raise SystemExit(f"snapshot: no served objects found for {ticker}")
-    for k, size in keys:
+    for k, size, etag in keys:
         dest = os.path.join(out_dir, k.replace("/", "__"))
         client.download_file(BUCKET, k, dest)
         if os.path.getsize(dest) != size:
-            raise SystemExit(f"snapshot: {k} is {size} bytes on R2 but {os.path.getsize(dest)} on disk - aborting before any write")
+            raise SystemExit(f"snapshot: {k} size {size} on R2 vs {os.path.getsize(dest)} on disk - aborting before any write")
+        if "-" not in etag and md5_of(dest) != etag:
+            raise SystemExit(f"snapshot: {k} MD5 {md5_of(dest)} != ETag {etag} - aborting before any write")
     with open(os.path.join(out_dir, "_MANIFEST.txt"), "w", encoding="utf-8") as f:
-        for k, size in keys:
-            f.write(f"{size}\t{k}\n")
+        for k, size, etag in keys:
+            f.write(f"{size}\t{etag}\t{k}\n")
     return len(keys)
+
+
+def restore(client, snap_dir: str) -> int:
+    n = 0
+    for line in open(os.path.join(snap_dir, "_MANIFEST.txt"), encoding="utf-8"):
+        size, etag, k = line.rstrip("\n").split("\t")
+        src = os.path.join(snap_dir, k.replace("/", "__"))
+        if os.path.getsize(src) != int(size):
+            raise SystemExit(f"restore: {src} is {os.path.getsize(src)} bytes, manifest says {size} - not restoring")
+        client.upload_file(src, BUCKET, k); n += 1
+        print(f"  restored {k}")
+    return n
 
 
 def rescale(df: pd.DataFrame, K: float, V: float) -> pd.DataFrame:
@@ -131,54 +185,101 @@ def rescale(df: pd.DataFrame, K: float, V: float) -> pd.DataFrame:
     return df
 
 
+def last_pre_session_close(df1: pd.DataFrame) -> tuple[pd.Timestamp | None, float | None]:
+    """Close of the LAST BAR of the last pre-seam session in a 1-minute frame — the comparator for
+    the market's official close (a session median sits ~0.4 % away on a trending day, which would
+    fail a correct rebase at the 0.3 % gate)."""
+    d = pd.to_datetime(df1["datetime"])
+    if d.dt.tz is not None:
+        d = d.dt.tz_localize(None)
+    m = d < SEAM
+    if not m.any():
+        return None, None
+    sub = df1.loc[m].assign(_dt=d[m]).sort_values("_dt")
+    last_bar = sub.iloc[-1]
+    return pd.Timestamp(last_bar["_dt"]).normalize(), float(last_bar["Close"])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("ticker"); ap.add_argument("--mode", choices=("split", "full"), default="split")
     ap.add_argument("--apply", action="store_true"); ap.add_argument("--snapshot-dir", default=None)
-    ap.add_argument("--convention-decided", action="store_true", help="required for --mode full")
+    ap.add_argument("--convention-decided", action="store_true"); ap.add_argument("--restore", default=None)
     a = ap.parse_args(); t = a.ticker.upper()
+    client = get_client()
+    if a.restore:
+        n = restore(client, a.restore); print(f"{t}: restored {n} objects from {a.restore}"); return 0
     if a.mode == "full" and not a.convention_decided:
         raise SystemExit("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded.")
 
-    client = get_client()
     daily = download_parquet(client, "raw", t, "daily")
     if daily is None or daily.empty:
         raise SystemExit(f"{t}: no served daily file")
-    daily["datetime"] = pd.to_datetime(daily["datetime"])
-    if "source" in daily.columns and not ((daily["source"] == "pitrading").any() and (daily["source"] == "iex").any()):
+    daily["datetime"] = pd.to_datetime(daily["datetime"]); dd = daily.set_index("datetime").sort_index()
+    if "source" in dd.columns and not ((dd["source"] == "pitrading").any() and (dd["source"] == "iex").any()):
         print(f"{t}: no PiTrading/IEX splice in the served file - nothing to rebase"); return 0
-    h, splits = yahoo(t)
+    h, spl, div = yahoo(t)
     if h is None:
         print(f"{t}: no market reference at Yahoo - cannot measure; disclose, do not repair"); return 3
-    m = measure(daily, h)
-    if m is None:
-        print(f"{t}: fewer than 2 overlapping sessions with the market on a side - cannot measure"); return 3
-    P, D = m["P"], m["D"]
+    y = h["Close"]
+
+    pre_sessions, ex_note = pre_window(dd.index, div)
+    post_sessions = [d for d in dd.index if d >= SEAM][:WIN]
+    P, sP, nP = ratio_over(dd["Close"], y, pre_sessions)
+    D, sD, nD = ratio_over(dd["Close"], y, post_sessions)
+    if P is None or D is None:
+        print(f"{t}: REFUSED - fewer than 2 market-overlapping sessions on a side (pre {nP}, post {nD}){' - ' + ex_note if ex_note else ''}"); return 2
+    print(f"{t}: P={P:.6f} (spread {sP:.4%}, {nP} sessions {[d.date() for d in pre_sessions if d in dd.index]}{'; ' + ex_note if ex_note else ''})  D={D:.6f} (spread {sD:.4%})")
+    events = [(str(i.date()), float(v)) for i, v in spl.items()]
+    prod_all = float(spl.prod()) if len(spl) else 1.0
+    prod_prefix = float(spl[spl.index <= FIX].prod()) if len(spl) else 1.0
+    print(f"  Yahoo split events after 2022-03-04: {events or 'none'} -> product all={prod_all:g}, <=2026-07-13={prod_prefix:g}")
+
+    # D-blindness fix, two independent tests:
+    #  (i) both halves equally off the market: P ~ D != 1 with a split on record means the WHOLE served
+    #      series sits on one (old) basis - the seam is consistent and the ticker's defect is an
+    #      unapplied split, not the seam. Simplest and event-arithmetic-free.
+    if len(spl) and abs(P / D - 1) <= 0.005 and abs(P - 1) > 0.002:
+        print(f"  REFUSED: P={P:.6f} and D={D:.6f} are equal - both halves are on the same pre-split basis, the seam is "
+              f"already consistent; the split(s) {events} are UNAPPLIED in the served series. LIVE DEFECT: repair with "
+              f"manual_split + CA_DATE, not with this tool."); return 2
+    #  (ii) per event: served close step across the event vs Yahoo's (catches a later half that is only partly adjusted)
+    una = unapplied_splits(dd["Close"], y, spl)
+    if una:
+        print(f"  REFUSED: the served post-seam half carries UNAPPLIED split(s) {una} (served step across the event ~ raw factor). "
+              f"The seam is not what P says; repair those splits first (manual_split with CA_DATE). LIVE DEFECT."); return 2
+
     P_int = snap_int(P)
-    prod_all = float(splits.prod()) if len(splits) else 1.0
-    prod_prefix = float(splits[splits.index <= FIX].prod()) if len(splits) else 1.0
-    print(f"{t}: P={P:.6f} (spread {m['spread_P']:.4%}, sessions {m['pre_dates']})  D={D:.6f} (spread {m['spread_D']:.4%}, sessions {m['post_dates']})")
-    print(f"  Yahoo split events after 2022-03-04: {[(str(i.date()), float(v)) for i, v in splits.items()] or 'none'}  -> product all={prod_all:g}, up to 2026-07-13={prod_prefix:g}")
     if P_int is None:
-        print(f"  REFUSED: P={P:.6f} does not snap to an integer split ratio within 0.2 % - spin-off or unclear; manual look needed"); return 2
+        print(f"  REFUSED: P={P:.6f} does not snap to an integer split ratio within 0.2 % (spin-off or unclear)"); return 2
     match = "all" if abs(P_int / prod_all - 1) <= 0.002 else ("prefix" if abs(P_int / prod_prefix - 1) <= 0.002 else None)
     if match is None:
-        print(f"  REFUSED: P_int={P_int:g} matches neither Yahoo's split product ({prod_all:g}) nor the pre-2026-07-13 product ({prod_prefix:g})"); return 2
-    if m["spread_P"] > 0.003:
-        print(f"  REFUSED: PiTrading side unstable over its last {WIN} sessions ({m['spread_P']:.3%}) - look before rescaling"); return 2
+        print(f"  REFUSED: P_int={P_int:g} matches neither Yahoo's split product ({prod_all:g}) nor the <=2026-07-13 product ({prod_prefix:g})"); return 2
+    if sP > 0.003:
+        print(f"  REFUSED: PiTrading side unstable over its window ({sP:.3%}){' - ' + ex_note if ex_note else ''}"); return 2
     K = 1.0 / P_int; V = P_int
     if a.mode == "full":
         K = D / P_int
     if abs(K - 1) <= 0.002 and abs(V - 1) <= 1e-9:
-        print(f"  nothing to rebase in --mode {a.mode} (P_int=1{', dividend/spin seam D=%.4f held for the convention decision' % D if abs(D - 1) > 0.002 else ''})"); return 0
-    print(f"  {a.mode.upper()} rebase: price x{K:.6g}, volume x{V:g} on bars strictly before {SEAM.date()}  (split match: {match}; dividend/spin factor at seam D={D:.4f}{' - NOT applied in split mode' if a.mode == 'split' else ' - applied'})")
+        print(f"  nothing to rebase in --mode {a.mode} (P_int=1{'; dividend/spin seam D=%.4f held for the convention decision' % D if abs(D - 1) > 0.002 else ''})"); return 0
+    print(f"  {a.mode.upper()} rebase plan: price x{K:.6g}, volume x{V:g} on bars strictly before {SEAM.date()} (split match: {match}; D={D:.4f}{' NOT applied' if a.mode == 'split' else ' applied'})")
 
+    # idempotency: the 1-minute files' own last pre-seam session vs the market, raw AND clean
     raw = download_parquet(client, "raw", t); clean = download_parquet(client, "clean", t)
     if raw is None or raw.empty or clean is None or clean.empty:
         raise SystemExit(f"{t}: served raw/clean 1-minute file missing")
     extra = [c for c in raw.columns if c not in PRICE_COLS + ("Volume", "datetime", "source")]
     if extra:
-        raise SystemExit(f"{t}: raw carries unexpected columns {extra} - policy for them is not defined; refusing")
+        raise SystemExit(f"{t}: raw carries unexpected columns {extra} - refusing")
+    d_r, c_r = last_pre_session_close(raw); d_c, c_c = last_pre_session_close(clean)
+    if d_r is None or d_c is None or d_r not in y.index:
+        print(f"  REFUSED: cannot place the 1-minute files' last pre-seam session against the market ({d_r}, {d_c})"); return 2
+    P_raw, P_clean = c_r / float(y[d_r]), c_c / float(y[d_c]) if d_c in y.index else float("nan")
+    print(f"  1-minute self-check: raw last pre-seam session {d_r.date()} P_raw={P_raw:.6f}; clean {d_c.date()} P_clean={P_clean:.6f}; target after rebase {P_raw * K:.6f}")
+    if abs(P_raw / P_clean - 1) > 0.003:
+        print(f"  REFUSED: raw and clean disagree on the pre-seam basis (P_raw={P_raw:.6f}, P_clean={P_clean:.6f}) - a previous run may have been interrupted; use --restore"); return 2
+    if abs(P_raw * K / (1.0 if a.mode == 'split' else D) - 1) > 0.003 and abs(P_raw / (1.0 if a.mode == 'split' else D) - 1) <= 0.003:
+        print(f"  REFUSED: the 1-minute files are ALREADY on target (P_raw={P_raw:.6f}); nothing to do"); return 0
     n_pre = int((pd.to_datetime(raw["datetime"]) < SEAM).sum())
     print(f"  raw {len(raw):,} bars ({n_pre:,} before the seam), clean {len(clean):,} bars; both rescaled in place, neither re-cleaned")
     if not a.apply:
@@ -186,7 +287,7 @@ def main() -> int:
 
     snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_seam_{pd.Timestamp.today():%Y%m%d}", t)
     n_snap = snapshot(client, t, snap_dir)
-    print(f"  snapshot: {n_snap} objects -> {snap_dir} (byte counts verified)")
+    print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
 
     raw2, clean2 = rescale(raw, K, V), rescale(clean, K, V)
     n = 0
@@ -199,17 +300,21 @@ def main() -> int:
         sync_ticker_variables(client, version, t, df, force_full=True); n += 2
     print(f"  uploaded {n} objects")
 
+    # verify from the served side
     d2 = download_parquet(client, "raw", t, "daily"); d2["datetime"] = pd.to_datetime(d2["datetime"])
-    dd = d2.set_index("datetime").sort_index()
-    step_before = float(daily.set_index("datetime").sort_index().pipe(lambda x: x[x.index >= SEAM]["Close"].iloc[0] / x[x.index < SEAM]["Close"].iloc[-1]))
-    step_after = float(dd[dd.index >= SEAM]["Close"].iloc[0] / dd[dd.index < SEAM]["Close"].iloc[-1])
+    dd2 = d2.set_index("datetime").sort_index()
+    step_before = float(dd[dd.index >= SEAM]["Close"].iloc[0] / dd[dd.index < SEAM]["Close"].iloc[-1])
+    step_after = float(dd2[dd2.index >= SEAM]["Close"].iloc[0] / dd2[dd2.index < SEAM]["Close"].iloc[-1])
     ok_a = abs(step_after / (step_before / K) - 1) < 0.005
-    m2 = measure(d2, h); target = 1.0 if a.mode == "split" else D
-    ok_b = m2 is not None and abs(m2["P"] / target - 1) < 0.003
+    P2, _, _ = ratio_over(dd2["Close"], y, pre_sessions); target = 1.0 if a.mode == "split" else D
+    ok_b = P2 is not None and abs(P2 / target - 1) < 0.003
+    clean_srv = download_parquet(client, "clean", t); d_c2, c_c2 = last_pre_session_close(clean_srv)
+    ok_c = d_c2 is not None and abs((c_c2 / float(y[d_c2])) / target - 1) < 0.003
     print(f"  VERIFY (a) served daily seam step x{step_after:.6f} vs expected x{step_before / K:.6f} -> {'OK' if ok_a else 'MISMATCH'}")
-    print(f"  VERIFY (b) independent: rebased P'={m2['P'] if m2 else None} vs target {target:.6f} -> {'OK' if ok_b else 'MISMATCH'}")
-    if not (ok_a and ok_b):
-        print(f"  NOT VERIFIED - restore from {snap_dir}"); return 1
+    print(f"  VERIFY (b) rebased P'={P2} vs target {target:.6f} -> {'OK' if ok_b else 'MISMATCH'}")
+    print(f"  VERIFY (c) served clean 1-minute last pre-seam session vs market -> {'OK' if ok_c else 'MISMATCH'}")
+    if not (ok_a and ok_b and ok_c):
+        print(f"  NOT VERIFIED - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 1
     print(f"  DONE: {t} rebased ({a.mode}); snapshot kept at {snap_dir}")
     return 0
 
