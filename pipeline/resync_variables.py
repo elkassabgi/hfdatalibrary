@@ -39,7 +39,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from r2_client import get_client, download_parquet, download_to_buffer   # noqa: E402
 from compute_variables import compute_recent_days                         # noqa: E402
-from variables_sync import sync_ticker_variables                          # noqa: E402
+from variables_sync import sync_ticker_variables, QUALITY_COLS            # noqa: E402
 import seam_rebase                                                        # noqa: E402
 
 _say, _record = seam_rebase._say, seam_rebase._record
@@ -54,7 +54,7 @@ def compare(served: pd.DataFrame | None, fresh: pd.DataFrame):
     """(sessions differing, columns differing {col: n}, common, only_served, only_fresh, first, last)"""
     if served is None or served.empty:
         return None
-    dcol = "date" if "date" in served.columns else served.columns[0]
+    dcol = "trade_date" if "trade_date" in served.columns else ("date" if "date" in served.columns else served.columns[0])
     s = served.copy(); f = fresh.copy()
     s[dcol] = pd.to_datetime(s[dcol]); f[dcol] = pd.to_datetime(f[dcol])
     s = s.set_index(dcol).sort_index(); f = f.set_index(dcol).sort_index()
@@ -93,7 +93,7 @@ def main() -> int:
     # MEASURE
     before = {}
     for version in ("raw", "clean"):
-        fresh = compute_recent_days(bars[version], t, existing_dates=set(), max_new=10 ** 9)
+        fresh = compute_recent_days(bars[version], t, existing_dates=None, max_new=10 ** 9)   # exactly what force_full passes
         for kind in ("variables",):
             r = compare(served_obj(client, version, t, kind), fresh)
             before[f"{version}_{kind}"] = r
@@ -123,7 +123,7 @@ def main() -> int:
         # VERIFY: read back, compare with a fresh recompute - every session, every column
         bad = []
         for version in ("raw", "clean"):
-            fresh = compute_recent_days(bars[version], t, existing_dates=set(), max_new=10 ** 9)
+            fresh = compute_recent_days(bars[version], t, existing_dates=None, max_new=10 ** 9)   # exactly what force_full passes
             try:
                 srv = served_obj(client, version, t, "variables")
             except Exception as ex:                                   # noqa: BLE001
@@ -134,6 +134,18 @@ def main() -> int:
                 bad.append((version, r))
             _say(f"  VERIFY {version}/variables: {'OK' if (r and r[0] == 0 and r[3] == 0 and r[4] == 0) else 'MISMATCH'} "
                  f"({r[0] if r else 'missing'} differing of {r[2] if r else 0})")
+            # the quality object is the variables' column subset (variables_sync: merged[qcols]); read it back too
+            try:
+                q = served_obj(client, version, t, "quality")
+            except Exception as ex:                                   # noqa: BLE001
+                _record(snap_dir, f"EXIT 3 UNVERIFIABLE read-back {version}/quality: {type(ex).__name__}: {str(ex)[:160]}")
+                _say(f"  UNVERIFIABLE, DATA LIVE: read-back of {version}/quality failed ({type(ex).__name__}); nothing restored"); return 3
+            qcols = [c for c in QUALITY_COLS if c in (srv.columns if srv is not None else [])]
+            rq = compare(q, srv[qcols]) if (srv is not None and q is not None) else None
+            q_ok = bool(rq and rq[0] == 0 and rq[3] == 0 and rq[4] == 0 and list(q.columns) == qcols)
+            if not q_ok:
+                bad.append((f"{version}/quality", rq))
+            _say(f"  VERIFY {version}/quality: {'OK' if q_ok else 'MISMATCH'} (columns {list(q.columns) if q is not None else 'missing'})")
         if bad:
             raise RuntimeError(f"verify mismatch: {[(v, r[0] if r else None) for v, r in bad]}")
     except BaseException as ex:                                       # noqa: BLE001
