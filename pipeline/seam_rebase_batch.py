@@ -102,13 +102,24 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
     # header - the one that can see a module swapped and restored inside a single child, which is
     # exactly the ~100 ms launch race the header check was added for. A disagreement is a breach.
     readings = [parse(h) for h in hits]
-    first, last = readings[0], readings[-1]
-    disagree = [f"{k} header {first[k]} vs trailer {last[k]}"
-                for k in set(first) & set(last)
-                if first[k] != last[k] and "not-imported" not in (first[k], last[k])]
+    # R755 #3: a reading that parses to NOTHING is not agreement, it is a child saying it could not
+    # identify its own imports - the "HASHES-UNAVAILABLE" placeholder, or any line we cannot read.
+    if any(not r for r in readings):
+        return ("a sibling line carries no readable name/hash pairs - the child could not identify the "
+                "modules it imported")
+    # R755 #5: compare EVERY reading, not just the first and last. The blind spot had moved from
+    # "last only" to "first and last only", so three lines with a drifted middle read as clean.
+    disagree = []
+    for i in range(len(readings) - 1):
+        a, b = readings[i], readings[i + 1]
+        disagree += [f"{k} reading{i} {a[k]} vs reading{i+1} {b[k]}"
+                     for k in set(a) & set(b)
+                     if a[k] != b[k] and "not-imported" not in (a[k], b[k])]
     if disagree:
-        return "the child's own header and exit trailer disagree: " + "; ".join(disagree)
-    child = dict(first); child.update(last)                      # trailer wins for lazily-imported names
+        return "the child's own sibling readings disagree: " + "; ".join(disagree)
+    child = {}
+    for r in readings:                                           # later readings win for lazy imports
+        child.update(r)
     drift = []
     for name, short in child.items():
         parent = shas.get(f"{name}.py")
@@ -248,7 +259,8 @@ def main() -> int:
         # Keyed on the snapshot SUCCESS line, not the word "snapshot:" (R739): the four pre-write
         # abort lines ("snapshot: ... aborting before any write", exit 5) also carry the word, and
         # the first form of this check rewrote every one of them to 4 and stopped the batch.
-        if re.search(r"^\s+snapshot: \d+ objects -> ", out, re.M):
+        snapshot_ok = bool(re.search(r"^\s+snapshot: \d+ objects -> ", out, re.M))
+        if snapshot_ok:
             rec_path = os.path.join(a.snapshot_root, t, "_RESULT.txt")
             rec_last = None
             try:
@@ -319,10 +331,13 @@ def main() -> int:
         drift = _sibling_drift(out, shas)
         if drift:
             last = f"SIBLING DRIFT: {drift} - a guarded module changed while the child ran; " + last
-            # EVERY outcome, not only rc 0 (R754 #5). resync's exit 2 is "already consistent", a claim
-            # ABOUT SERVED STATE, and a ticker whose modules are unidentified was being printed in the
-            # success list. A breach invalidates whatever the child concluded.
-            if rc in (0, 2, 3, 6, 7):
+            # EVERY child code ONCE THE SNAPSHOT SUCCEEDED (R754 #5, widened by R755 #4). Past that
+            # line writes may have happened, so the served state is unknown whatever the child
+            # concluded - and 4 already means "restore failed OR an inconsistent served set". Leaving
+            # rc 1 and 5 alone kept the child's conclusion in the LOG, so the next start did not refuse
+            # and the ticker returned to todo. But the driver's OWN no-write 5 stays 5: nothing was
+            # written there, and calling it "served state UNKNOWN" would overstate the danger.
+            if snapshot_ok:
                 rc = 4
             hash_breach = hash_breach or f"sibling drift under exit {raw_rc}"
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
@@ -330,9 +345,8 @@ def main() -> int:
             with open(detail, "w", encoding="utf-8") as f:
                 f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}\n"
                         f"# driver read at start : " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items()) + "\n"
-                        f"# child header         : " + (child_sibs[0] if child_sibs else "(none)") + "\n"
-                        f"# child trailer        : " + (child_sibs[-1] if len(child_sibs) > 1 else
-                                                        ("(same as header)" if child_sibs else "(none)")) + "\n"
+                        + "".join(f"# child reading {i}      : {s}\n" for i, s in enumerate(child_sibs))
+                        + ("" if child_sibs else "# child readings       : (none printed)\n")
                         + (f"# SIBLING DRIFT       : {drift}\n" if drift else "")
                         + f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
         except Exception as e:                                   # noqa: BLE001
@@ -343,6 +357,11 @@ def main() -> int:
         n += 1
         if hash_breach:
             print(f"STOPPING: {hash_breach} for {t} - the batch ran bytes other than the ones it hashed; restart deliberately", flush=True)
+            # R755 #7: the drift stop used to REPLACE the served-state guidance, so on the very run
+            # where a breach happened over a write the operator was told "restart deliberately" and
+            # not how to restore - that text only arrived on the next start.
+            if rc in STOP_TEXT:
+                print(STOP_TEXT[rc], flush=True)
             stopped = True; break
         if rc in STOP_TEXT:
             print(STOP_TEXT[rc] + "\n" + out[-2500:] + err[-800:])

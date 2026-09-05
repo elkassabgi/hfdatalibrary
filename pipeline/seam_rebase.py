@@ -139,7 +139,10 @@ def _say_module_hashes(label: str) -> None:
         _say(f"  {label}: {_imported_module_hashes()}")
     except BaseException:                                       # noqa: BLE001
         try:
-            _say(f"  {label}: unavailable")
+            # R755 #3: the placeholder must be UNMISTAKABLE. "unavailable" parsed to an empty dict, so
+            # header and trailer had nothing to disagree about and the driver read the child as clean -
+            # the guard for #7 re-opened the fail-open hole #3 had just closed.
+            _say(f"  {label}: HASHES-UNAVAILABLE the child could not hash its own imports")
         except BaseException:                                   # noqa: BLE001
             pass
 

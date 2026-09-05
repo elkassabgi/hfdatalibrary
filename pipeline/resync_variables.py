@@ -140,10 +140,16 @@ def snapshot4(client, t: str, out_dir: str) -> int:
 import re as _re
 
 ID_RE = _re.compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
-# the verdict CELL, whole: "PASS", "**PASS**", "PASS - note". Never "PASSED", "PASSES",
-# "PASS with changes", "PASS-WITH-CHANGES" (the dash must be followed by SPACE to be a note,
-# or PASS-WITH-CHANGES reads as PASS plus a trailing note), or PASS anywhere else in the row.
-VERDICT_CELL_RE = _re.compile(r"^\s*\**\s*PASS\s*\**\s*(?:[-–]\s+\S.*)?$", _re.I)
+# A cell that is EXACTLY a pass: "PASS", "**PASS**", optionally followed by a note after a dash.
+VERDICT_CELL_RE = _re.compile(r"^\s*\**\s*PASS\s*\**\s*(?:[-–—:]\s+\S.*)?$", _re.I)
+# Anything that disqualifies the ROW, wherever it appears in it. R755 #1 and #2: the cell parser
+# replaced the old "or FAIL in verdicts" test, so a row with a FAIL cell AND a PASS cell authorised
+# — the natural shape when one review covers both tools in one row with a verdict column each. And
+# the project's own middle verdict, repunctuated ("PASS - with changes", "PASS - WITH CHANGES"),
+# slipped through a rule that only refused the tight hyphenation.
+DISQUALIFY_RE = _re.compile(r"\bFAIL\b|PASS[\s\-–—:]*WITH[\s\-–—:]*CHANGES", _re.I)
+# A note attached to a PASS must not be doing the work of a refusal.
+NEGATING_RE = _re.compile(r"\b(?:not|no|never|change[sd]?|refus\w*|fail\w*|superseded|revoked|pending|unless|except)\b", _re.I)
 # the clearing cell must bind THIS tool's name to THIS file's hash, adjacently. A cell that clears
 # seam_rebase.py and merely mentions resync_variables in prose is not a clearance for us (R754 #1).
 CLEARS_RE_FMT = r"resync_variables(?:\.py)?\s+sha256\s+{sha}"
@@ -177,13 +183,30 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
             if not named:
                 continue
             clears = _re.compile(CLEARS_RE_FMT.format(sha=_re.escape(sha12)), _re.I)
-            if not any(clears.search(c) for c in named):
+            cleared = [c for c in named if clears.search(c)]
+            # R755 #6: a clearance must be revocable. A cell that names the tool and hash but says
+            # SUPERSEDED, revoked or "do not use" is not a clearance, and returning True on the first
+            # matching row meant a later refusing row for the same id was never reached — so the scan
+            # continues instead of returning early, and any disqualifier in ANY matching row wins.
+            if cleared and any(NEGATING_RE.search(c) for c in cleared):
+                _say(f"  --reviewed {rid}: the clearing cell is qualified "
+                     f"({[c[:60] for c in cleared][:1]}) - refused"); return False
+            if not cleared:
                 _say(f"  --reviewed {rid}: no cell reads 'resync_variables.py sha256 {sha12}' - a row that "
                      f"clears another tool, or carries a different hash, does not clear this one"); return False
+            # a disqualifier ANYWHERE in the row refuses, before any pass is looked for
+            bad = [c for c in cells if DISQUALIFY_RE.search(c)]
+            if bad:
+                _say(f"  --reviewed {rid}: that row carries {[c[:40] for c in bad][:3]} - a FAIL or "
+                     f"PASS-WITH-CHANGES anywhere in the row refuses, however it is punctuated"); return False
             verdicts = [c for c in cells if VERDICT_CELL_RE.match(c)]
             if not verdicts:
                 _say(f"  --reviewed {rid}: no cell in that row is a plain PASS verdict "
                      f"(cells: {[c[:24] for c in cells if c][:6]}) - refused"); return False
+            noted = [c for c in verdicts if NEGATING_RE.search(c)]
+            if noted:
+                _say(f"  --reviewed {rid}: the PASS cell carries a qualifying note {[c[:50] for c in noted][:2]} "
+                     f"- a note that negates is a refusal; put an unqualified PASS in its own cell"); return False
             return True
     except OSError:
         return False
