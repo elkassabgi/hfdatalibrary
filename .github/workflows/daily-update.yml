@@ -63,6 +63,10 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r pipeline/requirements.txt
+      - name: Optional second signal for the split detector (never fatal)
+        # yfinance is imported inside _confirm_split_event under try/except; if this step fails the
+        # detector alerts exactly as before ("lookup FAILED (not checked)"), it never blocks the run.
+        run: pip install "yfinance>=0.2.60,<2" || echo "yfinance unavailable; split alerts fall back to review"
 
       - name: Set up Go
         uses: actions/setup-go@v6
