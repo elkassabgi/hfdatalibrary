@@ -139,78 +139,57 @@ def snapshot4(client, t: str, out_dir: str) -> int:
 
 import re as _re
 
+# THE APPROVAL TOKEN. Four reviews (R745, R750, R752, R754) narrowed a gate that tried to INFER
+# approval from a prose table, and the fifth (R755) found that my own fix for the fourth had deleted
+# a guard while adding one. Every defeat came from the same place: inference over free text, where
+# "PASSED" contains "PASS", a note can negate a verdict, and a FAIL cell can sit beside a PASS cell.
+# So the gate no longer infers. A reviewer who clears this tool writes ONE line, exactly:
+#
+#     APPROVE-APPLY resync_variables.py <first 12 hex of this file's sha256> <review id>
+#
+# optionally followed by "#" and any comment. Nothing else authorises: not a verdict column, not the
+# word PASS, not the file being called PASSED.md. The hash binds the approval to the reviewed bytes,
+# so any edit to this file invalidates it, which is the point.
+APPROVE_RE_FMT = r"^\s*APPROVE-APPLY\s+resync_variables\.py\s+{sha}\s+(\S+)\s*(?:#.*)?$"
 ID_RE = _re.compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
-# A cell that is EXACTLY a pass: "PASS", "**PASS**", optionally followed by a note after a dash.
-VERDICT_CELL_RE = _re.compile(r"^\s*\**\s*PASS\s*\**\s*(?:[-–—:]\s+\S.*)?$", _re.I)
-# Anything that disqualifies the ROW, wherever it appears in it. R755 #1 and #2: the cell parser
-# replaced the old "or FAIL in verdicts" test, so a row with a FAIL cell AND a PASS cell authorised
-# — the natural shape when one review covers both tools in one row with a verdict column each. And
-# the project's own middle verdict, repunctuated ("PASS - with changes", "PASS - WITH CHANGES"),
-# slipped through a rule that only refused the tight hyphenation.
-DISQUALIFY_RE = _re.compile(r"\bFAIL\b|PASS[\s\-–—:]*WITH[\s\-–—:]*CHANGES", _re.I)
-# A note attached to a PASS must not be doing the work of a refusal.
-NEGATING_RE = _re.compile(r"\b(?:not|no|never|change[sd]?|refus\w*|fail\w*|superseded|revoked|pending|unless|except)\b", _re.I)
-# the clearing cell must bind THIS tool's name to THIS file's hash, adjacently. A cell that clears
-# seam_rebase.py and merely mentions resync_variables in prose is not a clearance for us (R754 #1).
-CLEARS_RE_FMT = r"resync_variables(?:\.py)?\s+sha256\s+{sha}"
 
 
 def reviewed_ok(review_id: str, passed_file: str) -> bool:
-    """PASSED.md is a table. Parse the ROW into cells and judge the cells, not the line.
+    """Does PASSED.md carry an exact approval token for THESE bytes and THIS review id?
 
-    R750 #6, R752 #2 and R754 #1 are the same defect getting narrower each time: a substring test took
-    "A"; a whole-token test took "PASS" and a blank id; a whole-LINE verdict test took "PASSED" (the file
-    is named PASSED.md, so that word is on every row), "PASSES", "Pass with changes", a row whose only
-    "PASS" sat inside the prose "nothing added to PASSED.md", and a PASS row for seam_rebase.py that
-    merely mentioned resync_variables in its description. The gate now requires, per row:
-      * the id as a whole token in some cell,
-      * a cell that names this tool AND carries this file's sha256 (the same cell, so a different
-        tool's row cannot borrow our hash from elsewhere in the table),
-      * a cell that is ENTIRELY a PASS verdict.
+    This gate used to infer approval from a prose table, and four reviews in a row defeated the
+    inference in a new way each time (R745, R750, R752, R754), with the fifth finding that my own fix
+    for the fourth had deleted a guard while adding one (R755). The defeats were all the same shape:
+    free text is not a decision. "PASSED" contains "PASS"; a note can negate a verdict; a FAIL cell
+    can sit beside a PASS cell; a row clearing another tool can mention this one in passing.
+
+    So nothing is inferred. A reviewer writes one line, exactly:
+
+        APPROVE-APPLY resync_variables.py <sha12> <review id>          [# any comment]
+
+    and only that authorises. The hash is this file's own, so editing the tool invalidates every
+    approval of it - which is the property the whole gate exists for. A line for a different hash, a
+    different tool, or a different id does not match, and no amount of surrounding prose can make it.
     """
     rid = (review_id or "").strip()
     if not ID_RE.match(rid):
         _say(f"  --reviewed {review_id!r} is not shaped like a review id (e.g. AR-037) - refused")
         return False
-    token = _re.compile(r"(?<![0-9A-Za-z_-])" + _re.escape(rid) + r"(?![0-9A-Za-z_-])")
     sha12 = _SOURCE_SHA[:12]
+    want = _re.compile(APPROVE_RE_FMT.format(sha=_re.escape(sha12)))
     try:
-        for ln in open(passed_file, encoding="utf-8", errors="replace"):
-            cells = [c.strip() for c in ln.split("|")]
-            if not any(token.search(c) for c in cells):
-                continue
-            named = [c for c in cells if "resync_variables" in c]
-            if not named:
-                continue
-            clears = _re.compile(CLEARS_RE_FMT.format(sha=_re.escape(sha12)), _re.I)
-            cleared = [c for c in named if clears.search(c)]
-            # R755 #6: a clearance must be revocable. A cell that names the tool and hash but says
-            # SUPERSEDED, revoked or "do not use" is not a clearance, and returning True on the first
-            # matching row meant a later refusing row for the same id was never reached — so the scan
-            # continues instead of returning early, and any disqualifier in ANY matching row wins.
-            if cleared and any(NEGATING_RE.search(c) for c in cleared):
-                _say(f"  --reviewed {rid}: the clearing cell is qualified "
-                     f"({[c[:60] for c in cleared][:1]}) - refused"); return False
-            if not cleared:
-                _say(f"  --reviewed {rid}: no cell reads 'resync_variables.py sha256 {sha12}' - a row that "
-                     f"clears another tool, or carries a different hash, does not clear this one"); return False
-            # a disqualifier ANYWHERE in the row refuses, before any pass is looked for
-            bad = [c for c in cells if DISQUALIFY_RE.search(c)]
-            if bad:
-                _say(f"  --reviewed {rid}: that row carries {[c[:40] for c in bad][:3]} - a FAIL or "
-                     f"PASS-WITH-CHANGES anywhere in the row refuses, however it is punctuated"); return False
-            verdicts = [c for c in cells if VERDICT_CELL_RE.match(c)]
-            if not verdicts:
-                _say(f"  --reviewed {rid}: no cell in that row is a plain PASS verdict "
-                     f"(cells: {[c[:24] for c in cells if c][:6]}) - refused"); return False
-            noted = [c for c in verdicts if NEGATING_RE.search(c)]
-            if noted:
-                _say(f"  --reviewed {rid}: the PASS cell carries a qualifying note {[c[:50] for c in noted][:2]} "
-                     f"- a note that negates is a refusal; put an unqualified PASS in its own cell"); return False
-            return True
-    except OSError:
+        with open(passed_file, encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                m = want.match(ln)
+                if m and m.group(1) == rid:
+                    return True
+    except OSError as ex:
+        _say(f"  --reviewed {rid}: cannot read {passed_file} ({type(ex).__name__}) - refused")
         return False
-    _say(f"  --reviewed {rid}: no row of {passed_file} carries this id in a cell and names resync_variables")
+    _say(f"  --reviewed {rid}: {passed_file} carries no line reading exactly")
+    _say(f"      APPROVE-APPLY resync_variables.py {sha12} {rid}")
+    _say(f"  ...so this run is not approved. The hash is of the tool as it stands; if it was edited "
+         f"after the review, it needs reviewing again.")
     return False
 
 
