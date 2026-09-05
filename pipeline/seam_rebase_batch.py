@@ -65,12 +65,39 @@ def _source_sha256s(names=GUARDED) -> dict:
         try:
             with open(os.path.join(HERE, name), "rb") as f:
                 out[name] = hashlib.sha256(f.read()).hexdigest()
-        except OSError:
-            out[name] = "missing"
+        except OSError as ex:
+            # R748 finding 6: this returned "missing" and the batch ran on with five of six modules
+            # unguarded and no warning - the R503 fail-open shape. A guard that cannot read what it
+            # guards is not a guard.
+            raise SystemExit(f"source guard: cannot read {os.path.join(HERE, name)} ({type(ex).__name__}: {ex}) - "
+                             f"refusing to run a batch whose guarded set cannot be hashed")
     return out
 
 
 HEADER_RE = re.compile(r"tool source sha256 (\S+) \(.*\) pid (\d+)")
+# the child names the siblings it actually imported, at exit, when the set is complete (R748 finding 5)
+SIBLING_RE = re.compile(r"imported module sha256(?: at exit)?: (.+)$", re.M)
+
+
+def _sibling_drift(out: str, shas: dict) -> str | None:
+    """The child's own reading of its siblings vs the driver's start-time reading. A sibling saved during
+    a child is imported by that child; comparing the two readings is the only thing that sees it."""
+    hits = SIBLING_RE.findall(out)
+    if not hits:
+        return None
+    child = {}
+    for part in hits[-1].split(", "):                            # the LAST line: the complete set
+        bits = part.strip().split(" ")
+        if len(bits) == 2:
+            child[bits[0]] = bits[1]
+    drift = []
+    for name, short in child.items():
+        parent = shas.get(f"{name}.py")
+        if short in ("not-imported", "unreadable") or parent is None:
+            continue
+        if not parent.startswith(short):
+            drift.append(f"{name} child {short} vs driver {parent[:12]}")
+    return "; ".join(drift) if drift else None
 
 
 RECORD_RE = re.compile(r"^(\S+)\t(?:pid=(\d+)\t)?(EXIT \d+.*)$")
@@ -104,13 +131,21 @@ def main() -> int:
     ap.add_argument("--mode", choices=("split", "full"), default="split")
     ap.add_argument("--convention-decided", action="store_true", help="required with --mode full; passed through to the tool")
     ap.add_argument("--log", default=r"D:\temp\claude\seam_rebase_batch.log")
-    ap.add_argument("--snapshot-root", default=os.path.join("F:\\", f"hf_r2_snapshot_seam_{dt.datetime.now(dt.timezone.utc):%Y%m%d}"))
+    # the snapshot root is per tool too (R750 finding 1): a shared default made a resync run abort 68
+    # tickers on seam's kept manifests, which is the R731 refusal firing for a spurious reason
+    ap.add_argument("--snapshot-root", default=None)
     ap.add_argument("--events-file", default=None, help="passed through to seam_rebase.py (issuer-recorded split events, see its docstring)")
     ap.add_argument("--tool", default="seam_rebase.py", choices=("seam_rebase.py", "resync_variables.py"),
                     help="the per-ticker tool to drive; both print the same header and write the same record grammar")
     ap.add_argument("--reviewed", default=None, help="resync_variables.py only: the PASSED.md id passed through as --reviewed")
     a = ap.parse_args()
     seam = a.tool == "seam_rebase.py"
+    if a.snapshot_root is None:
+        kind = "seam" if seam else "vars"
+        a.snapshot_root = os.path.join("F:\\", f"hf_r2_snapshot_{kind}_{dt.datetime.now(dt.timezone.utc):%Y%m%d}")
+    if not seam and not a.reviewed:
+        print(f"--tool {a.tool} writes served objects and needs --reviewed <PASSED.md id>; the tool refuses "
+              f"without it, so every ticker would exit 5. Pass it on the driver."); return 1
     if a.mode == "full" and not a.convention_decided:
         print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided "
               "on the driver only once it is recorded (every ticker would exit 5 otherwise)."); return 1
@@ -121,11 +156,17 @@ def main() -> int:
     else:
         d = pd.read_csv(a.candidates); d["flag"] = d.flag.fillna("")
         cands = sorted(d[~d.flag.str.contains("no_seam_window")].ticker)
+    # THE LOG IS PER TOOL (R750 finding 1). Lines carry a tool column; a line written by the OTHER tool is
+    # not this tool's evidence - neither for "already done" nor for the exit-4 start refusal. Lines from
+    # before the column existed (pass 1) have no tool field and belong to seam_rebase.py, which wrote them.
+    def line_tool(p):
+        return p[5] if len(p) >= 6 and p[5].endswith(".py") else "seam_rebase.py"
+
     done = set(); last_line = None
     if os.path.exists(a.log):
         for line in open(a.log, encoding="utf-8"):
             p = line.rstrip("\n").split("\t")
-            if len(p) >= 3:
+            if len(p) >= 3 and line_tool(p) == a.tool:
                 last_line = p
                 if p[2] == "0":
                     done.add(p[1])
@@ -145,7 +186,7 @@ def main() -> int:
     shas = _source_sha256s(guarded); tool_sha = shas[a.tool]
     print(f"tool {a.tool} source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())
           + "; the batch refuses to launch a child if any of them changes", flush=True)
-    n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []; deferred = []
+    n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []; deferred = []; already_ok = []
     for t in todo:
         if a.limit is not None and n >= a.limit:
             break
@@ -192,9 +233,14 @@ def main() -> int:
             said = m.group(3) if m else (rec_last or "")
             # the child prints "pid <n>" in its header (v5.4+): a record without a pid under such a child,
             # or a child without the header at all, is not believed (R743 finding 4)
+            # every header the child printed, not just the first: a second header line with a different
+            # hash would otherwise be hidden behind the first (found by the R748 finding-4 harness)
+            hdrs = HEADER_RE.findall(out)
             hdr = HEADER_RE.search(out)
             hdr_sha = hdr.group(1) if hdr else None
             hdr_pid = hdr.group(2) if hdr else None
+            if len({h[0] for h in hdrs}) > 1:
+                hdr_sha = f"MULTIPLE ({', '.join(sorted({h[0][:12] for h in hdrs}))})"
             # the header's hash must be the launch hash (R744 finding 5): the ~100 ms between the guard's
             # read and the child's module-top read is seen by nothing else
             hash_ok = hdr_sha == tool_sha
@@ -225,21 +271,39 @@ def main() -> int:
                         f"there differ from R2")
                 rc = 4
         else:
-            # no write reached; a header whose hash is not the launch hash still means other bytes ran (R744)
+            # No write reached. The same evidence that is exit 4 on the write path must not be exit 0 here
+            # (R748 finding 4): a hash breach or a missing header was printed but LOGGED WITH THE CHILD'S OWN
+            # CODE, so a 0 went into the log and the next start skipped the ticker as already done.
+            hdrs = HEADER_RE.findall(out)
             hdr = HEADER_RE.search(out)
-            if hdr and hdr.group(1) != tool_sha:
-                hash_breach = f"child header hash {hdr.group(1)[:12]} differs from the launch hash {tool_sha[:12]} (no write reached; child exit {rc})"
+            if hdr and (len({h[0] for h in hdrs}) > 1 or hdr.group(1) != tool_sha):
+                shown = ", ".join(sorted({h[0][:12] for h in hdrs}))
+                hash_breach = f"child header hash {shown} differs from the launch hash {tool_sha[:12]} (no write reached; child exit {rc})"
                 last = hash_breach + " - " + last
+                rc = 5                      # aborted before any write, by the driver - never 0, never skippable
+            elif hdr is None:
+                hash_breach = f"child printed no hash/pid header (no write reached; child exit {rc}) - the code that ran is unidentified"
+                last = hash_breach + " - " + last
+                rc = 5
+        # the siblings the CHILD loaded, not the driver's start-time read (R748 finding 5)
+        child_sibs = SIBLING_RE.findall(out)
+        drift = _sibling_drift(out, shas)
+        if drift:
+            last = f"SIBLING DRIFT: {drift} - a guarded module changed while the child ran; " + last
+            if rc == 0:
+                rc = 4                       # its output was produced partly by bytes the driver never hashed
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
             with open(detail, "w", encoding="utf-8") as f:
-                f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}; "
-                        f"guarded " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items()) + "\n"
-                        f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
+                f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}\n"
+                        f"# driver read at start : " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items()) + "\n"
+                        f"# child imported       : " + (child_sibs[-1] if child_sibs else "(child printed no sibling line)") + "\n"
+                        + (f"# SIBLING DRIFT       : {drift}\n" if drift else "")
+                        + f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
         except Exception as e:                                   # noqa: BLE001
             print(f"  (detail file not written: {e})", flush=True)
         with open(a.log, "a", encoding="utf-8") as f:
-            f.write(f"{stamp}\t{t}\t{rc}\t{(dt.datetime.now(dt.timezone.utc) - t0).total_seconds():.0f}s\t{last[:200]}\n")
+            f.write(f"{stamp}\t{t}\t{rc}\t{(dt.datetime.now(dt.timezone.utc) - t0).total_seconds():.0f}s\t{last[:200]}\t{a.tool}\n")
         print(f"  {t:6} exit {rc}  {last[:130]}", flush=True)
         n += 1
         if hash_breach:
@@ -253,7 +317,9 @@ def main() -> int:
         elif rc == 5:
             aborted.append(t)
         elif rc == 2:
-            refused.append(t)
+            # per tool (R750 finding 3): for seam_rebase.py exit 2 is a refusal to act; for
+            # resync_variables.py it is "already consistent", which is a success, not a manual item
+            (refused if seam else already_ok).append(t)
         elif rc == 3:
             unmeasurable.append(t)
         elif rc == 7:
@@ -272,6 +338,8 @@ def main() -> int:
               f"manifest is not fixed by a re-run): {' '.join(aborted)}")
     if refused:
         print(f"refused before any write (exit 2) - the manual list: {' '.join(refused)}")
+    if already_ok:
+        print(f"already consistent, nothing to do (exit 2) - {len(already_ok)} ticker(s): {' '.join(already_ok)}")
     if unmeasurable:
         print(f"unmeasurable (exit 3) - the disclose list: {' '.join(unmeasurable)}")
     if deferred:

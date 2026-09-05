@@ -121,6 +121,29 @@ def _source_sha256() -> str:
     return _SOURCE_SHA256
 
 
+SIBLINGS = ("aggregate", "r2_client", "variables_sync", "compute_variables", "symbol_map")
+
+
+def _imported_module_hashes() -> str:
+    """sha256 of every sibling module THIS PROCESS actually imported, hashed from the file it was loaded
+    from (R748 finding 5). The driver hashes the siblings once, before the child starts; a sibling saved
+    during a 60-190 s child is imported by that child and seen by nothing. symbol_map is imported lazily
+    inside yahoo(), so this is printed again as a trailer at exit, when the set is complete."""
+    import hashlib as _h
+    parts = []
+    for name in SIBLINGS:
+        mod = sys.modules.get(name)
+        if mod is None:
+            parts.append(f"{name} not-imported"); continue
+        path = getattr(mod, "__file__", None)
+        try:
+            with open(path, "rb") as fh:
+                parts.append(f"{name} {_h.sha256(fh.read()).hexdigest()[:12]}")
+        except Exception:                                       # noqa: BLE001
+            parts.append(f"{name} unreadable")
+    return ", ".join(parts)
+
+
 def _record(snap_dir: str, text: str) -> None:
     """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
     the console is gone (R735). Never raises - not even for an interrupt (R738). Every line carries
@@ -389,6 +412,7 @@ def main() -> int:
     a = ap.parse_args(); t = a.ticker.upper()
     # the code that produced this run, by content (R741 finding 2): the detail file keeps this line
     _say(f"  tool source sha256 {_source_sha256()} ({os.path.abspath(__file__)}) pid {os.getpid()}")
+    _say(f"  imported module sha256: {_imported_module_hashes()}")
     client = get_client()
     if a.restore:
         _STATE["wrote"] = True                                  # a restore IS a write to the served set
@@ -746,4 +770,8 @@ def _guarded_main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(_guarded_main())
+    _rc = _guarded_main()
+    # the trailer: the sibling set is complete only now (symbol_map is imported inside yahoo()). The
+    # driver reads the LAST occurrence and records it, so the detail file names the bytes that ran (R748).
+    _say(f"  imported module sha256 at exit: {_imported_module_hashes()}")
+    sys.exit(_rc)

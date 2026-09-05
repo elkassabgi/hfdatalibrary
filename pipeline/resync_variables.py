@@ -138,11 +138,24 @@ def snapshot4(client, t: str, out_dir: str) -> int:
 
 
 def reviewed_ok(review_id: str, passed_file: str) -> bool:
-    """The id must be on a PASSED.md line that names this tool."""
+    """The id must appear as a WHOLE TOKEN on a PASSED.md line that names this tool, records a PASS, and
+    carries this file's sha256 (R750 finding 6: a substring test accepted "A", "-", "AR-0" and even the id
+    from a FAIL line, and nothing tied the approval to the bytes being run)."""
+    import re
+    token = re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(review_id.strip()) + r"(?![0-9A-Za-z_-])")
     try:
         for ln in open(passed_file, encoding="utf-8", errors="replace"):
-            if review_id in ln and "resync_variables" in ln:
-                return True
+            if not token.search(ln) or "resync_variables" not in ln:
+                continue
+            if "FAIL" in ln.upper().split("PASS")[0] and "PASS" not in ln.upper():
+                continue
+            if "PASS" not in ln.upper():
+                continue
+            if _SOURCE_SHA[:12] not in ln:
+                _say(f"  --reviewed {review_id!r} names a PASS line for this tool, but that line does not carry this "
+                     f"file's sha256 {_SOURCE_SHA[:12]} - the review cleared different bytes")
+                return False
+            return True
     except OSError:
         return False
     return False
@@ -155,12 +168,23 @@ def main() -> int:
     ap.add_argument("--reviewed", default=None, help="the PASSED.md line id of the adversarial review that cleared this tool for --apply")
     ap.add_argument("--snapshot-dir", default=None)
     ap.add_argument("--passed-file", default=PASSED_DEFAULT)
-    a = ap.parse_args(); t = a.ticker.upper()
+    try:
+        a = ap.parse_args()
+    except SystemExit as ex:                          # argparse exits 2, which here means "already consistent"
+        raise SystemExit(5 if ex.code else ex.code)   # R750 finding 4: a usage error is an abort before any write
+    t = a.ticker.upper()
     _say(f"  tool source sha256 {_SOURCE_SHA} ({os.path.abspath(__file__)}) pid {os.getpid()}; seam_rebase.py sha256 {seam_rebase._source_sha256()}")
     if a.apply and not a.reviewed:
         _say("--apply needs --reviewed <PASSED.md id>: a rewrite of served objects runs only after its review (exit 5)"); return 5
     if a.apply and not reviewed_ok(a.reviewed, a.passed_file):
         _say(f"--reviewed {a.reviewed!r} is not on a line of {a.passed_file} that names resync_variables - refused (exit 5)"); return 5
+    # the daily window is checked BEFORE the downloads and the two full computes (R750 finding 7): asking
+    # afterwards spent ~50 s per ticker to learn the run should not have started
+    if a.apply:
+        st = seam_rebase.daily_run_state()
+        if st in ("in_progress", "queued", "unknown"):
+            _say(f"  DEFERRED (exit 7) before any read: Daily Data Update workflow is {st}; a resync inside its "
+                 f"window is overwritten - run again outside it"); return 7
     client = get_client()
     bars = {}
     for version in ("raw", "clean"):
@@ -186,16 +210,18 @@ def main() -> int:
              "(dry run - the measurement above is the finding; pass --apply --reviewed <id> to rewrite)")
         return 2 if consistent else 0
     snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_vars_{dt.datetime.now(dt.timezone.utc):%Y%m%d}", t)
-    os.makedirs(snap_dir, exist_ok=True)               # every outcome from here on is recorded
-    if consistent:
-        _record(snap_dir, "EXIT 2 nothing to do: served variables equal a fresh recompute on every session and column")
-        _say(f"  {t}: already consistent - nothing to do (exit 2)"); return 2
-    st = seam_rebase.daily_run_state()
-    if st in ("in_progress", "queued", "unknown"):
-        _record(snap_dir, f"EXIT 7 DEFERRED: Daily Data Update workflow is {st}; nothing written")
-        _say(f"  DEFERRED (exit 7): Daily Data Update workflow is {st}; a resync inside its window is overwritten - run again later"); return 7
     written = []
+    # the try opens with the makedirs (R750 finding 5): the window between "the directory exists" and
+    # "the guarded block starts" produced rc 5 with a directory and NO _RESULT.txt in it
     try:
+        os.makedirs(snap_dir, exist_ok=True)           # every outcome from here on is recorded
+        if consistent:
+            _record(snap_dir, "EXIT 2 nothing to do: served variables equal a fresh recompute on every session and column")
+            _say(f"  {t}: already consistent - nothing to do (exit 2)"); return 2
+        st = seam_rebase.daily_run_state()
+        if st in ("in_progress", "queued", "unknown"):
+            _record(snap_dir, f"EXIT 7 DEFERRED: Daily Data Update workflow is {st}; nothing written")
+            _say(f"  DEFERRED (exit 7): Daily Data Update workflow is {st}; a resync inside its window is overwritten - run again later"); return 7
         n_snap = snapshot4(client, t, snap_dir)
         _say(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
         seam_rebase._STATE["wrote"] = True             # the first upload starts now
