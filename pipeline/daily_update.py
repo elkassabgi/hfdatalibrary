@@ -77,6 +77,10 @@ METADATA_PATH = Path(__file__).parent.parent / "data" / "metadata.json"
 TICKERS_PATH = Path(__file__).parent.parent / "data" / "tickers.json"
 
 
+import dataclasses
+import symbol_map
+
+
 def load_universe() -> Set[str]:
     """Load the 1,391 ticker universe from data/tickers.json."""
     if not TICKERS_PATH.exists():
@@ -134,6 +138,30 @@ def run_go_extractor(pcap_path: str, tickers_path: str, output_csv: str) -> None
         raise RuntimeError(f"Go extractor failed with exit code {result.returncode}")
 
 
+def remap_trades(trades, d: date, universe: Set[str]):
+    """Group prints by DATASET ticker: an IEX spelling (BRK.B, BF.B, PRN; B or FI in their rename
+    eras) is re-keyed to the ticker the served series carries, anything outside the map's date
+    bounds is counted and dropped, never silently lost. Returns
+    (by_symbol, trades_count, remapped_counts, dropped_counts)."""
+    by_symbol: Dict[str, List] = {}
+    remapped: Dict[str, int] = {}
+    dropped: Dict[str, int] = {}
+    n = 0
+    for trade in trades:
+        ticker = symbol_map.dataset_ticker(trade.symbol, d, universe)
+        if ticker is None:
+            dropped[trade.symbol] = dropped.get(trade.symbol, 0) + 1
+            continue
+        if ticker != trade.symbol:
+            # Trade is a frozen dataclass; build_bars() groups by .symbol, so the print must
+            # carry the dataset ticker before it gets there
+            trade = dataclasses.replace(trade, symbol=ticker)
+            remapped[ticker] = remapped.get(ticker, 0) + 1
+        n += 1
+        by_symbol.setdefault(trade.symbol, []).append(trade)
+    return by_symbol, n, remapped, dropped
+
+
 def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
     """Fetch, extract, and parse the TOPS pcap for one date.
 
@@ -171,9 +199,20 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
         t_dl = time.time() - t0
         print(f"[parse_day] {d}: downloaded {bytes_downloaded/1e9:.2f} GB in {t_dl/60:.1f} min", flush=True)
 
-        # Step 2: Run Go extractor
+        # Step 2: Run Go extractor. The extractor matches IEX print symbols EXACTLY, and IEX
+        # spells class shares with a dot (BRK.B, BF.B) and prints the NEW symbol after a rename
+        # (B for Barrick, FI for Fiserv) while the dataset keeps BRK-B, BF-B, GOLD, FISV. So the
+        # universe handed to the extractor is the dataset universe PLUS those IEX spellings
+        # (symbol_map.extractor_universe); step 4 maps each print back. Before this, the served
+        # BRK-B / BF-B / PRN- series ended on 2026-03-27, the last backfill day, because only the
+        # backfill had a second, remapped pass (hist_backfill_classshares.py).
         t1 = time.time()
-        tickers_path = str(TICKERS_PATH)
+        ext_universe = symbol_map.extractor_universe(universe)
+        tickers_path = os.path.join(tmp_dir, "tickers_iex.json")
+        with open(tickers_path, "w") as tf:
+            json.dump(sorted(ext_universe), tf)
+        print(f"[parse_day] {d}: extractor universe {len(ext_universe):,} symbols "
+              f"({len(ext_universe) - len(universe)} IEX spellings added for mapped tickers)", flush=True)
         run_go_extractor(pcap_path, tickers_path, csv_path)
         t_extract = time.time() - t1
         csv_size = os.path.getsize(csv_path) if os.path.exists(csv_path) else 0
@@ -187,11 +226,16 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
         trades_count = 0
         by_symbol: Dict[str, List] = {}
 
-        for trade in parse_trades_csv(csv_path, universe=universe):
-            trades_count += 1
-            by_symbol.setdefault(trade.symbol, []).append(trade)
+        by_symbol, trades_count, remapped, dropped_out_of_bounds = remap_trades(
+            parse_trades_csv(csv_path, universe=ext_universe), d, universe)
 
         print(f"[parse_day] {d}: read {trades_count:,} trades for {len(by_symbol):,} tickers", flush=True)
+        if remapped:
+            print(f"[parse_day] {d}: remapped IEX spellings -> dataset tickers: "
+                  f"{', '.join(f'{k}={v:,}' for k, v in sorted(remapped.items()))}", flush=True)
+        if dropped_out_of_bounds:
+            print(f"[parse_day] {d}: dropped (mapping outside its date bounds): "
+                  f"{', '.join(f'{k}={v:,}' for k, v in sorted(dropped_out_of_bounds.items()))}", flush=True)
 
     finally:
         # Cleanup temp files
