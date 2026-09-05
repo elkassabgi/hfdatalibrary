@@ -122,9 +122,15 @@ def main() -> int:
         if abs(m_raw / m_clean - 1) > 0.25:
             print(f"  {t} {ca.date()}: REFUSED - raw and clean 1-minute files disagree on the SAME bars across the event (raw {m_raw:.4f}, clean {m_clean:.4f}): an earlier run was interrupted; restore first")
             log(t, ca, ratio, "REFUSED", f"1-min raw {m_raw:.4f} vs clean {m_clean:.4f} on common bars"); return 1
-        if abs(m_raw / ratio - 1) > 0.10:
-            # a measurement-quality problem on a thin name, not a safety one: skip this event, keep the batch
-            print(f"  {t} {ca.date()}: SKIP - 1-minute step {m_raw:.4f} (10-bar medians) disagrees with the daily step {rel:.4f} / ratio {ratio:g}; look by hand")
+        # what this guard is FOR: a 1-minute raw already on the new basis (an earlier run rescaled raw/1-min
+        # and crashed before raw/daily) reads m_raw ~ 1 while the daily still says "unapplied". That is
+        # the double-scaling trap and it STOPS the batch. m_raw ~ ratio (within 25 %; CDLX reads 11.26 for
+        # 10 on a $0.30 stock) proceeds; anything else is a measurement problem on a thin name -> skip.
+        if abs(m_raw - 1) <= 0.20:
+            print(f"  {t} {ca.date()}: REFUSED - the 1-minute raw is ALREADY on the new basis (step {m_raw:.4f}) while the daily says unapplied: an earlier run was interrupted; restore first")
+            log(t, ca, ratio, "REFUSED", f"1-min raw already rescaled ({m_raw:.4f})"); return 1
+        if abs(m_raw / ratio - 1) > 0.25:
+            print(f"  {t} {ca.date()}: SKIP - 1-minute step {m_raw:.4f} (10-bar medians) is neither ~1 nor ~ratio {ratio:g} (daily {rel:.4f}); look by hand")
             log(t, ca, ratio, "SKIP", f"1-min {m_raw:.4f} vs daily {rel:.4f}"); continue
         print(f"  {t} {ca.date()}: pre-checks OK (daily rel {rel:.4f}, 1-min raw {m_raw:.4f} clean {m_clean:.4f} ~ {ratio:.4f}); plan manual_split {t} {ratio:g} {ca.date()}")
         if not a.apply:
