@@ -20,14 +20,18 @@ WHAT REVIEW R732 FOUND. Cutting the foreign prints is not enough: three of the s
 ORIGINAL instrument on the NEW owner's split basis across their whole history - PARA at 1/6 (the
 daily split detector fired on Banzai's $1.84 first day, 2026-08-12, and rescaled Paramount's and
 the PiTrading half's history), IPW at 72x and SKK at 10x (repair_unapplied_splits applied iPower's
-and SKK Holdings' splits to instruments that died in 2017 and 2015, 2026-09-05 02:07-02:46Z). The
+and SKK Holdings' splits to instruments that died in 2017 and 2015, 2026-09-05 07:06-07:46Z by the
+snapshot manifests - the "02:07-02:46Z" in R732 were local-clock stamps). The
 cut alone would have VERIFIED and kept serving them wrong. So v2:
 
-  * --unscale F (PARA: 6). Every kept bar, raw AND clean, price x F rounded to 4 decimals (exact
-    for what the detector wrote: 1.845 x 6 = 11.07, 5.678333 x 6 -> 34.07) and volume / F, which
-    must divide exactly on every bar or the tool refuses. Rescaled IN PLACE, not re-cleaned -
-    seam_rebase's contract: the clean set is not rescale-invariant, so re-cleaning would change
-    which bars exist, and the basis gate below proves the in-place result against the prints.
+  * --unscale F (PARA: 6). Every kept RAW bar: price x F rounded to 4 decimals and volume / F,
+    which must divide exactly on every bar or the tool refuses. "Exact" is qualified (R736): the
+    PiTrading half round-trips to the 2026-07-13 snapshot bar for bar (0 of 1,577,005 off the 4-dp
+    grid), the IEX window half lands within 5e-5 of the grid on 220,438 of 294,102 bars (prints
+    carry sub-cent prices). The CLEAN half is NOT rescaled in place: the served clean is the daily
+    path's full re-clean at the foreign basis, so its bar set was decided there (58,582 pre-detector
+    bars missing); the pre-window clean is taken from the 2026-07-13 clean and the window is
+    re-cleaned at the original basis, counts printed.
   * --kept-from SNAPDIR (IPW: F:/hf_r2_snapshot_splits_20260905/IPW_20260522, SKK:
     .../SKK_20260406). The kept half is taken from the pre-repair snapshot's raw__T / clean__T
     (bars before the cut): a rounded volume (5,471 -> 76) cannot be inverted arithmetically.
@@ -38,6 +42,8 @@ cut alone would have VERIFIED and kept serving them wrong. So v2:
     (F:/hf_r2_snapshot_20260713), which predates every split-detector fire; plus any explicit
     --anchor DATE:CLOSE:VOLUME (R732's print-set and snapshot values). Session close within
     0.05 %, session volume EXACT (bars and prints are the same numbers). Any deviation refuses.
+    And the whole pre-window half, raw AND clean, must equal the 2026-07-13 snapshot bar for bar
+    on every column (R736): that half is a complete free oracle, so it is not sampled.
   * VERIFY runs inside the try (a crash restores, exit 1; a failed restore exits 4). A market
     fetch failure DURING verification exits 3 - UNVERIFIED, DATA LIVE - without restoring:
     nothing showed the writes wrong, and a restore on an empty Yahoo answer would undo a correct
@@ -96,6 +102,7 @@ import seam_rebase                                                              
 CS_ROOT = "E:/iex_hist_backfill"
 SNAP_0713 = "F:/hf_r2_snapshot_20260713"
 WINDOW = (dt.date(2022, 3, 7), dt.date(2026, 3, 27))      # the retained-prints window
+CS_FALLBACK_FROM = dt.date(2025, 11, 1)                     # class-share anchor fallback only for the original's last sessions
 PRICE_COLS = ("Open", "High", "Low", "Close")
 CLOSE_TOL = 0.0005                                          # 0.05 % on a session close
 
@@ -124,6 +131,10 @@ def _print_anchor(day: dt.date, symbol: str, cs_symbol: str | None = None):
     for path, sym in ((os.path.join(CS_ROOT, ymd, f"trades_{ymd}.csv"), symbol),
                       (os.path.join(CS_ROOT, ymd, f"trades_cs_{ymd}.csv"), cs_symbol)):
         if sym is None or not os.path.exists(path):
+            continue
+        if sym == cs_symbol and sym != symbol and day < CS_FALLBACK_FROM:
+            # the class-share symbol is another instrument for most of its life (B was Barnes Group
+            # until 2025-01-27); the fallback exists for the original's LAST sessions only (R736)
             continue
         trades = list(parse_trades_csv(path, universe={sym}))
         bars = build_bars(trades).get(sym, []) if trades else []
@@ -208,7 +219,54 @@ def _unscale(df: pd.DataFrame, F: float) -> pd.DataFrame:
     return out
 
 
-DIV_BAND = (0.70, 1.0005)   # a dividend-adjusted window session sits below the raw print by the cumulative payout
+DIV_BAND = (0.55, 1.0005)   # a dividend-adjusted window session sits below the raw print by the cumulative payout
+                            # (library-wide 2022-03-07 factors measured in review R736: T 0.609, MO 0.714, KO 0.882,
+                            # IBM 0.859, XOM 0.871, JNJ 0.891, SPY 0.943 - the floor sits under the deepest payer)
+
+
+class Unverifiable(Exception):
+    """A served object could not be READ BACK for verification (an R2 error that is not a 404). The
+    writes are not known wrong, so nothing is restored: exit 3, data live, a human re-verifies (R736)."""
+
+
+def _served_read(client, version: str, ticker: str, tf: str | None = None) -> pd.DataFrame:
+    try:
+        df = download_parquet(client, version, ticker, tf) if tf else download_parquet(client, version, ticker)
+    except Exception as ex:                                  # noqa: BLE001
+        raise Unverifiable(f"R2 read of {version}/{ticker}{('/' + tf) if tf else ''} failed: {type(ex).__name__}: {str(ex)[:160]}")
+    if df is None or df.empty:
+        # a 404 right after a successful put is an inconsistency, not a read problem: the caller restores
+        raise RuntimeError(f"served {version}/{ticker}{('/' + tf) if tf else ''} missing or empty after the upload")
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    return df
+
+
+def pre_window_equality(frame: pd.DataFrame, version: str, ticker: str, cut: dt.date):
+    """Every bar of `frame` before WINDOW[0] must equal the 2026-07-13 snapshot's bar at the same minute on
+    every column (R736). The snapshot predates every split-detector fire and the backfill kept the
+    pre-window half verbatim, so it is a COMPLETE oracle for that half - sampling three sessions of it
+    left 1.57M PARA bars unchecked when checking them all costs seconds. Returns
+    (n_ours, n_snapshot, n_common, n_mismatch, n_only_ours, n_only_snapshot), or None when the snapshot
+    has no file for the ticker."""
+    p = os.path.join(SNAP_0713, version, f"{ticker}.parquet")
+    if not os.path.exists(p):
+        return None
+    # the oracle half ends at the earlier of the window start and the CUT: for a symbol reassigned
+    # before 2022-03-07 (IPW, 2021-05-12) the snapshot's later pre-window bars are the foreign prints
+    bound = min(WINDOW[0], cut)
+    snap = pd.read_parquet(p); snap["datetime"] = pd.to_datetime(snap["datetime"])
+    snap = snap[snap["datetime"].dt.date < bound]
+    ours = frame[frame["datetime"].dt.date < bound]
+    cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in ours.columns and c in snap.columns]
+    m = ours[["datetime"] + cols].merge(snap[["datetime"] + cols], on="datetime", how="outer", suffixes=("_f", "_s"), indicator=True)
+    both = m[m["_merge"] == "both"]
+    mism = 0
+    for c in cols:
+        if c == "Volume":
+            mism += int((both[f"{c}_f"].astype("int64") != both[f"{c}_s"].astype("int64")).sum())
+        else:
+            mism += int((~np.isclose(both[f"{c}_f"].astype(float), both[f"{c}_s"].astype(float), rtol=0, atol=1e-9)).sum())
+    return len(ours), len(snap), len(both), mism, int((m["_merge"] == "left_only").sum()), int((m["_merge"] == "right_only").sum())
 
 
 def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_window: int, k_pre: int, own_splits=(), cs_symbol=None):
@@ -367,10 +425,39 @@ def main() -> int:
         clean_keep = clean[cd < cut].copy()
     if a.unscale:
         try:
-            raw_keep, clean_keep = _unscale(raw_keep, a.unscale), _unscale(clean_keep, a.unscale)
+            raw_keep = _unscale(raw_keep, a.unscale)
         except SystemExit as e:
             print(f"  {e}"); return 5
-        print(f"  kept half UNSCALED x{a.unscale:g} on price (4 dp) and /{a.unscale:g} on volume (exact), raw and clean, in place")
+        # THE CLEAN HALF IS NOT UNSCALED IN PLACE (R736). The served clean set is the daily path's FULL
+        # re-clean at the foreign basis (the split detector forces is_backfill=True on a rescale, and
+        # clean_bars(served raw) reproduces PARA's 1,802,154 served clean bars exactly). Rescaling that
+        # set back keeps the foreign-basis DECISIONS about which bars exist: 58,582 pre-detector bars
+        # would stay missing against the 2026-07-13 clean. So: the pre-window clean is the 2026-07-13
+        # snapshot's clean - the pre-detector legacy clean, kept verbatim by the backfill outside its
+        # window (STI's and GOLD's served pre-window cleans equal it exactly) - and the window clean is a
+        # fresh clean_bars() over the unscaled window raw at the ORIGINAL basis, what the pipeline would
+        # have produced had the detector never fired (the pre-detector window clean itself is not
+        # recoverable: the 0713 window half is the PRE-backfill series). Counts printed for the record.
+        snap_clean_path = os.path.join(SNAP_0713, "clean", f"{t}.parquet")
+        if not os.path.exists(snap_clean_path):
+            print(f"  --unscale needs the 2026-07-13 clean snapshot for the pre-window clean: {snap_clean_path} missing - "
+                  f"aborted before any write"); return 5
+        clean_0713 = pd.read_parquet(snap_clean_path); clean_0713["datetime"] = pd.to_datetime(clean_0713["datetime"])
+        pre_clean = clean_0713[clean_0713["datetime"].dt.date < WINDOW[0]].copy()
+        win_raw = raw_keep[raw_keep["datetime"].dt.date >= WINDOW[0]]
+        inplace_would_keep = int((clean_keep["datetime"].dt.date < WINDOW[0]).sum())
+        if win_raw.empty:
+            win_clean = pre_clean.iloc[0:0]
+        else:
+            context = pre_clean.tail(daily_update.CONTEXT_BARS)
+            to_clean = pd.concat([context, win_raw[context.columns.intersection(win_raw.columns)]], ignore_index=True)
+            cleaned = clean_bars(to_clean)
+            win_clean = cleaned[cleaned["datetime"] > context["datetime"].max()]
+        clean_keep = pd.concat([pre_clean, win_clean], ignore_index=True).drop_duplicates(subset=["datetime"], keep="last") \
+                       .sort_values("datetime").reset_index(drop=True)
+        print(f"  kept half UNSCALED x{a.unscale:g} on price (4 dp) and /{a.unscale:g} on volume - RAW in place; CLEAN rebuilt: "
+              f"pre-window from the 2026-07-13 clean ({len(pre_clean):,} bars; an in-place unscale of the served clean would have "
+              f"kept only {inplace_would_keep:,}), window re-cleaned at the original basis ({len(win_clean):,} bars from {len(win_raw):,} raw)")
 
     rebuilt = pd.DataFrame()
     if a.rebuild_from_cs:
@@ -430,6 +517,17 @@ def main() -> int:
         if abs(float(c_day["Close"].iloc[-1]) / float(r_same.iloc[0]) - 1) > CLOSE_TOL:
             print(f"  REFUSED: clean {float(c_day['Close'].iloc[-1])} vs raw {float(r_same.iloc[0])} at {last_dt} - "
                   f"the two files are on different bases"); return 2
+    # FULL-FRAME EQUALITY of the pre-window half against the 2026-07-13 snapshot, raw and clean (R736).
+    for version, frame in (("raw", new_raw), ("clean", new_clean)):
+        eq = pre_window_equality(frame, version, t, cut)
+        if eq is None:
+            print(f"  pre-window equality vs 2026-07-13 {version}: no snapshot file for {t} - REFUSED, no oracle for that half"); return 2
+        n_f, n_s, n_b, mism, only_f, only_s = eq
+        ok_eq = mism == 0 and only_f == 0 and only_s == 0
+        print(f"  pre-window equality vs 2026-07-13 {version}: ours {n_f:,} / snapshot {n_s:,} / common {n_b:,}; "
+              f"mismatched {mism:,}; only-ours {only_f:,}; only-snapshot {only_s:,} -> {'OK' if ok_eq else 'FAIL'}")
+        if not ok_eq:
+            print(f"  REFUSED: the pre-window {version} half is not the pre-detector set bar for bar - nothing written"); return 2
     if not a.apply:
         print("(dry run - pass --apply to write)"); return 0
 
@@ -459,11 +557,9 @@ def main() -> int:
                         stale += [f"{version}/variables/{t}.parquet", f"{version}/quality/{t}.parquet"]
         print(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
 
-        # VERIFY from the served side - inside the try (R732 item 5)
-        d2 = download_parquet(client, "raw", t, "daily"); c2 = download_parquet(client, "clean", t, "daily")
-        if d2 is None or d2.empty or c2 is None or c2.empty:
-            raise RuntimeError("served daily file unreadable after the upload")
-        d2["datetime"] = pd.to_datetime(d2["datetime"]); c2["datetime"] = pd.to_datetime(c2["datetime"])
+        # VERIFY from the served side - inside the try (R732 item 5); an R2 READ failure here is
+        # Unverifiable (exit 3, nothing restored - R736), a missing object or a logic error restores.
+        d2 = _served_read(client, "raw", t, "daily"); c2 = _served_read(client, "clean", t, "daily")
         rebuilt_days = set(rebuilt["datetime"].dt.date) if not rebuilt.empty else set()
         stray_r = sorted(d for d in set(d2["datetime"].dt.date) if d >= cut and d not in rebuilt_days)
         stray_c = sorted(d for d in set(c2["datetime"].dt.date) if d >= cut and d not in rebuilt_days)
@@ -483,35 +579,60 @@ def main() -> int:
                     total += 1
                     matched += int(abs(float(dd2[d]) / float(y[d]) - 1) <= 0.01)
             ok_b = unverifiable is None and total > 0 and matched / total >= 0.95
-        raw_srv = download_parquet(client, "raw", t); clean_srv = download_parquet(client, "clean", t)
-        if raw_srv is None or raw_srv.empty or clean_srv is None or clean_srv.empty:
-            raise RuntimeError("served 1-minute file unreadable after the upload")
-        raw_srv["datetime"] = pd.to_datetime(raw_srv["datetime"]); clean_srv["datetime"] = pd.to_datetime(clean_srv["datetime"])
+        raw_srv = _served_read(client, "raw", t); clean_srv = _served_read(client, "clean", t)
         expected_last = max(rebuilt_days) if rebuilt_days else last_keep
         ok_c = set(clean_srv["datetime"]).issubset(set(raw_srv["datetime"])) and raw_srv["datetime"].max().date() == expected_last \
             and len(raw_srv) == len(new_raw) and len(clean_srv) == len(new_clean)
         # (d) the anchors and the basis samples on the SERVED file - what a user downloads
         srv_rows, ok_d = basis_gate(raw_srv, t, cut, anchors, a.basis_samples, 3, own_splits, a.rebuild_from_cs)
+        # (e) REBUILT sessions on the served file against the class-share prints they came from (R736):
+        #     (b) tests them against Yahoo at 1 %; this is the exact test, and it holds on exit 3 too.
+        ok_e = True; e_rows = []
+        if rebuilt_days and a.rebuild_from_cs:
+            for d in _pick(sorted(rebuilt_days), 4):
+                bars = _bars_from_cs(d, a.rebuild_from_cs, t)
+                srv = _session_stats(raw_srv, d)
+                if not bars or srv is None:
+                    e_rows.append((d, None, srv[0] if srv else None, False)); ok_e = False; continue
+                exp_c, exp_v, exp_n = float(bars[-1]["Close"]), int(sum(b["Volume"] for b in bars)), len(bars)
+                ok_row = abs(srv[0] / exp_c - 1) <= CLOSE_TOL and srv[1] == exp_v and srv[2] == exp_n
+                e_rows.append((d, (exp_c, exp_v, exp_n), (srv[0], srv[1], srv[2]), ok_row)); ok_e = ok_e and ok_row
         print(f"  VERIFY (a) served daily bars dated >= {cut} that are not rebuilt: raw {len(stray_r)} {stray_r[:4]} clean {len(stray_c)} -> {'OK' if ok_a else 'MISMATCH'}")
         print(f"  VERIFY (b) rebuilt sessions vs Yahoo {a.verify_against}: {matched}/{total} within 1 % -> "
               f"{'OK' if ok_b else ('n/a' if not (a.verify_against and rebuilt_days) else ('UNVERIFIABLE' if unverifiable else 'MISMATCH'))}")
         print(f"  VERIFY (c) served clean ⊆ raw, raw ends {raw_srv['datetime'].max().date()} (expected {expected_last}), "
               f"bar counts raw {len(raw_srv):,}/{len(new_raw):,} clean {len(clean_srv):,}/{len(new_clean):,} -> {'OK' if ok_c else 'MISMATCH'}")
         _print_gate(srv_rows, f"VERIFY (d) basis gate on the SERVED 1-minute file -> {'OK' if ok_d else 'MISMATCH'}")
-        verified = bool(ok_a and ok_c and ok_d and (ok_b or unverifiable))
+        if e_rows:
+            print(f"  VERIFY (e) served rebuilt sessions vs the class-share prints ({len(e_rows)} sampled) -> {'OK' if ok_e else 'MISMATCH'}")
+            for d, exp, got, okr in e_rows:
+                print(f"    {d} prints (close, volume, bars) {exp} vs served {got} -> {'OK' if okr else 'FAIL'}")
+        verified = bool(ok_a and ok_c and ok_d and ok_e and (ok_b or unverifiable))
+    except Unverifiable as ex:
+        unverifiable = str(ex); verified = None
     except BaseException as ex:                              # noqa: BLE001
         print(f"  FAILED after the snapshot with {n} object(s) uploaded ({type(ex).__name__}: {str(ex)[:200]}) - restoring")
         try:
             print(f"  restored {seam_rebase.restore(client, snap_dir)} objects; served state is the pre-repair state"); return 1
         except BaseException as ex2:                         # noqa: BLE001
             print(f"  RESTORE FAILED ({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+    if verified is None:
+        # a served object could not be read back (an R2 error, not a 404): the writes are not known
+        # wrong, nothing is restored, a human re-verifies. The stale-variables list is printed FIRST
+        # so an exit 3 never hides an exit 6 (R736).
+        if sync_failed:
+            print(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
+        print(f"  UNVERIFIABLE, DATA LIVE: the served objects could not be read back for verification - {unverifiable}. "
+              f"Nothing restored; re-run the verification for {t} before calling this complete; snapshot kept at {snap_dir}"); return 3
     if not verified:
         try:
             print(f"  NOT VERIFIED - restored {seam_rebase.restore(client, snap_dir)} objects from {snap_dir}; served state is the pre-repair state"); return 1
         except BaseException as e:                           # noqa: BLE001
             print(f"  NOT VERIFIED and restore FAILED ({type(e).__name__}: {e}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
     if unverifiable:
-        print(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
+        if sync_failed:
+            print(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
+        print(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d)(e) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
               f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
     if sync_failed:
         print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}. Not restoring; run "
