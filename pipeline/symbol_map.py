@@ -61,7 +61,18 @@ REMAP: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {
 # Inc. on 2025-12-02 - our served GOLD daily closes equal Barrick through 2025-12-01 and Gold.com
 # from 2025-12-02 (42.34 -> 29.82 overnight while B printed 41.03), 190 contaminated sessions.
 REASSIGNED: Dict[str, Tuple[Optional[str], Optional[str]]] = {
-    "GOLD": ("2025-12-02", None),
+    # symbol: (first session the NEW owner printed under it, None = still theirs). Dates measured
+    # 2026-09-05 as the first served session whose close follows the new owner's Yahoo series
+    # (>= 60 % of the next 20 sessions), see the handoff §11e.
+    "GOLD": ("2025-12-02", None),   # Barrick -> Gold.com, Inc. (Barrick prints as B; REMAP above)
+    "STI":  ("2024-02-05", None),   # SunTrust (last bar 2019-12-06, merged into Truist) -> Solidion Technology, Inc.
+                                    # (our first foreign bar 2024-02-05 @ 145.00)
+    "IPW":  ("2021-05-12", None),   # a 2008-2017 instrument -> iPower Inc.
+    "SKK":  ("2024-10-08", None),   # ProShares UltraShort SmallCap600 (closed 2015) -> SKK Holdings Limited
+    "VRM":  ("2025-02-20", None),   # Vroom's cancelled equity -> the post-Chapter-11 Vroom, Inc. (a new security)
+    "USLV": ("2026-05-27", None),   # VelocityShares 3x Silver ETN (delisted 2020) -> Direxion Daily Silver Bull 2X ETF
+    "PARA": ("2026-08-07", None),   # Paramount Global (last bar 2025-08-06, -> PSKY) -> Banzai International, Inc.
+                                    # (our first foreign bar 2026-08-07 @ 1.84)
 }
 
 
