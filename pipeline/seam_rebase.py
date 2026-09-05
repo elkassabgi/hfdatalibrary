@@ -7,12 +7,17 @@ narrated one of them for all four):
     1  written, then RESTORED from the snapshot (a failure or a VERIFY mismatch); served = pre-rebase
     2  refused before any write (measurement says no)
     3  unmeasurable (no market reference)
-    4  written, and the automatic RESTORE FAILED - served state UNKNOWN; run --restore now
-    5  aborted before any write (missing served object, snapshot check, convention gate, manifest present)
+    4  written, and the automatic RESTORE FAILED - served state UNKNOWN; run --restore now. Also:
+       a --restore that fails, and an INCONSISTENT served set (1-minute files already on target
+       while the daily still carries the split - a partial earlier write); nothing touched then.
+    5  aborted before any write (missing served object, snapshot check, convention gate, manifest
+       present, or ANY unhandled exception before the first upload - _guarded_main maps it)
     6  prices rebased AND verified, but the variables/quality sync failed - serving incomplete
 Everything from the first upload to the last VERIFY line runs inside ONE try: any exception there
-restores and exits 1 (or 4). A snapshot directory that already holds a _MANIFEST.txt is never
-overwritten (exit 5): after an exit 4 it is the only copy of the pre-rebase state.
+RESTORES FIRST, writes the outcome to <snap_dir>/_RESULT.txt, and only then prints (a dead console
+cannot stop a restore, R735); exit 1 (or 4 if the restore failed). A snapshot directory that already
+holds a _MANIFEST.txt is never overwritten (exit 5): after an exit 4 it is the only copy of the
+pre-rebase state.
 
 WHY. The pre-2022 half is split+dividend+spin-off adjusted as of 2022-03-04 (the vendor's file
 end). The later half was conformed to the previously served series through 2026-03-27 by the merge
@@ -78,11 +83,33 @@ Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamp
 """
 from __future__ import annotations
 import argparse
+import datetime as _dt
 import hashlib
 import math
 import os
 import sys
 import pandas as pd
+
+
+def _say(msg: str) -> None:
+    """A print that survives a dead stdout. The fourth review (R735) measured that when the batch
+    driver's pipe is gone, `print` raises OSError 22 - and the old handler printed BEFORE it
+    restored, so the restore was never reached. Nothing on the restore path may depend on the
+    console."""
+    try:
+        print(msg, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+def _record(snap_dir: str, text: str) -> None:
+    """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
+    the console is gone (R735). Never raises."""
+    try:
+        with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:
+            f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\t{text}\n")
+    except Exception:                                           # noqa: BLE001
+        pass
 
 from aggregate import aggregate_all
 from r2_client import download_parquet, get_client, upload_csv, upload_parquet
@@ -289,7 +316,7 @@ def restore(client, snap_dir: str) -> int:
         if os.path.getsize(src) != int(size):
             raise SystemExit(f"restore: {src} is {os.path.getsize(src)} bytes, manifest says {size} - not restoring")
         client.upload_file(src, BUCKET, k); n += 1
-        print(f"  restored {k}")
+        _say(f"  restored {k}")                                  # a dead console must not abort a restore (R735)
     return n
 
 
@@ -335,7 +362,12 @@ def main() -> int:
     a = ap.parse_args(); t = a.ticker.upper()
     client = get_client()
     if a.restore:
-        n = restore(client, a.restore); print(f"{t}: restored {n} objects from {a.restore}"); return 0
+        try:
+            n = restore(client, a.restore)
+        except BaseException as ex:                             # noqa: BLE001
+            _say(f"{t}: RESTORE FAILED ({type(ex).__name__}: {str(ex)[:200]}) - served state UNKNOWN; fix the snapshot "
+                 f"directory and re-run --restore"); return 4
+        _say(f"{t}: restored {n} objects from {a.restore}"); return 0
     if a.mode == "full" and not a.convention_decided:
         print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded."); return 5
 
@@ -445,20 +477,20 @@ def main() -> int:
     # P_int = 1 is the rule's fixed point (|ln D| >= |ln(D/1)| is always true) and 913 measurable
     # tickers sit there - dividend-only payers with no split to test; the rule has nothing to say
     # about them and must not fire (R731).
-    if abs(P_int - 1) > 1e-9 and abs(math.log(D)) >= abs(math.log(D / P_int)):
+    if abs(math.log(P_int)) > 0.002 and abs(math.log(D)) >= abs(math.log(D / P_int)):
         print(f"  REFUSED: D={D:.6f} is as far from 1 as from P_int={P_int:g} - the post-seam half sits on the SAME "
               f"basis as the pre-seam half, so the recorded split never reached this series (dead series or "
               f"phantom event); no seam to remove - refusing"); return 2
-    # THE BAND (R731). D is the post-seam half against the market; a dividend or spin-off factor
-    # keeps it within a few tens of percent of 1 (the largest over the 105 planned tickers is PSP
-    # at |ln D| = 0.2385). SCO (D=0.2499), REW (0.426) and AMC (0.389) pass the D-rule with a post
-    # half 2.3-4x off the market: whatever that basis is, it is not one this tool understands,
-    # and only a recorded event stood between them and a rebase. Beyond ln 1.5 the served post
-    # half is the defect to explain first.
-    if abs(math.log(D)) > math.log(1.5):
-        print(f"  REFUSED: the post-seam half is x{D:.4f} against the market (|ln D|={abs(math.log(D)):.3f} > ln 1.5) - "
-              f"beyond any dividend/spin factor; the served later half is on a basis this tool cannot explain "
-              f"(unapplied splits or a bad merge). Repair that first; a rebase would put the pre-seam half on it too"); return 2
+    # THE BAND (R731, corrected R735). D is the post-seam half against the market. With a split in
+    # play (P_int != 1) a |ln D| beyond ln 1.5 means the served later half sits on a basis no
+    # recorded event explains, and rebasing the pre half onto it would spread the defect. The band
+    # is SILENT at P_int = 1: there D is the dividend factor itself, and the fourth review measured
+    # BITO 0.267, PBR 0.378, AIV 0.502 as exactly their cumulative payouts (Yahoo ex-dates,
+    # ratio to D 0.99-1.01) - the first version refused all three as "a bad merge".
+    if abs(math.log(P_int)) > 0.002 and abs(math.log(D)) > math.log(1.5):
+        print(f"  REFUSED: the post-seam half is x{D:.4f} against the market (|ln D|={abs(math.log(D)):.3f} > ln 1.5) with a "
+              f"{P_int:g}x split in play - more than a dividend factor accounts for; the served later half's basis has to be "
+              f"explained before its pre-seam half is rebased onto it"); return 2
     # P_int must equal the product of the OLDEST k recorded events for some k. k = n: the pre-seam half
     # misses all of them. k < n: the later events were applied history-wide (by the daily path, or by a
     # manual_split repair - SCO/SMN tonight) and only the oldest k are still missing before the seam.
@@ -514,6 +546,14 @@ def main() -> int:
     if abs(K - 1) <= 0.002 and abs(V - 1) <= 1e-9:
         print(f"  nothing to rebase in --mode {a.mode} (P_int=1{'; dividend/spin seam D=%.4f held for the convention decision' % D if abs(D - 1) > 0.002 else ''}); raw and clean agree"); return 0
     if abs(P_raw / target - 1) <= 0.003:
+        if abs(math.log(P_int)) > 0.002:
+            # R735 finding 4: with a split in play this state is inconsistent by construction - the
+            # 1-minute files already sit on target while the served DAILY (which produced P) does
+            # not. An earlier run wrote the 1-minute objects and not the aggregates. Not "nothing to
+            # do": a human restores that run's snapshot or re-aggregates; exit 4 stops the batch.
+            print(f"  INCONSISTENT SERVED SET: 1-minute files already on target (P_raw={P_raw:.6f} ~ {target:.6f}) while the "
+                  f"served daily still shows P={P:.6f} (P_int={P_int:g}) - a partial earlier write survived. Restore that run's "
+                  f"snapshot (F:/hf_r2_snapshot_seam_<date>/{t}) or re-aggregate from the 1-minute files; nothing touched"); return 4
         print(f"  ALREADY on target (P_raw={P_raw:.6f} ~ {target:.6f}); nothing to do"); return 0
     print(f"  {a.mode.upper()} rebase plan: price x{K:.6g}, volume x{V:g} on bars strictly before {SEAM.date()} (split match: {match}; D={D:.4f}{' NOT applied' if a.mode == 'split' else ' applied'})")
     n_pre = int((pd.to_datetime(raw["datetime"]) < SEAM).sum())
@@ -579,34 +619,60 @@ def main() -> int:
         print(f"  VERIFY (c) served 1-minute: clean last pre-seam bar {c_c2} vs raw {c_r2}; raw/market {mkt2:.6f} vs P_raw*K {P_raw * K:.6f} -> {'OK' if ok_c else 'MISMATCH'}")
         verified = bool(ok_a and ok_b and ok_c)
     except BaseException as ex:                                 # noqa: BLE001
-        # a network error on the 9th of 22 uploads, a KeyboardInterrupt, a None read-back - none
-        # may leave a half-rescaled or unverified set live with only a traceback to say so.
-        # Restore first, explain second.
-        print(f"  FAILED after the snapshot with {n} object(s) already uploaded ({type(ex).__name__}: {str(ex)[:200]}) - restoring")
+        # RESTORE FIRST, RECORD SECOND, PRINT LAST (R735). The previous shape printed before it
+        # restored, and when the driver's pipe was gone that print raised OSError 22 - the restore
+        # was never reached and the rescaled objects stayed live with no record. Nothing here may
+        # raise before restore() returns; the outcome is written to <snap_dir>/_RESULT.txt before
+        # any stdout; every print is _say.
+        why = f"{type(ex).__name__}: {str(ex)[:200]}"
         try:
             n_back = restore(client, snap_dir)
-            print(f"  restored {n_back} objects from {snap_dir}; served state is the pre-rebase state"); return 1
         except BaseException as ex2:                            # noqa: BLE001
-            print(f"  RESTORE FAILED ({type(ex2).__name__}: {str(ex2)[:200]}) - the rescaled objects may be LIVE; "
-                  f"run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+            _record(snap_dir, f"EXIT 4 RESTORE FAILED after {n} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
+            _say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) and the RESTORE FAILED "
+                 f"({type(ex2).__name__}: {str(ex2)[:200]}) - the rescaled objects may be LIVE; "
+                 f"run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+        _record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n} upload(s); cause {why}")
+        _say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) - restored {n_back} objects from {snap_dir}; "
+             f"served state is the pre-rebase state"); return 1
     if not verified:
         # R725 item 4: a rescale that fails its own verification must not stay served while a human
-        # reads a log. Restore the content-checked snapshot NOW, then report; exit 1 stops the batch.
+        # reads a log. Restore the content-checked snapshot NOW (restore first, R735), then report.
         try:
             n_back = restore(client, snap_dir)
-            print(f"  NOT VERIFIED - restored {n_back} objects from the snapshot {snap_dir}; served state is the pre-rebase state")
-            return 1                                            # stopped, nothing left changed
         except BaseException as e:                              # noqa: BLE001
-            print(f"  NOT VERIFIED and the automatic restore FAILED ({type(e).__name__}: {e}) - the rescaled objects are LIVE; "
-                  f"run: python seam_rebase.py {t} --restore \"{snap_dir}\"")
+            _record(snap_dir, f"EXIT 4 NOT VERIFIED and RESTORE FAILED: {type(e).__name__}: {str(e)[:200]}")
+            _say(f"  NOT VERIFIED and the automatic restore FAILED ({type(e).__name__}: {e}) - the rescaled objects are LIVE; "
+                 f"run: python seam_rebase.py {t} --restore \"{snap_dir}\"")
             return 4                                            # stopped, served state UNKNOWN - a human acts now
+        _record(snap_dir, f"EXIT 1 NOT VERIFIED - restored {n_back} objects")
+        _say(f"  NOT VERIFIED - restored {n_back} objects from the snapshot {snap_dir}; served state is the pre-rebase state")
+        return 1                                                # stopped, nothing left changed
     if sync_failed:
+        _record(snap_dir, f"EXIT 6 verified, variables sync failed: {sync_failed}")
         print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. Not restoring; run "
               f"sync_ticker_variables(force_full=True) for {t} - its serving is incomplete until then (a re-run of this "
               f"tool answers ALREADY on target and does not re-sync)"); return 6
-    print(f"  DONE: {t} rebased ({a.mode}); snapshot kept at {snap_dir}")
+    _record(snap_dir, f"EXIT 0 DONE rebased ({a.mode}) K={K:.6g} V={V:g}")
+    _say(f"  DONE: {t} rebased ({a.mode}); snapshot kept at {snap_dir}")
     return 0
 
 
+def _guarded_main() -> int:
+    """Exit 1 must mean 'written then restored' and nothing else (R735 finding 3). Every upload sits
+    inside main()'s guarded block, which returns 1 or 4 itself, so an exception that escapes main()
+    happened BEFORE the first upload (a Yahoo rate limit, a botocore error on a read, a division by
+    zero in the measurement) - that is exit 5, aborted before any write. SystemExit(5) from
+    snapshot() passes through unchanged."""
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        _say("  interrupted before any write (an interrupt after the first upload is caught inside and restores) - exit 5"); return 5
+    except BaseException as ex:                                 # noqa: BLE001
+        _say(f"  ABORTED before any write by an unhandled {type(ex).__name__}: {str(ex)[:300]} - exit 5"); return 5
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_guarded_main())
