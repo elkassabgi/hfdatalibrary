@@ -22,6 +22,10 @@ per ticker is appended to the log AFTER the tool exits — never before — with
 (ledger R591/R729), and the ticker's FULL stdout+stderr goes to a detail file next to the log
 (seam_detail_<UTC>_<TICKER>.txt), so the VERIFY lines exist somewhere. Re-runs skip tickers already
 logged with exit 0. --mode full needs --convention-decided on the driver too; it is never implied.
+THE SOURCE GUARD (R742/R743/R744): the tool AND the five modules it imports live (aggregate, r2_client,
+variables_sync, compute_variables, symbol_map) are hashed at start and before every launch; any change
+stops the batch before the next child. The child's header hash must equal the launch hash: a different
+hash under a write is logged 4 (served state unknown); without a write it stops the batch.
 """
 from __future__ import annotations
 import argparse, datetime as dt, os, re, subprocess, sys
@@ -46,10 +50,24 @@ def _utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _tool_sha256() -> str:
+GUARDED = ("seam_rebase.py", "aggregate.py", "r2_client.py", "variables_sync.py", "compute_variables.py", "symbol_map.py")
+
+
+def _source_sha256s() -> dict:
+    """sha256 of the tool AND of every module it imports live (R744 finding 4): a guard that watched
+    seam_rebase.py alone let an edited aggregate.py run under the batch."""
     import hashlib
-    with open(os.path.join(HERE, "seam_rebase.py"), "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+    out = {}
+    for name in GUARDED:
+        try:
+            with open(os.path.join(HERE, name), "rb") as f:
+                out[name] = hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            out[name] = "missing"
+    return out
+
+
+HEADER_RE = re.compile(r"tool source sha256 (\S+) \(.*\) pid (\d+)")
 
 
 RECORD_RE = re.compile(r"^(\S+)\t(?:pid=(\d+)\t)?(EXIT \d+.*)$")
@@ -116,17 +134,21 @@ def main() -> int:
     # THE SOURCE GUARD (R743, after R742): the tool file is hashed at start and re-hashed before every
     # child; a batch never runs bytes that were not there when it started. An edit under the batch
     # stops it - the edit waits, or the batch is restarted deliberately on the new file.
-    tool_sha = _tool_sha256()
-    print(f"tool source sha256 {tool_sha} at start; the batch refuses to launch a child if it changes", flush=True)
+    shas = _source_sha256s(); tool_sha = shas["seam_rebase.py"]
+    print(f"tool source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())
+          + "; the batch refuses to launch a child if any of them changes", flush=True)
     n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []
     for t in todo:
         if a.limit is not None and n >= a.limit:
             break
-        now_sha = _tool_sha256()
-        if now_sha != tool_sha:
-            print(f"STOPPING before {t}: seam_rebase.py changed under the batch (sha256 {tool_sha[:12]} -> {now_sha[:12]}). "
-                  f"Nothing launched on the new file; restart the batch deliberately if the new file is the one to run.", flush=True)
+        now = _source_sha256s()
+        changed = [k for k in GUARDED if now.get(k) != shas.get(k)]
+        if changed:
+            print(f"STOPPING before {t}: {', '.join(changed)} changed under the batch ("
+                  + "; ".join(f"{k} {shas[k][:12]} -> {now.get(k, 'missing')[:12]}" for k in changed)
+                  + "). Nothing launched on the new file(s); restart the batch deliberately if they are the ones to run.", flush=True)
             stopped = True; break
+        hash_breach = None
         cmd = [sys.executable, "-u", os.path.join(HERE, "seam_rebase.py"), t, "--mode", a.mode, "--apply",
                "--snapshot-dir", os.path.join(a.snapshot_root, t)]
         if a.mode == "full":
@@ -160,18 +182,26 @@ def main() -> int:
             said = m.group(3) if m else (rec_last or "")
             # the child prints "pid <n>" in its header (v5.4+): a record without a pid under such a child,
             # or a child without the header at all, is not believed (R743 finding 4)
-            hdr = re.search(r"tool source sha256 [0-9a-f]{64} .* pid (\d+)", out)
-            hdr_pid = hdr.group(1) if hdr else None
+            hdr = HEADER_RE.search(out)
+            hdr_sha = hdr.group(1) if hdr else None
+            hdr_pid = hdr.group(2) if hdr else None
+            # the header's hash must be the launch hash (R744 finding 5): the ~100 ms between the guard's
+            # read and the child's module-top read is seen by nothing else
+            hash_ok = hdr_sha == tool_sha
             # the record must be THIS run's: a parseable line, stamped at/after the child's start, written
             # by the child itself (R741 finding 5: another actor's "EXIT 1 RESTORED" after t0 was believed)
-            fresh = bool(m) and rec_stamp >= stamp and hdr_pid is not None and rec_pid == hdr_pid == str(child_pid)
+            fresh = bool(m) and rec_stamp >= stamp and hdr is not None and hash_ok and rec_pid == hdr_pid == str(child_pid)
             if not fresh or not (said.startswith(f"EXIT {rc} ") or said == f"EXIT {rc}"):
                 if not rec_last:
                     why = "died without its record"
                 elif not m:
                     why = "record line not in the grammar"
-                elif hdr_pid is None:
-                    why = "child printed no pid header"
+                elif hdr is None:
+                    why = "child printed no hash/pid header"
+                elif not hash_ok:
+                    why = f"child header hash {hdr_sha[:12]} differs from the launch hash {tool_sha[:12]}"
+                elif hdr_pid != str(child_pid):
+                    why = "header pid differs from the launched pid (a wrapper or launcher between driver and tool)"
                 elif rec_pid is None:
                     why = "record without a pid under a child that printed one"
                 elif rec_pid != str(child_pid):
@@ -184,10 +214,17 @@ def main() -> int:
                         f"{child_pid}) - served state UNKNOWN; inspect {os.path.join(a.snapshot_root, t)} and --restore if the objects "
                         f"there differ from R2")
                 rc = 4
+        else:
+            # no write reached; a header whose hash is not the launch hash still means other bytes ran (R744)
+            hdr = HEADER_RE.search(out)
+            if hdr and hdr.group(1) != tool_sha:
+                hash_breach = f"child header hash {hdr.group(1)[:12]} differs from the launch hash {tool_sha[:12]} (no write reached; child exit {rc})"
+                last = hash_breach + " - " + last
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
             with open(detail, "w", encoding="utf-8") as f:
-                f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}\n"
+                f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}; "
+                        f"guarded " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items()) + "\n"
                         f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
         except Exception as e:                                   # noqa: BLE001
             print(f"  (detail file not written: {e})", flush=True)
@@ -195,6 +232,9 @@ def main() -> int:
             f.write(f"{stamp}\t{t}\t{rc}\t{(dt.datetime.now(dt.timezone.utc) - t0).total_seconds():.0f}s\t{last[:200]}\n")
         print(f"  {t:6} exit {rc}  {last[:130]}", flush=True)
         n += 1
+        if hash_breach:
+            print(f"STOPPING: {hash_breach} for {t} - the batch ran bytes other than the ones it hashed; restart deliberately", flush=True)
+            stopped = True; break
         if rc in STOP_TEXT:
             print(STOP_TEXT[rc] + "\n" + out[-2500:] + err[-800:])
             stopped = True; break
