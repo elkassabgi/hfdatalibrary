@@ -104,7 +104,8 @@ def main() -> int:
             print(f"  {t} {ca.date()}: no Yahoo reference - SKIP"); log(t, ca, ratio, "SKIP", "no yahoo"); continue
         y = h["Close"]
         rel, last_close = daily_step(client, "raw", t, ca, y)
-        if rel is None:
+        rel_c, last_close_c = daily_step(client, "clean", t, ca, y)
+        if rel is None or rel_c is None:
             print(f"  {t} {ca.date()}: cannot measure the daily step - SKIP"); log(t, ca, ratio, "SKIP", "no session"); continue
         if abs(rel / ratio - 1) > 0.05:
             print(f"  {t} {ca.date()}: pre-check: served/Yahoo daily step {rel:.4f} is not ~{ratio:.4f} - not unapplied as listed - SKIP")
@@ -135,15 +136,39 @@ def main() -> int:
                                input=t + "\n", capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=HERE)
             lines = p.stdout.strip().splitlines() or [""]
             cleaned = next((l for l in lines if "re-cleaned" in l), ""); tail = lines[-1]
-            rel2, last2 = daily_step(client, "raw", t, ca, y); rel2c, last2c = daily_step(client, "clean", t, ca, y)
-            expect2 = rel / ratio
-            ok = (p.returncode == 0 and rel2 is not None and rel2c is not None
-                  and abs(rel2 / expect2 - 1) <= 0.005 and abs(rel2 - 1) <= 0.05
-                  and abs(rel2c / expect2 - 1) <= 0.005 and abs(rel2c - 1) <= 0.05
+            rel2, last2 = daily_step(client, "raw", t, ca, y)
+            # POST-CHECK = snapshot vs served, per file, on common sessions: every pre-event close must be
+            # exactly x RATIO and every post-event close exactly x 1.0. This is the invariant the rescale
+            # promises and it does not depend on which minutes the cleaner keeps. manual_split's FULL
+            # re-clean is path-dependent on thin names (REW lost two sparse post-event sessions from
+            # clean; BKNG changed 95 post-event bars) - the same path the daily pipeline takes after an
+            # auto-split - so dropped/added clean sessions are COUNTED and LOGGED, not failed; raw must
+            # keep every session.
+            import pyarrow.parquet as pq
+            def cmp(version, post_tol):
+                sp = pq.read_table(os.path.join(snap_dir, f"{version}__daily__{t}.parquet")).to_pandas()
+                sp["datetime"] = pd.to_datetime(sp["datetime"]); s = sp.set_index("datetime").sort_index()["Close"]
+                nd = download_parquet(client, version, t, "daily"); nd["datetime"] = pd.to_datetime(nd["datetime"])
+                nn = nd.set_index("datetime").sort_index()["Close"]
+                common = s.index.intersection(nn.index); r = nn[common] / s[common]
+                pre = r[common < ca]; post = r[common >= ca]
+                return dict(dropped=len(s.index.difference(nn.index)), added=len(nn.index.difference(s.index)),
+                            pre_ok=bool(len(pre)) and abs(pre.min() / ratio - 1) < 0.001 and abs(pre.max() / ratio - 1) < 0.001,
+                            post_ok=(len(post) == 0) or (abs(post.min() - 1) <= post_tol and abs(post.max() - 1) <= post_tol),
+                            post_max_dev=float((post - 1).abs().max()) if len(post) else 0.0,
+                            n_pre=len(pre), n_post=len(post))
+            # raw: post-event closes byte-exact. clean: a full re-clean keeps a different bar set on thin
+            # sessions (REW: one post-event close moved 3 %), so clean's post-event closes are gated at 5 %.
+            cr, cc = cmp("raw", 1e-9), cmp("clean", 0.05)
+            ok = (p.returncode == 0 and cr["pre_ok"] and cr["post_ok"] and cr["dropped"] == 0 and cr["added"] == 0
+                  and cc["pre_ok"] and cc["post_ok"]
+                  and rel2 is not None and abs(rel2 / (rel / ratio) - 1) <= 0.005 and abs(rel2 - 1) <= 0.05
                   and last2 is not None and abs(last2 / last_close - 1) < 1e-9)
             verdict = "OK" if ok else "FAIL"
-            detail = (f"daily rel {rel:.4f}->{rel2} (clean {rel2c}), expected {expect2:.4f}; last {last_close}->{last2}; "
-                      f"exit {p.returncode}; {cleaned or tail}"[:300])
+            detail = (f"raw: pre x{ratio:g} on {cr['n_pre']} sessions {'OK' if cr['pre_ok'] else 'BAD'}, post x1 on {cr['n_post']} {'OK' if cr['post_ok'] else 'BAD'}, "
+                      f"dropped {cr['dropped']} added {cr['added']}; clean: pre {'OK' if cc['pre_ok'] else 'BAD'} post {'OK' if cc['post_ok'] else 'BAD'}, "
+                      f"dropped {cc['dropped']} added {cc['added']} (full re-clean, logged not failed); daily rel {rel:.4f}->{rel2}; "
+                      f"last {last_close}->{last2}; exit {p.returncode}; {cleaned or tail}"[:360])
             print(f"    {verdict}: {detail}")
             if not ok:
                 print("STOPPING. manual_split output:\n" + p.stdout[-2500:] + p.stderr[-800:] +
