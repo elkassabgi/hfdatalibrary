@@ -57,7 +57,10 @@ FIX = pd.Timestamp("2026-07-13")
 PRICE_COLS = ("Open", "High", "Low", "Close")
 BUCKET = "hfdatalibrary-data"
 INTS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 60, 100, 200, 250, 500, 1000, 2000]
-CANON_INT = sorted(set([1.0] + [float(n) for n in INTS] + [1.0 / n for n in INTS]))
+# 3:2 and 5:2 are the fractional ratios that occur as real splits in this universe (PCAR 2023, ODFL, RJF,
+# ROL, WRB ...); 5:4 and 4:3 are left out - they only ever match spin-off factors (GE 1.253, HPE 1.3348)
+FRACS = [1.5, 2.5]
+CANON_INT = sorted(set([1.0] + [float(n) for n in INTS] + [1.0 / n for n in INTS] + FRACS + [1.0 / f for f in FRACS]))
 WIN = 3
 SNAP_PREFIXES = ("raw/", "clean/", "variables/", "quality/", "csv/")
 
