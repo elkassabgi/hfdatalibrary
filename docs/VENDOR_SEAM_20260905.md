@@ -45,6 +45,25 @@ after the daily update of 2026-09-05; the dividend component waits for a decisio
 library's price convention (keep "dividend-adjusted", which requires rewriting every payer's
 history at every ex-date, or move to split-adjusted only).
 
+**Recorded events beyond Yahoo (added 2026-09-05, after reviews R725, R728 and R731).** Yahoo's
+split record is empty for symbols renamed at their split (it does carry RZG's 3:1 of 2023-07-17),
+so the tool takes an `--events-file` (ticker, date, ratio, source — the Invesco wave is SEC 497
+accession 0001104659-23-077058) unioned with Yahoo's events. A recorded-event product within 1 %
+of P is accepted as K only under three conditions: every event in it is a canonical split ratio
+(spin-off factors such as MMM 1.196 and T 1.324 refuse); its newest event lies on or before the
+last served session; and the post-seam half itself sits nearer the market than P does
+(|ln D| < |ln(D/P_int)|) — a recorded split that reached neither half leaves the post half on the
+pre-seam basis, and a date alone cannot tell "applied" from "never happened" (a phantom event one
+session inside a dead series' range had planned a 10× cliff). That last test is silent when
+P_int = 1 (dividend-only payers have no split to test), and a post half more than 1.5× off the
+market refuses outright as a defect of its own. P/P_int is tested at 0.3 % before any write, a
+window spread above 0.6 % refuses, and everything from the first upload to the last verification
+line runs inside one guard: a failure or a mismatch restores the snapshot automatically (exit 1),
+a failed restore stops everything (exit 4). Of the eight tickers first refused for "no recorded
+event", five are dead series whose post half never carried the split (RYH, RYT, RTM, RGI, RYU),
+two are real K=3 seams on series dead since 2023-08 (PSJ, PWC — their post halves do carry the
+3:1), and RZG is a real K=3 seam that Yahoo records.
+
 ## Related
 
 - 23 splits left unapplied in served 2026 data, repaired the same night: `UNAPPLIED_SPLITS_20260905.md` (PR #9).

@@ -1,5 +1,18 @@
 """seam_rebase.py — put ONE ticker's pre-2022-03-07 (PiTrading) history on the basis of its
-post-2022-03-07 (IEX) history. Version 3, after two adversarial reviews (2026-09-05).
+post-2022-03-07 (IEX) history. Version 5, after five adversarial reviews (R719/R720, R725, R728, R731; 2026-09-05).
+
+EXIT CODES - one meaning each (R731: exit 1 used to carry four meanings and the batch driver
+narrated one of them for all four):
+    0  rebased and verified, or nothing to rebase / already on target
+    1  written, then RESTORED from the snapshot (a failure or a VERIFY mismatch); served = pre-rebase
+    2  refused before any write (measurement says no)
+    3  unmeasurable (no market reference)
+    4  written, and the automatic RESTORE FAILED - served state UNKNOWN; run --restore now
+    5  aborted before any write (missing served object, snapshot check, convention gate, manifest present)
+    6  prices rebased AND verified, but the variables/quality sync failed - serving incomplete
+Everything from the first upload to the last VERIFY line runs inside ONE try: any exception there
+restores and exits 1 (or 4). A snapshot directory that already holds a _MANIFEST.txt is never
+overwritten (exit 5): after an exit 4 it is the only copy of the pre-rebase state.
 
 WHY. The pre-2022 half is split+dividend+spin-off adjusted as of 2022-03-04 (the vendor's file
 end). The later half was conformed to the previously served series through 2026-03-27 by the merge
@@ -34,6 +47,30 @@ ORDER. measure -> refuse or print plan -> [--apply] snapshot (content-checked) -
 -> upload 1min parquet+csv x2 -> aggregate_all x2 -> upload every timeframe -> sync variables x2
 -> VERIFY: (a) served daily seam step == old/K; (b) rebased P' over the same window == 1.000
 (split) or D (full) within 0.3 %; (c) served clean 1-minute last pre-seam session agrees with raw.
+A verification MISMATCH restores the snapshot automatically and exits 1 (R725).
+
+RECORDED EVENTS AND THE EVIDENCE RULE (2026-09-05, R725/R728). Yahoo's `.splits` is the default
+record of splits after the seam (it carries RZG's 3:1 of 2023-07-17, so pass 1 needs no events
+file); `--events-file ticker,date,ratio,source` adds issuer-recorded events Yahoo lacks - symbols
+renamed at their split (the Invesco wave, SEC 497 accession 0001104659-23-077058) - and is
+unioned with Yahoo's on the same event_steps / prefix path. When a chronological-prefix product
+of the recorded events lies within 1 % of P, that product is K (the 0.2 % snap then serves only
+the no-event case) - under THREE conditions, each of which caught a wrong rebase in review:
+every event in the prefix must be a canonical split ratio (spin-off adjustment factors such as
+MMM 1.196 / T 1.324 are recorded by Yahoo as "splits" and are REFUSED); the prefix's newest event
+must fall on or before the last served session; and D must sit nearer 1 than P_int
+(|ln D| < |ln(D/P_int)|) - a recorded split that reached NEITHER half leaves D near P, and
+event_steps cannot tell "applied" from "never happened" at a recorded date (R719), which is how
+a phantom event one session inside a dead series' range planned a 10x cliff (R728). P/P_int is
+tested against 0.3 % BEFORE any write, because (b) is exactly that number; with an evidence K
+the pre-seam window may carry up to 0.6 % of closing-print noise (WARNING), beyond which it
+REFUSES. Of the eight tickers first refused for "no recorded event", five are dead series whose
+post half never carried the split (RYH RYT RTM RGI RYU: renamed in 2023, D within 3 % of 1 -
+refused by the D-rule); PSJ and PWC are real K=3 seams on series dead since 2023-08 (PWC's
+D=0.986 says its post half DOES carry the 3:1 - it is PSJ's twin, not a dead-before-event case);
+and RZG is a real K=3 seam that Yahoo records - it had been refused on the 0.2 % snap (P=2.9914).
+The D-rule is silent at P_int = 1 (its fixed point; 913 dividend-only payers sit there), and
+|ln D| > ln 1.5 refuses outright: a post half that far off the market is a defect of its own.
 
 Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamps parquet metadata).
     python seam_rebase.py TICKER [--mode split|full] [--apply] [--snapshot-dir DIR]
@@ -71,7 +108,18 @@ def snap_int(p: float):
 
 
 def yahoo(t: str):
-    """Daily Close (today's split basis, no dividends) 2022-02-14..today, split events, ex-dates."""
+    """Daily Close (today's split basis, no dividends) 2022-02-14..today, split events, ex-dates.
+
+    REASSIGNED symbols (R732, the class fix): Yahoo's history under a symbol is its CURRENT owner's.
+    For the seven tickers whose IEX symbol passed to another issuer, the closes, splits and
+    ex-dates Yahoo returns describe the new company, not the instrument this series is (or was);
+    measuring our PiTrading/IEX seam against them is measuring against the wrong instrument.
+    Refused here, once, for every caller (seam, scan, repair) - no market reference."""
+    from symbol_map import REASSIGNED
+    if t.upper() in REASSIGNED:
+        print(f"  {t}: IEX symbol reassigned to another issuer from {REASSIGNED[t.upper()][0]} - Yahoo's history under "
+              f"{t} is the NEW owner's; no market reference for this instrument (R732)")
+        return None, None, None
     import yfinance as yf
     tk = yf.Ticker(t.replace(".", "-"))
     h = tk.history(start="2022-02-14", auto_adjust=False, actions=True)
@@ -82,6 +130,36 @@ def yahoo(t: str):
     spl = spl[spl.index > pd.Timestamp("2022-03-04")]
     div = h["Dividends"][h["Dividends"] > 0] if "Dividends" in h else pd.Series(dtype=float)
     return h, spl, div
+
+
+def load_events_file(path: str, t: str):
+    """Recorded split events for ticker t from a CSV with columns ticker,date,ratio,source, as a
+    pd.Series indexed by the (normalized) event date with the share ratio (new/old) as value - the
+    same shape as Yahoo's `.splits` slice, restricted to events after the vendor seam."""
+    # index_col=False: a comma inside the free-text `source` field otherwise shifts the first
+    # column into the index and the file parses to nothing, silently (R728). The row count is
+    # asserted against the file's own non-comment lines so a parse that lost rows cannot pass.
+    df = pd.read_csv(path, dtype=str, comment="#", index_col=False)
+    need = {"ticker", "date", "ratio", "source"}
+    if not need.issubset(set(df.columns)):
+        raise SystemExit(f"--events-file {path}: columns must include {sorted(need)}, got {list(df.columns)}")
+    data_lines = [ln for ln in open(path, encoding="utf-8") if ln.strip() and not ln.lstrip().startswith("#")]
+    n_lines = len(data_lines) - 1
+    if len(df) != n_lines:
+        raise SystemExit(f"--events-file {path}: parsed {len(df)} row(s) but the file has {n_lines} data line(s) - "
+                         f"quote any field containing a comma; refusing to run on a partially read event list")
+    n_cols = data_lines[0].count(",") + 1
+    over = [i for i, ln in enumerate(data_lines[1:], 2) if ln.count('"') == 0 and ln.count(",") + 1 > n_cols]
+    if over:
+        # index_col=False keeps ticker/date/ratio intact and truncates the excess at the END of the
+        # line, i.e. inside `source`; say so rather than let a citation lose its tail silently.
+        print(f"  WARNING: --events-file line(s) {over} carry an unquoted comma in `source`; the text after it was dropped")
+    sub = df[df["ticker"].str.upper().str.strip() == t.upper()]
+    if sub.empty:
+        return None
+    idx = pd.to_datetime(sub["date"].str.strip()).dt.normalize()
+    s = pd.Series([float(r) for r in sub["ratio"]], index=pd.DatetimeIndex(idx)).sort_index()
+    return s[s.index > pd.Timestamp("2022-03-04")]
 
 
 def pre_window(daily_idx, div) -> tuple[list, str | None]:
@@ -171,6 +249,15 @@ def md5_of(path: str) -> str:
 
 
 def snapshot(client, ticker: str, out_dir: str) -> int:
+    """Download every served object of the ticker into out_dir, content-checked. Every failure here
+    exits 5 (ABORTED BEFORE ANY WRITE): nothing has been uploaded yet, so there is nothing to
+    restore and the served state is untouched."""
+    if os.path.exists(os.path.join(out_dir, "_MANIFEST.txt")):
+        # R731: a second run on the same day would overwrite the first run's snapshot - and after
+        # an exit 4 that snapshot IS the only copy of the pre-rebase state. Never silently.
+        print(f"snapshot: {out_dir} already holds a _MANIFEST.txt from an earlier run - refusing to overwrite it. "
+              f"If that run ended with exit 4, run --restore on it first; otherwise pass a fresh --snapshot-dir")
+        raise SystemExit(5)
     os.makedirs(out_dir, exist_ok=True)
     names = {f"{ticker}.parquet", f"{ticker}.csv", f"{ticker}.csv.gz", f"{ticker}.json"}
     keys = []
@@ -180,14 +267,14 @@ def snapshot(client, ticker: str, out_dir: str) -> int:
                 if o["Key"].rsplit("/", 1)[-1] in names:
                     keys.append((o["Key"], o["Size"], o["ETag"].strip('"')))
     if not keys:
-        raise SystemExit(f"snapshot: no served objects found for {ticker}")
+        print(f"snapshot: no served objects found for {ticker} - aborting before any write"); raise SystemExit(5)
     for k, size, etag in keys:
         dest = os.path.join(out_dir, k.replace("/", "__"))
         client.download_file(BUCKET, k, dest)
         if os.path.getsize(dest) != size:
-            raise SystemExit(f"snapshot: {k} size {size} on R2 vs {os.path.getsize(dest)} on disk - aborting before any write")
+            print(f"snapshot: {k} size {size} on R2 vs {os.path.getsize(dest)} on disk - aborting before any write"); raise SystemExit(5)
         if "-" not in etag and md5_of(dest) != etag:
-            raise SystemExit(f"snapshot: {k} MD5 {md5_of(dest)} != ETag {etag} - aborting before any write")
+            print(f"snapshot: {k} MD5 {md5_of(dest)} != ETag {etag} - aborting before any write"); raise SystemExit(5)
     with open(os.path.join(out_dir, "_MANIFEST.txt"), "w", encoding="utf-8") as f:
         for k, size, etag in keys:
             f.write(f"{size}\t{etag}\t{k}\n")
@@ -243,16 +330,18 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true"); ap.add_argument("--snapshot-dir", default=None)
     ap.add_argument("--convention-decided", action="store_true"); ap.add_argument("--restore", default=None)
     ap.add_argument("--allow-queued", action="store_true", help="proceed while a Daily Data Update run is queued but cannot start for >30 min")
+    ap.add_argument("--events-file", default=None,
+                    help="CSV ticker,date,ratio,source of issuer-recorded split events to union with Yahoo's (old symbols after a rename have no Yahoo split history)")
     a = ap.parse_args(); t = a.ticker.upper()
     client = get_client()
     if a.restore:
         n = restore(client, a.restore); print(f"{t}: restored {n} objects from {a.restore}"); return 0
     if a.mode == "full" and not a.convention_decided:
-        raise SystemExit("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded.")
+        print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded."); return 5
 
     daily = download_parquet(client, "raw", t, "daily")
     if daily is None or daily.empty:
-        raise SystemExit(f"{t}: no served daily file")
+        print(f"{t}: no served daily file - aborted before any write"); return 5
     daily["datetime"] = pd.to_datetime(daily["datetime"]); dd = daily.set_index("datetime").sort_index()
     if "source" in dd.columns and not ((dd["source"] == "pitrading").any() and (dd["source"] == "iex").any()):
         print(f"{t}: no PiTrading/IEX splice in the served file - nothing to rebase"); return 0
@@ -260,6 +349,19 @@ def main() -> int:
     if h is None:
         print(f"{t}: no market reference at Yahoo - cannot measure; disclose, do not repair"); return 3
     y = h["Close"]
+    if a.events_file:
+        # Issuer-recorded splits that Yahoo's `.splits` does not carry. Measured 2026-09-05: the seven
+        # Invesco ETFs refused as "P_int=N equals no chronological-prefix product of the recorded events []"
+        # all split on 2023-07-17 (RYH/RYT 10:1, RTM/RGI 5:1, RYU 2:1, PSJ/PWC 3:1 - an issuer wave of 23
+        # forward splits), and RZG's 3:1 the same day sits behind a 0.29 % snap miss. The file is a
+        # citation, not a guess: ticker,date,ratio,source. It is UNIONED with Yahoo's events (file wins on
+        # a shared date) and then flows through exactly the same event_steps / prefix checks.
+        extra = load_events_file(a.events_file, t)
+        if extra is not None and len(extra):
+            spl = pd.concat([spl, extra]) if len(spl) else extra
+            spl = spl[~spl.index.duplicated(keep="last")].sort_index()
+            print(f"  events file {a.events_file}: {len(extra)} recorded event(s) for {t} unioned with Yahoo's: "
+                  f"{[(str(i.date()), float(v)) for i, v in extra.items()]}")
 
     pre_sessions, ex_note = pre_window(dd.index, div)
     post_sessions = [d for d in dd.index if d >= SEAM][:WIN]
@@ -289,9 +391,74 @@ def main() -> int:
     if unm:
         print(f"  REFUSED: split event(s) whose served step cannot be classified {unm} - not proceeding on an unread event"); return 2
 
-    P_int = snap_int(P)
+    # EVIDENCE BEFORE SNAP. The 0.2 % snap exists for the no-event case, where a spin-off factor near an
+    # integer must not be mistaken for a split. When recorded events exist AND every in-range event has
+    # just been measured APPLIED in the served series (event_steps above), a chronological-prefix product
+    # within 1 % of P is positive evidence of K and outranks the snap: a 3-session median against Yahoo on
+    # a thin ETF carries ~0.5 % of closing-print noise (RZG 2026-09-05: P=2.991433, spread 0.50 %, recorded
+    # 3:1 on 2023-07-17 measured applied), which is measurement noise, not a spin-off.
+    # R725 (review of the first version of this rule): two conditions, both load-bearing.
+    #  (1) CANONICAL ONLY - every event in the matching prefix must itself be a split ratio
+    #      (snap_int(v) is not None). Yahoo records spin-off ADJUSTMENT FACTORS as "splits"
+    #      (MMM 1.196 Solventum, T 1.324 WBD); without this filter the rule accepted them as K
+    #      and split mode would have rescaled volume by a spin-off factor - wrong under every
+    #      price convention. The convention decision on those factors is Ahmed's.
+    #  (2) INSIDE THE SERVED RANGE - the matching prefix's newest event must be dated on or
+    #      before the last served session. event_steps() skips later events, so nothing else
+    #      would see them: with an events file, five ETFs whose series END in June 2023 planned a
+    #      5x/10x/2x rebase for a July 2023 split that never reached their served data.
+    evidence_K, evidence_last = None, None
+    if len(spl):
+        _prod, _all_canon = 1.0, True
+        for _i, _v in spl.items():
+            _all_canon = _all_canon and (snap_int(float(_v)) is not None)
+            _prod *= float(_v)
+            if _all_canon and abs(P / _prod - 1) <= 0.01:
+                evidence_K, evidence_last = _prod, _i
+    if evidence_K is not None and evidence_last > dd.index.max():
+        print(f"  REFUSED: the recorded event {evidence_last.date()} that would explain P={P:.6f} is AFTER the last served "
+              f"session {dd.index.max().date()} - it never reached this series; a rebase would manufacture the step"); return 2
+    if evidence_K is not None:
+        P_int = evidence_K
+        print(f"  P={P:.6f} matched the recorded-event product {P_int:g} within 1 % (evidence rule: canonical events, "
+              f"newest {evidence_last.date()} inside the served range; snap tolerance not applied)")
+    else:
+        P_int = snap_int(P)
     if P_int is None:
         print(f"  REFUSED: P={P:.6f} does not snap to an integer split ratio within 0.2 % (spin-off or unclear)"); return 2
+    # VERIFY (b) is deterministic - every pre-seam bar is scaled by K, so P' = P / P_int exactly
+    # (AMZN: 19.993751 / 20 = 0.999688, the logged P'). Test it here, BEFORE any write, at the
+    # same 0.3 % the verification uses; a plan that would fail (b) is refused instead of applied
+    # and then restored.
+    if abs(P / P_int - 1) > 0.003:
+        print(f"  REFUSED: P/P_int = {P / P_int:.6f} is {abs(P / P_int - 1):.3%} from 1 - the rebase would fail VERIFY (b) at 0.3 %; "
+              f"measure with a wider window or leave for the convention decision"); return 2
+    # R728: THE DATA DISCRIMINATOR. A split that reached the post-seam half leaves D (post half vs
+    # the market) near 1 - or near the dividend factor; one that reached NEITHER half leaves D near
+    # P. event_steps cannot tell "applied" from "never happened" at a recorded date (both read a
+    # step of ~1, R719), and the after-range guard compares dates, so a recorded event dated one
+    # session inside a dead series' range (RYH: series ends 2023-06-02, phantom event 2023-06-01)
+    # still planned a 10x cliff. D decides: if D is at least as far from 1 as it is from P_int,
+    # the post half never carried the split and there is no seam to remove. Measured 2026-09-05
+    # over the 105 planned tickers: 0 refused (closest EEV/EFU/FXP/EUM/PCAR at 0.13-0.15 vs
+    # 0.55-0.57); RYH/RGI/RTM/RYT/RYU refused with no events file at all (0.008-0.028 vs 0.67-2.30).
+    # P_int = 1 is the rule's fixed point (|ln D| >= |ln(D/1)| is always true) and 913 measurable
+    # tickers sit there - dividend-only payers with no split to test; the rule has nothing to say
+    # about them and must not fire (R731).
+    if abs(P_int - 1) > 1e-9 and abs(math.log(D)) >= abs(math.log(D / P_int)):
+        print(f"  REFUSED: D={D:.6f} is as far from 1 as from P_int={P_int:g} - the post-seam half sits on the SAME "
+              f"basis as the pre-seam half, so the recorded split never reached this series (dead series or "
+              f"phantom event); no seam to remove - refusing"); return 2
+    # THE BAND (R731). D is the post-seam half against the market; a dividend or spin-off factor
+    # keeps it within a few tens of percent of 1 (the largest over the 105 planned tickers is PSP
+    # at |ln D| = 0.2385). SCO (D=0.2499), REW (0.426) and AMC (0.389) pass the D-rule with a post
+    # half 2.3-4x off the market: whatever that basis is, it is not one this tool understands,
+    # and only a recorded event stood between them and a rebase. Beyond ln 1.5 the served post
+    # half is the defect to explain first.
+    if abs(math.log(D)) > math.log(1.5):
+        print(f"  REFUSED: the post-seam half is x{D:.4f} against the market (|ln D|={abs(math.log(D)):.3f} > ln 1.5) - "
+              f"beyond any dividend/spin factor; the served later half is on a basis this tool cannot explain "
+              f"(unapplied splits or a bad merge). Repair that first; a rebase would put the pre-seam half on it too"); return 2
     # P_int must equal the product of the OLDEST k recorded events for some k. k = n: the pre-seam half
     # misses all of them. k < n: the later events were applied history-wide (by the daily path, or by a
     # manual_split repair - SCO/SMN tonight) and only the oldest k are still missing before the seam.
@@ -312,8 +479,15 @@ def main() -> int:
     match = "all" if match_k == len(evs) else f"oldest {match_k} of {len(evs)}"
     if match_k < len(evs):
         print(f"  later event(s) measured APPLIED history-wide; the pre-seam half misses only the oldest {match_k}: {[(str(i.date()), v) for i, v in evs[:match_k]]}")
-    if sP > 0.003:
+    if sP > 0.003 and (evidence_K is None or sP > 0.006):
+        # Without a recorded event the window IS the identification of K, so 0.3 % stands. With one,
+        # K is settled by the event and P/P_int has already passed the pre-write (b) test above, so
+        # up to 0.6 % of closing-print noise (thin ETFs: RZG 0.50 %) is tolerated; beyond that the
+        # window is telling us something else is going on (PWC 1.14 %, UPW 0.94 % - R725 item 5).
         print(f"  REFUSED: PiTrading side unstable over its window ({sP:.3%}){' - ' + ex_note if ex_note else ''}"); return 2
+    if sP > 0.003:
+        print(f"  WARNING: PiTrading side unstable over its window ({sP:.3%}, within the 0.6 % allowed when K comes from a "
+              f"recorded event and P/P_int passed the pre-write (b) test)")
     K = 1.0 / P_int; V = P_int
     if a.mode == "full":
         K = D / P_int
@@ -324,10 +498,10 @@ def main() -> int:
     # and that must be seen even when the plan itself would be a no-op.
     raw = download_parquet(client, "raw", t); clean = download_parquet(client, "clean", t)
     if raw is None or raw.empty or clean is None or clean.empty:
-        raise SystemExit(f"{t}: served raw/clean 1-minute file missing")
+        print(f"{t}: served raw/clean 1-minute file missing - aborted before any write"); return 5
     extra = [c for c in raw.columns if c not in PRICE_COLS + ("Volume", "datetime", "source")]
     if extra:
-        raise SystemExit(f"{t}: raw carries unexpected columns {extra} - refusing")
+        print(f"{t}: raw carries unexpected columns {extra} - refusing, aborted before any write"); return 5
     d_r, c_r = last_pre_session_close(raw); d_c, c_c = last_pre_session_close(clean)
     if d_r is None or d_c is None or d_r not in y.index or d_c not in y.index:
         print(f"  REFUSED: cannot place the 1-minute files' last pre-seam session against the market (raw {d_r}, clean {d_c})"); return 2
@@ -359,42 +533,77 @@ def main() -> int:
 
     raw2, clean2 = rescale(raw, K, V), rescale(clean, K, V)
     n = 0; sync_failed = []
-    for version, df in (("raw", raw2), ("clean", clean2)):
-        upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n += 2
-        aggs = aggregate_all(df)
-        for tf in TIMEFRAMES:
-            if tf in aggs and not aggs[tf].empty:
-                upload_parquet(client, aggs[tf], version, t, tf); n += 1
-        # variables/quality: isolated like the daily pipeline does it, so a failure here cannot skip VERIFY
-        for attempt in (1, 2):
-            try:
-                sync_ticker_variables(client, version, t, df, force_full=True); n += 2; break
-            except Exception as ex:
-                if attempt == 2:
-                    sync_failed.append(f"{version}: {str(ex)[:120]}")
-    print(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
+    # ONE try from the first upload through the last VERIFY print (R728 item 2, R731 finding 1).
+    # Anything that dies in here - an upload, a read-back returning None, a botocore error on the
+    # three verification downloads, a format error in a VERIFY line - restores the snapshot and
+    # exits 1; a failed restore exits 4. The third review proved the previous shape wrapped only the
+    # uploads, so a VERIFY crash exited 1 UNRESTORED while the batch driver announced "restored".
+    try:
+        for version, df in (("raw", raw2), ("clean", clean2)):
+            upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n += 2
+            aggs = aggregate_all(df)
+            for tf in TIMEFRAMES:
+                if tf in aggs and not aggs[tf].empty:
+                    upload_parquet(client, aggs[tf], version, t, tf); n += 1
+            # variables/quality: isolated like the daily pipeline does it, so a failure here cannot skip VERIFY
+            for attempt in (1, 2):
+                try:
+                    sync_ticker_variables(client, version, t, df, force_full=True); n += 2; break
+                except Exception as ex:
+                    if attempt == 2:
+                        sync_failed.append(f"{version}: {str(ex)[:120]}")
+        print(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
 
-    # verify from the served side
-    d2 = download_parquet(client, "raw", t, "daily"); d2["datetime"] = pd.to_datetime(d2["datetime"])
-    dd2 = d2.set_index("datetime").sort_index()
-    step_before = float(dd[dd.index >= SEAM]["Close"].iloc[0] / dd[dd.index < SEAM]["Close"].iloc[-1])
-    step_after = float(dd2[dd2.index >= SEAM]["Close"].iloc[0] / dd2[dd2.index < SEAM]["Close"].iloc[-1])
-    ok_a = abs(step_after / (step_before / K) - 1) < 0.005
-    P2, _, _ = ratio_over(dd2["Close"], y, pre_sessions)
-    ok_b = P2 is not None and abs(P2 / target - 1) < 0.003
-    # (c) internal consistency of the served 1-minute files: clean's last pre-seam bar == raw's, and
-    #     raw's == the pre-computed P_raw*K (a 15:59 print is not the closing auction, so no market gate here)
-    raw_srv = download_parquet(client, "raw", t); clean_srv = download_parquet(client, "clean", t)
-    d_r2, c_r2 = last_pre_session_close(raw_srv); d_c2, c_c2 = last_pre_session_close(clean_srv)
-    ok_c = (d_r2 is not None and d_c2 is not None and abs(c_c2 / c_r2 - 1) < 0.0005
-            and abs((c_r2 / float(y[d_r2])) / (P_raw * K) - 1) < 0.0005)
-    print(f"  VERIFY (a) served daily seam step x{step_after:.6f} vs expected x{step_before / K:.6f} -> {'OK' if ok_a else 'MISMATCH'}")
-    print(f"  VERIFY (b) rebased P'={P2} vs target {target:.6f} -> {'OK' if ok_b else 'MISMATCH'}")
-    print(f"  VERIFY (c) served 1-minute: clean last pre-seam bar {c_c2} vs raw {c_r2}; raw/market {c_r2 / float(y[d_r2]) if d_r2 is not None else None:.6f} vs P_raw*K {P_raw * K:.6f} -> {'OK' if ok_c else 'MISMATCH'}")
-    if not (ok_a and ok_b and ok_c):
-        print(f"  NOT VERIFIED - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 1
+        # verify from the served side
+        d2 = download_parquet(client, "raw", t, "daily")
+        if d2 is None or d2.empty:
+            raise RuntimeError("served daily file unreadable after the upload")
+        d2["datetime"] = pd.to_datetime(d2["datetime"])
+        dd2 = d2.set_index("datetime").sort_index()
+        step_before = float(dd[dd.index >= SEAM]["Close"].iloc[0] / dd[dd.index < SEAM]["Close"].iloc[-1])
+        step_after = float(dd2[dd2.index >= SEAM]["Close"].iloc[0] / dd2[dd2.index < SEAM]["Close"].iloc[-1])
+        ok_a = abs(step_after / (step_before / K) - 1) < 0.005
+        P2, _, _ = ratio_over(dd2["Close"], y, pre_sessions)
+        ok_b = P2 is not None and abs(P2 / target - 1) < 0.003
+        # (c) internal consistency of the served 1-minute files: clean's last pre-seam bar == raw's, and
+        #     raw's == the pre-computed P_raw*K (a 15:59 print is not the closing auction, so no market gate here)
+        raw_srv = download_parquet(client, "raw", t); clean_srv = download_parquet(client, "clean", t)
+        if raw_srv is None or raw_srv.empty or clean_srv is None or clean_srv.empty:
+            raise RuntimeError("served 1-minute file unreadable after the upload")
+        d_r2, c_r2 = last_pre_session_close(raw_srv); d_c2, c_c2 = last_pre_session_close(clean_srv)
+        mkt2 = (c_r2 / float(y[d_r2])) if (d_r2 is not None and d_r2 in y.index) else float("nan")
+        ok_c = (d_r2 is not None and d_c2 is not None and math.isfinite(mkt2)
+                and abs(c_c2 / c_r2 - 1) < 0.0005 and abs(mkt2 / (P_raw * K) - 1) < 0.0005)
+        print(f"  VERIFY (a) served daily seam step x{step_after:.6f} vs expected x{step_before / K:.6f} -> {'OK' if ok_a else 'MISMATCH'}")
+        print(f"  VERIFY (b) rebased P'={P2} vs target {target:.6f} -> {'OK' if ok_b else 'MISMATCH'}")
+        print(f"  VERIFY (c) served 1-minute: clean last pre-seam bar {c_c2} vs raw {c_r2}; raw/market {mkt2:.6f} vs P_raw*K {P_raw * K:.6f} -> {'OK' if ok_c else 'MISMATCH'}")
+        verified = bool(ok_a and ok_b and ok_c)
+    except BaseException as ex:                                 # noqa: BLE001
+        # a network error on the 9th of 22 uploads, a KeyboardInterrupt, a None read-back - none
+        # may leave a half-rescaled or unverified set live with only a traceback to say so.
+        # Restore first, explain second.
+        print(f"  FAILED after the snapshot with {n} object(s) already uploaded ({type(ex).__name__}: {str(ex)[:200]}) - restoring")
+        try:
+            n_back = restore(client, snap_dir)
+            print(f"  restored {n_back} objects from {snap_dir}; served state is the pre-rebase state"); return 1
+        except BaseException as ex2:                            # noqa: BLE001
+            print(f"  RESTORE FAILED ({type(ex2).__name__}: {str(ex2)[:200]}) - the rescaled objects may be LIVE; "
+                  f"run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
+    if not verified:
+        # R725 item 4: a rescale that fails its own verification must not stay served while a human
+        # reads a log. Restore the content-checked snapshot NOW, then report; exit 1 stops the batch.
+        try:
+            n_back = restore(client, snap_dir)
+            print(f"  NOT VERIFIED - restored {n_back} objects from the snapshot {snap_dir}; served state is the pre-rebase state")
+            return 1                                            # stopped, nothing left changed
+        except BaseException as e:                              # noqa: BLE001
+            print(f"  NOT VERIFIED and the automatic restore FAILED ({type(e).__name__}: {e}) - the rescaled objects are LIVE; "
+                  f"run: python seam_rebase.py {t} --restore \"{snap_dir}\"")
+            return 4                                            # stopped, served state UNKNOWN - a human acts now
     if sync_failed:
-        print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. Not restoring; re-run sync_ticker_variables for {t} before serving is complete."); return 1
+        print(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. Not restoring; run "
+              f"sync_ticker_variables(force_full=True) for {t} - its serving is incomplete until then (a re-run of this "
+              f"tool answers ALREADY on target and does not re-sync)"); return 6
     print(f"  DONE: {t} rebased ({a.mode}); snapshot kept at {snap_dir}")
     return 0
 
