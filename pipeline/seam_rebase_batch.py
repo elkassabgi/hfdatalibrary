@@ -81,10 +81,14 @@ SIBLING_RE = re.compile(r"imported module sha256(?: at exit)?: (.+)$", re.M)
 
 def _sibling_drift(out: str, shas: dict) -> str | None:
     """The child's own reading of its siblings vs the driver's start-time reading. A sibling saved during
-    a child is imported by that child; comparing the two readings is the only thing that sees it."""
+    a child is imported by that child; comparing the two readings is the only thing that sees it.
+
+    A MISSING line is a breach, not a pass (R752 #3): both tools print it, so its absence means either an
+    unknown child or a tool built before the contract - and the check silently returned None, which the
+    caller read as "no drift". That is the same fail-open shape as the missing header before R748 #4."""
     hits = SIBLING_RE.findall(out)
     if not hits:
-        return None
+        return "child printed no sibling-hash line - the modules it imported are unidentified"
     child = {}
     for part in hits[-1].split(", "):                            # the LAST line: the complete set
         bits = part.strip().split(" ")
@@ -156,23 +160,28 @@ def main() -> int:
     else:
         d = pd.read_csv(a.candidates); d["flag"] = d.flag.fillna("")
         cands = sorted(d[~d.flag.str.contains("no_seam_window")].ticker)
-    # THE LOG IS PER TOOL (R750 finding 1). Lines carry a tool column; a line written by the OTHER tool is
-    # not this tool's evidence - neither for "already done" nor for the exit-4 start refusal. Lines from
-    # before the column existed (pass 1) have no tool field and belong to seam_rebase.py, which wrote them.
+    # THE LOG IS PER TOOL FOR "ALREADY DONE", AND CROSS-TOOL FOR THE EXIT-4 REFUSAL (R750 #1, R752 #1).
+    # `done` is a property of THIS tool's work, so it is filtered by the tool column. An exit 4 is a
+    # property of the DATA - both tools write the same four {version}/{variables,quality}/<T>.parquet
+    # objects - so a ticker whose served state is UNKNOWN must block BOTH tools until it is released.
+    # Lines from before the column existed (pass 1) have no tool field and belong to seam_rebase.py.
     def line_tool(p):
         return p[5] if len(p) >= 6 and p[5].endswith(".py") else "seam_rebase.py"
 
-    done = set(); last_line = None
+    done = set(); last_line = None; last_line_tool = None
     if os.path.exists(a.log):
         for line in open(a.log, encoding="utf-8"):
             p = line.rstrip("\n").split("\t")
-            if len(p) >= 3 and line_tool(p) == a.tool:
-                last_line = p
-                if p[2] == "0":
-                    done.add(p[1])
+            if len(p) < 3:
+                continue
+            last_line = p; last_line_tool = line_tool(p)          # the log's last line, whichever tool wrote it
+            if line_tool(p) == a.tool and p[2] == "0":
+                done.add(p[1])
     if last_line is not None and last_line[2] == "4":
-        print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}) - its served state is "
-              f"UNKNOWN until `python seam_rebase.py {last_line[1]} --restore <its snapshot dir>` has run. " + RELEASE)
+        who = f" (written by {last_line_tool})" if last_line_tool != a.tool else ""
+        print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}){who} - its served "
+              f"state is UNKNOWN until `python {last_line_tool} {last_line[1]} --restore <its snapshot dir>` has run. "
+              f"Both tools write the same objects, so this blocks {a.tool} too. " + RELEASE)
         return 1
     todo = [t for t in cands if t not in done]
     print(f"candidates {len(cands)}; already exit-0 in log {len(done & set(cands))}; to do {len(todo)}; mode {a.mode}; apply {a.apply}")

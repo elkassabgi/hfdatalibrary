@@ -421,7 +421,13 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
 
     existing_clean_count = len(existing_clean) if existing_clean is not None and not existing_clean.empty else 0
 
-    if existing_clean is not None and not existing_clean.empty and not is_backfill:
+    # `clean_rebuilt` names the thing that actually matters to step 6: was the WHOLE clean file
+    # regenerated? It is True on a backfill AND on a first-ever/empty-clean run, which `is_backfill`
+    # alone never covered (R752 finding 4) — the flag now names the condition it guards, so the branch
+    # below and the variables recompute cannot drift apart again.
+    clean_rebuilt = not (existing_clean is not None and not existing_clean.empty and not is_backfill)
+
+    if not clean_rebuilt:
         # Incremental: only clean new bars using context window
         context = existing_clean.tail(CONTEXT_BARS)
         to_clean = pd.concat([context, new_bars], ignore_index=True)
@@ -486,8 +492,8 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             # handoff section 15). Cost: ~4 ms per session per version, i.e. ~20 s for a
             # 5,000-session ticker, and it lands ONLY on tickers that actually receive
             # older bars — zero on an ordinary day, when is_backfill is false everywhere.
-            _full = ca_rescaled or (is_backfill and _vver == "clean" and _full_recompute_budget_left())
-            if is_backfill and _vver == "clean" and not _full:
+            _full = ca_rescaled or (clean_rebuilt and _vver == "clean" and _full_recompute_budget_left())
+            if clean_rebuilt and _vver == "clean" and not _full:
                 # the budget is spent: say so and name the ticker, so the out-of-band repair
                 # (pipeline/resync_variables.py) has a list instead of silence
                 stats.setdefault("variables_full_deferred", []).append(ticker)
@@ -635,6 +641,7 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
     total_new_clean = 0
     ticker_stats = []  # per-ticker cleaning stats for the log
     ca_events = []     # (kind, message) corporate-action applications/alerts
+    variables_deferred = []   # tickers whose full clean-variables recompute the budget deferred (R752 #7)
     per_ticker = new_bars.groupby("ticker")
     total_tickers = len(per_ticker)
 
@@ -671,6 +678,11 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
                         if data.get(k):
                             ca_events.append(("APPLIED" if k == "ca_applied" else "ALERT",
                                               data[k]))
+                    # a ticker whose full clean-variables recompute was deferred by the per-worker
+                    # budget must reach the run's OUTPUT, not just a line in a 1,391-ticker log
+                    # (R752 finding 7): without this the list dies at the worker boundary and the
+                    # out-of-band repair has nothing to work from.
+                    variables_deferred.extend(data.get("variables_full_deferred") or [])
                 else:
                     print(f"  {ticker} FAILED: {data}")
 
@@ -682,10 +694,15 @@ def process_day(d: date, universe: Set[str], dry_run: bool = False) -> dict:
     if not dry_run:
         update_metadata(d, total_new_raw, total_new_clean, tickers_updated)
 
+    if variables_deferred:
+        print(f"[variables] {len(variables_deferred)} ticker(s) had their full clean-variables recompute "
+              f"DEFERRED by the per-worker budget and are still stale against their bars; repair with "
+              f"pipeline/resync_variables.py: {' '.join(sorted(variables_deferred))}", flush=True)
     return {"date": d, "status": "ok", "tickers": tickers_updated,
             "new_bars": len(new_bars), "uploaded_mb": total_uploaded / 1e6,
             "elapsed_min": (time.time() - day_start) / 60,
-            "ca_events": ca_events}
+            "ca_events": ca_events,
+            "variables_full_deferred": sorted(variables_deferred)}
 
 
 def read_pipeline_state() -> tuple[Optional[date], List[date]]:

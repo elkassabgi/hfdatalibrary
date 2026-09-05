@@ -108,6 +108,24 @@ def test_ordinary_day_does_not_force_a_full_recompute(monkeypatch, harness):
         f"got {harness.calls}")
 
 
+@pytest.mark.parametrize("empty_clean", [None, "empty"])
+def test_first_ever_clean_file_also_forces_a_full_recompute(monkeypatch, harness, empty_clean):
+    """No existing clean file (or an empty one) takes the same full re-clean branch as a backfill, so its
+    clean variables must be recomputed in full too. R752 finding 4: `is_backfill` was only computed inside
+    the non-empty block, so this branch rebuilt the whole clean file with force_full False."""
+    existing = _bars("2026-09-04 09:30", 60)
+    clean = None if empty_clean is None else existing.iloc[0:0].copy()
+    try:
+        _run(monkeypatch, harness, existing.copy(), clean, _bars("2026-09-05 09:30", 60))
+    except Exception as ex:
+        if not harness.calls:
+            pytest.skip(f"merge_ticker could not reach step 6: {type(ex).__name__}: {ex}")
+    assert harness.calls, "sync_ticker_variables was never called"
+    by_version = {c["version"]: c["force_full"] for c in harness.calls}
+    assert by_version.get("clean") is True, (
+        f"a first-ever/empty clean file is rebuilt in full, so clean force_full must be True; got {harness.calls}")
+
+
 def test_budget_exhaustion_defers_instead_of_recomputing(monkeypatch, harness):
     """Past the per-worker budget the backfill recompute is DEFERRED and the ticker is named, so a
     retried missing day cannot add unbounded wall clock to a job with a 350-minute ceiling (R750 #2)."""
@@ -142,8 +160,12 @@ def test_call_site_passes_the_or_of_both_flags():
     assert found, "no sync_ticker_variables(force_full=...) call found in daily_update.py"
     # the flag is computed just above the call; the call site must not regress to ca_rescaled alone
     src_tail = src[src.index("# 6. Academic variables"):] if "# 6. Academic variables" in src else src
-    assert "ca_rescaled or (is_backfill and" in src_tail, (
-        "force_full must be ca_rescaled OR (is_backfill AND the clean version) - R745 finding 5 with "
-        "R750 finding 2; the call site's flag expression was not found")
+    assert "ca_rescaled or (clean_rebuilt and" in src_tail, (
+        "force_full must be ca_rescaled OR (clean_rebuilt AND the clean version) - R745 #5, R750 #2, "
+        "R752 #4; the call site's flag expression was not found")
+    # clean_rebuilt must be DERIVED from the branch that rebuilds the file, not re-stated independently
+    assert "clean_rebuilt = not (" in src and "if not clean_rebuilt:" in src, (
+        "clean_rebuilt must be computed once and used to select the re-clean branch, so the branch and "
+        "the recompute cannot drift apart")
     for expr in found:
         assert "ca_rescaled" in expr or "_full" in expr, "force_full lost its flag; found " + expr

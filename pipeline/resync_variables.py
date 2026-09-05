@@ -137,27 +137,40 @@ def snapshot4(client, t: str, out_dir: str) -> int:
     return len(keys)
 
 
+VERDICT_RE = __import__("re").compile(r"\*{0,2}(PASS-WITH-CHANGES|PASS|FAIL)\*{0,2}", __import__("re").I)
+ID_RE = __import__("re").compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
+
+
 def reviewed_ok(review_id: str, passed_file: str) -> bool:
-    """The id must appear as a WHOLE TOKEN on a PASSED.md line that names this tool, records a PASS, and
-    carries this file's sha256 (R750 finding 6: a substring test accepted "A", "-", "AR-0" and even the id
-    from a FAIL line, and nothing tied the approval to the bytes being run)."""
+    """The id must LOOK like a review id, appear as a whole token on a PASSED.md line that names this tool,
+    carry this file's sha256, and that line's VERDICT FIELD must read exactly PASS.
+
+    R750 #6 and R752 #2: a substring test accepted "A" and "-"; a whole-token test still accepted "PASS",
+    "sha256", a blank id (which strips to an empty regex matching everything) and - because the check was
+    "is the word PASS anywhere on the line" - both a FAIL line and a PASS-WITH-CHANGES line. The file is
+    named PASSED.md, so the word PASS is on every line by construction; only the verdict field decides."""
     import re
-    token = re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(review_id.strip()) + r"(?![0-9A-Za-z_-])")
+    rid = (review_id or "").strip()
+    if not ID_RE.match(rid):
+        _say(f"  --reviewed {review_id!r} is not shaped like a review id (e.g. AR-037) - refused")
+        return False
+    token = re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(rid) + r"(?![0-9A-Za-z_-])")
     try:
         for ln in open(passed_file, encoding="utf-8", errors="replace"):
             if not token.search(ln) or "resync_variables" not in ln:
                 continue
-            if "FAIL" in ln.upper().split("PASS")[0] and "PASS" not in ln.upper():
-                continue
-            if "PASS" not in ln.upper():
-                continue
+            verdicts = [m.group(1).upper() for m in VERDICT_RE.finditer(ln)]
+            if "PASS" not in verdicts or "FAIL" in verdicts or "PASS-WITH-CHANGES" in verdicts:
+                _say(f"  --reviewed {rid}: that line's verdict reads {verdicts or ['(none)']} - only a plain PASS authorises")
+                return False
             if _SOURCE_SHA[:12] not in ln:
-                _say(f"  --reviewed {review_id!r} names a PASS line for this tool, but that line does not carry this "
+                _say(f"  --reviewed {rid} names a PASS line for this tool, but that line does not carry this "
                      f"file's sha256 {_SOURCE_SHA[:12]} - the review cleared different bytes")
                 return False
             return True
     except OSError:
         return False
+    _say(f"  --reviewed {rid}: no line of {passed_file} names both this id and resync_variables")
     return False
 
 
@@ -174,6 +187,9 @@ def main() -> int:
         raise SystemExit(5 if ex.code else ex.code)   # R750 finding 4: a usage error is an abort before any write
     t = a.ticker.upper()
     _say(f"  tool source sha256 {_SOURCE_SHA} ({os.path.abspath(__file__)}) pid {os.getpid()}; seam_rebase.py sha256 {seam_rebase._source_sha256()}")
+    # the same sibling-hash contract the seam tool prints (R752 #3). The driver compares these against its
+    # own start-time read and now treats their ABSENCE as a breach, so this line is not optional.
+    _say(f"  imported module sha256: {seam_rebase._imported_module_hashes()}")
     if a.apply and not a.reviewed:
         _say("--apply needs --reviewed <PASSED.md id>: a rewrite of served objects runs only after its review (exit 5)"); return 5
     if a.apply and not reviewed_ok(a.reviewed, a.passed_file):
@@ -283,4 +299,8 @@ def _guarded_main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(_guarded_main())
+    _rc = _guarded_main()
+    # the trailer, after every lazy import has happened (R748 #5 / R752 #3): the driver reads the LAST
+    # occurrence, so the detail file names the sibling bytes that actually ran
+    _say(f"  imported module sha256 at exit: {seam_rebase._imported_module_hashes()}")
+    sys.exit(_rc)
