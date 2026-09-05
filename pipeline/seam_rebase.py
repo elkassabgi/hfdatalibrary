@@ -88,6 +88,14 @@ import hashlib
 import math
 import os
 import sys
+
+# the hash of THIS file, taken before anything else is imported (R743 lesser: a save during the
+# 0.9 s of imports would otherwise name code that did not run)
+try:
+    _SOURCE_SHA256 = hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
+except Exception:                                               # noqa: BLE001
+    _SOURCE_SHA256 = "unknown"
+
 import pandas as pd
 
 
@@ -107,18 +115,18 @@ def _say(msg: str) -> None:
 
 
 def _source_sha256() -> str:
-    """The hash of THIS file as it runs - printed first thing, so a detail file names the code that
-    produced it rather than a commit time (R741: seven tickers ran an edited file before its commit)."""
-    try:
-        return hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
-    except Exception:                                           # noqa: BLE001
-        return "unknown"
+    """The hash of THIS file as it ran - taken at module top, printed first thing, so a detail file names
+    the code that produced it rather than a commit time (R741: seven tickers ran an edited file before
+    its commit)."""
+    return _SOURCE_SHA256
 
 
 def _record(snap_dir: str, text: str) -> None:
     """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
     the console is gone (R735). Never raises - not even for an interrupt (R738). Every line carries
     this process's pid so the driver can tell its own child's record from another actor's (R741)."""
+    # one line, always: tabs and newlines inside an exception text would split the record (R743)
+    text = " ".join(str(text).split())
     for attempt in (1, 2):
         try:
             with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:

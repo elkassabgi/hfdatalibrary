@@ -46,6 +46,15 @@ def _utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _tool_sha256() -> str:
+    import hashlib
+    with open(os.path.join(HERE, "seam_rebase.py"), "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+RECORD_RE = re.compile(r"^(\S+)\t(?:pid=(\d+)\t)?(EXIT \d+.*)$")
+
+
 def _run_child(cmd: list[str]):
     """Run the tool in its own process group and wait for it even through a Ctrl-C on the driver:
     a TerminateProcess mid-restore would leave a half-restored set (R735 finding 1). Returns
@@ -104,10 +113,20 @@ def main() -> int:
     if not a.apply:
         print("  first 20:", " ".join(todo[:20])); print("(dry run - pass --apply to run the batch)"); return 0
     detail_dir = os.path.dirname(os.path.abspath(a.log))
+    # THE SOURCE GUARD (R743, after R742): the tool file is hashed at start and re-hashed before every
+    # child; a batch never runs bytes that were not there when it started. An edit under the batch
+    # stops it - the edit waits, or the batch is restarted deliberately on the new file.
+    tool_sha = _tool_sha256()
+    print(f"tool source sha256 {tool_sha} at start; the batch refuses to launch a child if it changes", flush=True)
     n = 0; stopped = False; incomplete = []; aborted = []; refused = []; unmeasurable = []
     for t in todo:
         if a.limit is not None and n >= a.limit:
             break
+        now_sha = _tool_sha256()
+        if now_sha != tool_sha:
+            print(f"STOPPING before {t}: seam_rebase.py changed under the batch (sha256 {tool_sha[:12]} -> {now_sha[:12]}). "
+                  f"Nothing launched on the new file; restart the batch deliberately if the new file is the one to run.", flush=True)
+            stopped = True; break
         cmd = [sys.executable, "-u", os.path.join(HERE, "seam_rebase.py"), t, "--mode", a.mode, "--apply",
                "--snapshot-dir", os.path.join(a.snapshot_root, t)]
         if a.mode == "full":
@@ -117,6 +136,7 @@ def main() -> int:
         t0 = dt.datetime.now(dt.timezone.utc)
         stamp = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
         rc, out, err, interrupted, child_pid = _run_child(cmd)
+        raw_rc = rc                                          # the child's own code, kept in the detail header
         last = (out.strip().splitlines() or [""])[-1]
         # THE RECORD OUTRANKS THE EXIT CODE (R738 finding 1). A child killed from outside
         # (TerminateProcess) exits 1 - the code that means "written then RESTORED" - with nothing
@@ -134,19 +154,30 @@ def main() -> int:
                 rec_last = lines[-1] if lines else None
             except OSError:
                 pass
-            parts = rec_last.split("\t") if rec_last else []
-            rec_stamp = parts[0] if parts else ""
-            # record lines are "<UTC>\tpid=<n>\tEXIT ..." from v5.4; older ones "<UTC>\tEXIT ..."
-            rec_pid = parts[1][4:] if len(parts) >= 3 and parts[1].startswith("pid=") else None
-            said = parts[-1] if len(parts) >= 2 else (rec_last or "")
-            # the record must be THIS run's: stamped at/after the child's start AND written by the child
-            # itself (R741 finding 5: another actor's "EXIT 1 RESTORED" line after t0 was believed)
-            fresh = bool(rec_stamp) and rec_stamp >= stamp and (rec_pid is None or rec_pid == str(child_pid))
+            m = RECORD_RE.match(rec_last) if rec_last else None
+            rec_stamp = m.group(1) if m else ""
+            rec_pid = m.group(2) if m else None
+            said = m.group(3) if m else (rec_last or "")
+            # the child prints "pid <n>" in its header (v5.4+): a record without a pid under such a child,
+            # or a child without the header at all, is not believed (R743 finding 4)
+            hdr = re.search(r"tool source sha256 [0-9a-f]{64} .* pid (\d+)", out)
+            hdr_pid = hdr.group(1) if hdr else None
+            # the record must be THIS run's: a parseable line, stamped at/after the child's start, written
+            # by the child itself (R741 finding 5: another actor's "EXIT 1 RESTORED" after t0 was believed)
+            fresh = bool(m) and rec_stamp >= stamp and hdr_pid is not None and rec_pid == hdr_pid == str(child_pid)
             if not fresh or not (said.startswith(f"EXIT {rc} ") or said == f"EXIT {rc}"):
                 if not rec_last:
                     why = "died without its record"
-                elif not fresh:
-                    why = "record from another run or actor" if (rec_pid and rec_pid != str(child_pid)) else "stale record from an earlier run"
+                elif not m:
+                    why = "record line not in the grammar"
+                elif hdr_pid is None:
+                    why = "child printed no pid header"
+                elif rec_pid is None:
+                    why = "record without a pid under a child that printed one"
+                elif rec_pid != str(child_pid):
+                    why = "record from another run or actor"
+                elif rec_stamp < stamp:
+                    why = "stale record from an earlier run"
                 else:
                     why = "record disagrees with the exit code"
                 last = (f"{why} (exit {rc}, _RESULT.txt says {said[:80]!r} at {rec_stamp or 'no stamp'} pid {rec_pid or '?'} vs child "
@@ -156,7 +187,8 @@ def main() -> int:
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:
             with open(detail, "w", encoding="utf-8") as f:
-                f.write(f"# {stamp} {' '.join(cmd)}\n# exit {rc}\n--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
+                f.write(f"# {stamp} {' '.join(cmd)}\n# child exit {raw_rc}; logged as {rc}; child pid {child_pid}; tool sha256 at launch {tool_sha}\n"
+                        f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
         except Exception as e:                                   # noqa: BLE001
             print(f"  (detail file not written: {e})", flush=True)
         with open(a.log, "a", encoding="utf-8") as f:
