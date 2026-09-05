@@ -171,8 +171,11 @@ rebased tickers against `F:\hf_r2_snapshot_20260713`, a copy predating any repai
 
 **The control is not decoration, and the "after" row should not be read against 1.0.** The seam spans
 2022-03-04 to 2022-03-07, a weekend inside a violently moving week, so a genuinely continuous series
-does not show 1.0 there either. The control is 38 tickers the fleet measurement flagged as having no
-seam, which were never touched by the repair; their step is what the market alone did. Repaired
+does not show 1.0 there either. The control is 38 tickers whose measured split factor `K` and dividend
+factor `D` are both 1 to within 1e-6 and 1e-3, and which the repair never touched. That is a selection
+on the two measured factors, not on the CSV's `flag` column, and it is the entire population meeting
+it, not a sample: 38 qualified and all 38 were measured. Their step is what the market alone did.
+Repaired
 tickers now sit where untouched tickers sit. Quoting the repaired figure against 1.0 would overstate
 what remains by roughly five percentage points.
 
