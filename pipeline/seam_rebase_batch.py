@@ -14,7 +14,9 @@ Exit codes from seam_rebase.py and what the driver does with each (one meaning p
     5  aborted before any write (missing object, snapshot check, crash) -> record, continue (retry list)
     6  prices verified, variables/quality sync FAILED                  -> record, continue, LIST at the end
     1  written then RESTORED from its snapshot; served = pre-rebase    -> record, STOP (read why)
-    4  written and the RESTORE FAILED, or an inconsistent served set   -> record, STOP; --restore first
+    4  served state UNKNOWN: restore failed, an inconsistent set, or a
+       hash/sibling breach (unidentified code ran, so "no write" is not
+       a fact)                                                        -> record, STOP; --restore first
     7  deferred: the daily window (resync_variables.py only)            -> record, continue, LIST at the end
 --tool resync_variables.py drives that tool instead (same header, same record grammar, its own snapshot);
 --mode / --convention-decided / --events-file are seam_rebase.py's; --reviewed is resync_variables.py's.
@@ -27,8 +29,14 @@ per ticker is appended to the log AFTER the tool exits — never before — with
 logged with exit 0. --mode full needs --convention-decided on the driver too; it is never implied.
 THE SOURCE GUARD (R742/R743/R744): the tool AND the five modules it imports live (aggregate, r2_client,
 variables_sync, compute_variables, symbol_map) are hashed at start and before every launch; any change
-stops the batch before the next child. The child's header hash must equal the launch hash: a different
-hash under a write is logged 4 (served state unknown); without a write it stops the batch.
+stops the batch before the next child. The child must also print that hash and its own reading of the
+same six modules, as a header and again at exit, and all of those readings must agree with the driver's.
+ANY BREACH - a wrong header hash, no header, a missing or incomplete sibling line, or two readings that
+disagree - IS LOGGED 4 (served state unknown) and stops the batch, whatever the child's own exit code
+said and whether or not it printed a snapshot line. The reason is that under a breach the child's stdout
+is untrustworthy in both directions: a missing snapshot line is not evidence that no write happened,
+because the code that prints it is the code that changed. Exit 5 is therefore reserved for a CLEAN
+child's honest "aborted before any write" and for refusals the driver settles before a child runs.
 """
 from __future__ import annotations
 import argparse, datetime as dt, os, re, subprocess, sys
@@ -43,9 +51,11 @@ STOP_TEXT = {
     1: ("STOPPING: the last ticker was written and then RESTORED from its snapshot (a failure between the first "
         "upload and the last VERIFY line, or a VERIFY mismatch); served state is the pre-rebase state. Read why "
         "before continuing."),
-    4: ("STOPPING - SERVED STATE UNKNOWN or INCONSISTENT: the last ticker was written AND its automatic restore failed, "
-        "or the tool found a partial earlier write. Run the printed --restore command (or re-aggregate) before anything "
-        "else. " + RELEASE),
+    4: ("STOPPING - SERVED STATE UNKNOWN or INCONSISTENT. One of: the last ticker was written AND its automatic restore "
+        "failed; the tool found a partial earlier write; or a HASH/SIBLING BREACH means unidentified code ran to completion, "
+        "so nothing it printed about writing - including 'nothing to rebase' and a missing snapshot line - can be believed. "
+        "Check the snapshot directory first: if it holds objects, run the printed --restore command; if it is absent or "
+        "empty, compare the ticker's served objects against the store yourself before assuming no write happened. " + RELEASE),
 }
 
 
@@ -102,11 +112,22 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
     # header - the one that can see a module swapped and restored inside a single child, which is
     # exactly the ~100 ms launch race the header check was added for. A disagreement is a breach.
     readings = [parse(h) for h in hits]
-    # R755 #3: a reading that parses to NOTHING is not agreement, it is a child saying it could not
-    # identify its own imports - the "HASHES-UNAVAILABLE" placeholder, or any line we cannot read.
-    if any(not r for r in readings):
-        return ("a sibling line carries no readable name/hash pairs - the child could not identify the "
-                "modules it imported")
+    # COVERAGE, not merely non-emptiness (R757 #2). Refusing only an EMPTY parse let a line that
+    # identified ONE module and then said HASHES-UNAVAILABLE read as clean, as did a line where every
+    # module said "not-imported" or "unreadable". A sibling line is believed only when every guarded
+    # module is named, none is unreadable, and at least one carries a real hash.
+    for i, (raw, r) in enumerate(zip(hits, readings)):
+        missing = [n for n in GUARDED if n[:-3] not in r]        # GUARDED holds "<name>.py"
+        unreadable = [k for k, v in r.items() if v == "unreadable"]
+        real = [v for v in r.values() if len(v) == 12 and all(c in "0123456789abcdef" for c in v)]
+        malformed = [p.strip() for p in raw.split(", ")
+                     if len(p.strip().split(" ")) != 2 and p.strip()]
+        if missing or unreadable or malformed or not real:
+            return (f"sibling reading {i} does not identify the guarded set"
+                    + (f"; missing {missing}" if missing else "")
+                    + (f"; unreadable {unreadable}" if unreadable else "")
+                    + (f"; malformed {malformed[:3]}" if malformed else "")
+                    + ("; no module carries a real hash" if not real else ""))
     # R755 #5: compare EVERY reading, not just the first and last. The blind spot had moved from
     # "last only" to "first and last only", so three lines with a drifted middle read as clean.
     disagree = []
@@ -315,30 +336,43 @@ def main() -> int:
             # No write reached. The same evidence that is exit 4 on the write path must not be exit 0 here
             # (R748 finding 4): a hash breach or a missing header was printed but LOGGED WITH THE CHILD'S OWN
             # CODE, so a 0 went into the log and the next start skipped the ticker as already done.
+            # "No write reached" is itself read off the child's stdout, so under a breach it is not a
+            # fact - it is the untrustworthy code's own account of itself. One rule covers every breach
+            # here and in the drift block below: A BREACH ALWAYS LOGS 4 (served state UNKNOWN). 5 is
+            # reserved for refusals the DRIVER settles before a child runs, where no child existed to
+            # write anything. This corrects an incoherence the harness surfaced: NWHASH (the worse
+            # breach - the tool's own hash is wrong) logged 5 while NWNOHDR logged 4.
             hdrs = HEADER_RE.findall(out)
             hdr = HEADER_RE.search(out)
             if hdr and (len({h[0] for h in hdrs}) > 1 or hdr.group(1) != tool_sha):
                 shown = ", ".join(sorted({h[0][:12] for h in hdrs}))
-                hash_breach = f"child header hash {shown} differs from the launch hash {tool_sha[:12]} (no write reached; child exit {rc})"
+                hash_breach = (f"child header hash {shown} differs from the launch hash {tool_sha[:12]} (child exit {rc}) - "
+                               f"unidentified code ran to completion, so its 'no write' cannot be believed")
                 last = hash_breach + " - " + last
-                rc = 5                      # aborted before any write, by the driver - never 0, never skippable
+                rc = 4                      # never 0, never skippable, and never a calm 5
             elif hdr is None:
-                hash_breach = f"child printed no hash/pid header (no write reached; child exit {rc}) - the code that ran is unidentified"
+                hash_breach = (f"child printed no hash/pid header (child exit {rc}) - the code that ran is unidentified, "
+                               f"so its 'no write' cannot be believed")
                 last = hash_breach + " - " + last
-                rc = 5
+                rc = 4
         # the siblings the CHILD loaded, not the driver's start-time read (R748 finding 5)
         child_sibs = SIBLING_RE.findall(out)
         drift = _sibling_drift(out, shas)
         if drift:
             last = f"SIBLING DRIFT: {drift} - a guarded module changed while the child ran; " + last
-            # EVERY child code ONCE THE SNAPSHOT SUCCEEDED (R754 #5, widened by R755 #4). Past that
-            # line writes may have happened, so the served state is unknown whatever the child
-            # concluded - and 4 already means "restore failed OR an inconsistent served set". Leaving
-            # rc 1 and 5 alone kept the child's conclusion in the LOG, so the next start did not refuse
-            # and the ticker returned to todo. But the driver's OWN no-write 5 stays 5: nothing was
-            # written there, and calling it "served state UNKNOWN" would overstate the danger.
-            if snapshot_ok:
-                rc = 4
+            # R754 #5 recoded 0/2/3/6/7 (each is the child CONCLUDING something about served state);
+            # R755 #4 widened it to 1 and 5 past a successful snapshot. Scoping the whole thing on
+            # snapshot_ok (R757 #1) silently un-did the first rule - RC2DRIFT went back to logging 2.
+            #
+            # The rule is now TOTAL and has no snapshot_ok in it, which DEVIATES from R757 #6's
+            # "no-snapshot drift logs 5". Reason: under drift the child's stdout is untrustworthy in
+            # BOTH directions. A missing snapshot line is not evidence that no write happened, because
+            # the code that would have printed it is exactly the code that changed. Logging 5 over a
+            # write that did happen hides corruption in served data and nobody looks; logging 4 over a
+            # child that truly did nothing costs one wasted inspection. The errors are not symmetric.
+            # R757 #6's actual harm - "the log keeps a 0 the next start skips" - is fixed either way.
+            # 5 stays reserved for breaches the driver settles BEFORE a child runs.
+            rc = 4
             hash_breach = hash_breach or f"sibling drift under exit {raw_rc}"
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:

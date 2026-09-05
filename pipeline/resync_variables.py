@@ -150,7 +150,14 @@ import re as _re
 # optionally followed by "#" and any comment. Nothing else authorises: not a verdict column, not the
 # word PASS, not the file being called PASSED.md. The hash binds the approval to the reviewed bytes,
 # so any edit to this file invalidates it, which is the point.
-APPROVE_RE_FMT = r"^\s*APPROVE-APPLY\s+resync_variables\.py\s+{sha}\s+(\S+)\s*(?:#.*)?$"
+# AT COLUMN 0, no leading whitespace (R757 #3): the refusal message printed the required line indented,
+# and the pattern allowed leading space, so pasting the tool's own refusal transcript into PASSED.md
+# authorised it - and so did the token quoted as an indented example inside a FAIL row, a fenced code
+# block, or an HTML comment. A real approval is written flush left and nowhere else.
+APPROVE_RE_FMT = r"^APPROVE-APPLY resync_variables\.py {sha} (\S+)[ \t]*(?:#(.*))?$"
+# and an approval can be withdrawn, either by a REVOKE line or by saying so in the token's own comment
+REVOKE_RE_FMT = r"^REVOKE-APPLY resync_variables\.py (?:{sha}|\*) (\S+)[ \t]*(?:#.*)?$"
+REVOKING_COMMENT_RE = _re.compile(r"\b(revoke[ds]?|superseded|do not use|withdrawn|void)\b", _re.I)
 ID_RE = _re.compile(r"^[A-Za-z]{1,6}-\d{1,4}$")
 
 
@@ -177,19 +184,35 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
         return False
     sha12 = _SOURCE_SHA[:12]
     want = _re.compile(APPROVE_RE_FMT.format(sha=_re.escape(sha12)))
+    revoke = _re.compile(REVOKE_RE_FMT.format(sha=_re.escape(sha12)))
+    approved = False
     try:
         with open(passed_file, encoding="utf-8", errors="replace") as fh:
             for ln in fh:
+                ln = ln.rstrip("\n")
+                r = revoke.match(ln)
+                if r and r.group(1) in (rid, "*"):
+                    _say(f"  --reviewed {rid}: {passed_file} carries a REVOKE-APPLY line for it - refused")
+                    return False
                 m = want.match(ln)
                 if m and m.group(1) == rid:
-                    return True
+                    comment = (m.group(2) or "")
+                    if REVOKING_COMMENT_RE.search(comment):
+                        _say(f"  --reviewed {rid}: the approval line's own comment withdraws it "
+                             f"({comment.strip()[:60]!r}) - refused")
+                        return False
+                    approved = True          # keep reading: a later REVOKE-APPLY still wins
     except OSError as ex:
         _say(f"  --reviewed {rid}: cannot read {passed_file} ({type(ex).__name__}) - refused")
         return False
-    _say(f"  --reviewed {rid}: {passed_file} carries no line reading exactly")
-    _say(f"      APPROVE-APPLY resync_variables.py {sha12} {rid}")
-    _say(f"  ...so this run is not approved. The hash is of the tool as it stands; if it was edited "
-         f"after the review, it needs reviewing again.")
+    if approved:
+        return True
+    # NOTE the leading marker: the required line must sit at column 0, so this message cannot itself
+    # be pasted into PASSED.md and authorise the tool (R757 #3).
+    _say(f"  --reviewed {rid}: {passed_file} carries no approval line. It must read, at column 0:")
+    _say(f"  >> APPROVE-APPLY resync_variables.py {sha12} {rid}")
+    _say(f"  (the '>> ' above is not part of it). The hash is of the tool as it stands; if it was "
+         f"edited after the review, it needs reviewing again.")
     return False
 
 
