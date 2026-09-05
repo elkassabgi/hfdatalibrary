@@ -70,12 +70,15 @@ def minute_steps(client, t: str, ca: pd.Timestamp, y: pd.Series):
     prev = common[common < ca]; post = common[common >= ca]
     if len(prev) == 0 or len(post) == 0:
         return None, None
-    p, q = prev[-1], post[0]
-    p_d, q_d = p.normalize(), q.normalize()
+    # medians of the last / first 10 common bars, not single bars: on a $0.30 stock one tick is 3 %
+    # (CDLX read 10.89 against a daily step of 9.99 on single bars)
+    pb, qb = prev[-10:], post[:10]
+    p_d, q_d = pb[-1].normalize(), qb[0].normalize()
     if p_d not in y.index or q_d not in y.index:
         return None, None
     ystep = float(y[q_d] / y[p_d])
-    return float(r[q] / r[p]) / ystep, float(c[q] / c[p]) / ystep
+    return (float(r[qb].median() / r[pb].median()) / ystep,
+            float(c[qb].median() / c[pb].median()) / ystep)
 
 
 def main() -> int:
@@ -104,9 +107,11 @@ def main() -> int:
             print(f"  {t} {ca.date()}: no Yahoo reference - SKIP"); log(t, ca, ratio, "SKIP", "no yahoo"); continue
         y = h["Close"]
         rel, last_close = daily_step(client, "raw", t, ca, y)
+        if rel is None:
+            print(f"  {t} {ca.date()}: cannot measure the raw daily step - SKIP"); log(t, ca, ratio, "SKIP", "no raw session"); continue
+        # clean/daily is informational only here (thin names lack sessions in it - RXD, SBB); the
+        # snapshot-vs-served post-check covers clean regardless
         rel_c, last_close_c = daily_step(client, "clean", t, ca, y)
-        if rel is None or rel_c is None:
-            print(f"  {t} {ca.date()}: cannot measure the daily step - SKIP"); log(t, ca, ratio, "SKIP", "no session"); continue
         if abs(rel / ratio - 1) > 0.05:
             print(f"  {t} {ca.date()}: pre-check: served/Yahoo daily step {rel:.4f} is not ~{ratio:.4f} - not unapplied as listed - SKIP")
             log(t, ca, ratio, "SKIP", f"daily rel {rel:.4f} != ratio"); continue
@@ -117,9 +122,10 @@ def main() -> int:
         if abs(m_raw / m_clean - 1) > 0.25:
             print(f"  {t} {ca.date()}: REFUSED - raw and clean 1-minute files disagree on the SAME bars across the event (raw {m_raw:.4f}, clean {m_clean:.4f}): an earlier run was interrupted; restore first")
             log(t, ca, ratio, "REFUSED", f"1-min raw {m_raw:.4f} vs clean {m_clean:.4f} on common bars"); return 1
-        if abs(m_raw / ratio - 1) > 0.05:
-            print(f"  {t} {ca.date()}: REFUSED - 1-minute step {m_raw:.4f} disagrees with the daily step {rel:.4f} / ratio {ratio:g}")
-            log(t, ca, ratio, "REFUSED", f"1-min {m_raw:.4f} vs daily {rel:.4f}"); return 1
+        if abs(m_raw / ratio - 1) > 0.10:
+            # a measurement-quality problem on a thin name, not a safety one: skip this event, keep the batch
+            print(f"  {t} {ca.date()}: SKIP - 1-minute step {m_raw:.4f} (10-bar medians) disagrees with the daily step {rel:.4f} / ratio {ratio:g}; look by hand")
+            log(t, ca, ratio, "SKIP", f"1-min {m_raw:.4f} vs daily {rel:.4f}"); continue
         print(f"  {t} {ca.date()}: pre-checks OK (daily rel {rel:.4f}, 1-min raw {m_raw:.4f} clean {m_clean:.4f} ~ {ratio:.4f}); plan manual_split {t} {ratio:g} {ca.date()}")
         if not a.apply:
             n += 1; continue
