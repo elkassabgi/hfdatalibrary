@@ -147,7 +147,7 @@ def step8_vectorized_v3(df):
     return df[keep].reset_index(drop=True)
 
 
-def test_on_ticker(name, df):
+def check_on_ticker(name, df):   # not "test_": pytest collected it as a test and errored on a missing "name" fixture
     print(f"\n{'='*60}")
     print(f"Testing: {name} ({len(df):,} bars)")
     print(f"{'='*60}")
@@ -228,7 +228,7 @@ def main():
         cols = [c for c in ["datetime", "Open", "High", "Low", "Close", "Volume", "source"] if c in df.columns]
         df = df[cols]
 
-        if not test_on_ticker(ticker, df):
+        if not check_on_ticker(ticker, df):
             all_passed = False
 
     print(f"\n{'='*60}")
