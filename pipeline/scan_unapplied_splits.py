@@ -20,6 +20,24 @@ DEFAULT = r"D:\temp\claude\D--research-hfdatalibrary\cbd00e2e-9905-4a18-b264-d63
 OUT = r"D:\temp\claude\unapplied_splits.csv"
 
 
+def _write_merged(rows) -> None:
+    """Write the scanned rows into OUT, MERGED BY TICKER with whatever is already there.
+
+    A targeted re-scan (`scan_unapplied_splits.py GSK J`) used to overwrite the file with just those
+    tickers, destroying a 164-ticker fleet result - and the repair list downstream then reported the
+    fleet as two rows. Rows scanned now replace their old versions; every other ticker survives."""
+    df = pd.DataFrame(rows)
+    if os.path.exists(OUT):
+        try:
+            old = pd.read_csv(OUT)
+            keep = old[~old.ticker.isin(set(df.ticker))]
+            df = pd.concat([keep, df], ignore_index=True)
+        except Exception as ex:                                  # noqa: BLE001
+            print(f"  (could not merge with the existing {OUT}: {type(ex).__name__}: {ex} - writing the new rows only)", flush=True)
+    df = df.sort_values("ticker")
+    df.to_csv(OUT, index=False)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--candidates", default=DEFAULT); ap.add_argument("tickers", nargs="*")
     a = ap.parse_args()
@@ -61,12 +79,17 @@ def main() -> int:
         rows.append(rec)
         if i % 20 == 0 or i == len(tickers):
             print(f"  {i}/{len(tickers)} {t}: unapplied={rec['n_unapplied']} {rec['unapplied'][:60]}", flush=True)
-            pd.DataFrame(rows).to_csv(OUT, index=False)
+            _write_merged(rows)
         time.sleep(0.4)
-    df = pd.DataFrame(rows); df.to_csv(OUT, index=False)
-    bad = df[df.n_unapplied > 0]
+    _write_merged(rows); df = pd.read_csv(OUT)
+    n = pd.to_numeric(df.n_unapplied, errors="coerce")          # "ERROR" -> NaN, never a silent 0
+    bad = df[n.fillna(0) > 0]
+    errored = df[n.isna()]
     print(f"\nUNAPPLIED SPLITS IN SERVED DATA: {len(bad)} tickers of {len(df)} scanned")
     print(bad[["ticker", "unapplied", "P", "D"]].to_string(index=False))
+    if len(errored):
+        print(f"\nSCANNED BUT NOT CLEARED - the scan errored on {len(errored)} ticker(s) and knows nothing about them:")
+        print(errored[["ticker", "note"]].to_string(index=False))
     print(f"written: {OUT}")
     return 0
 
