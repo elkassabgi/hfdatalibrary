@@ -76,23 +76,33 @@ Pass 1 (`D:/temp/claude/seam_pass1_plan67.txt`, 66 PLAN tickers + RZG), `--mode 
 
 | UTC | ticker | exit | secs | K (price) | pre-seam 1-min bars | mismatches price/volume/post | tool | outcome |
 |---|---|---|---|---|---|---|---|---|
-| 2026-09-05T12:48:41Z | AMCR | 0 | 74s | 5 | 266,582 | 0/0/0 | v5 (9ba6a3f) |   DONE: AMCR rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
-| 2026-09-05T12:49:55Z | AMWL | 0 | 61s | 20 | 140,518 | 0/0/0 | v5 (9ba6a3f) |   DONE: AMWL rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
-| 2026-09-05T12:50:56Z | ANET | 0 | 100s | 0.25 | 647,822 | 0/0/0 | v5 (9ba6a3f) |   DONE: ANET rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
-| 2026-09-05T13:18:12Z | APH | 0 | 154s | 0.5 | 1,713,462 | 0/0/0 | v5.1 (a38144c) |   DONE: APH rebased (split); snapshot kept at F:\hf_r2_snaps |
-| 2026-09-05T13:20:46Z | AVGO | 0 | 126s | 0.1 | 1,186,232 | 0/0/0 | v5.1 (a38144c) |   DONE: AVGO rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:22:52Z | AZN | 0 | 158s | 2 | 1,770,416 | 0/0/0 | v5.1 (a38144c) |   DONE: AZN rebased (split); snapshot kept at F:\hf_r2_snaps |
-| 2026-09-05T13:25:30Z | CHPT | 0 | 62s | 20 | 144,090 | 0/0/0 | v5.1 (a38144c) |   DONE: CHPT rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:26:32Z | CMG | 0 | 137s | 0.02 | 1,304,364 | 0/0/0 | v5.1 (a38144c) |   DONE: CMG rebased (split); snapshot kept at F:\hf_r2_snaps |
-| 2026-09-05T13:28:49Z | COO | 0 | 154s | 0.25 | 1,441,198 | 0/0/0 | v5.1 (a38144c) |   DONE: COO rebased (split); snapshot kept at F:\hf_r2_snaps |
-| 2026-09-05T13:31:23Z | CPRT | 0 | 161s | 0.25 | 1,577,679 | 0/0/0 | v5.1 (a38144c) |   DONE: CPRT rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:34:04Z | CTAS | 0 | 152s | 0.25 | 1,642,019 | 0/0/0 | v5.1 (a38144c) |   DONE: CTAS rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:36:37Z | DECK | 0 | 194s | 0.166667 | 1,532,996 | 0/0/0 | v5.1 (a38144c) |   DONE: DECK rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:39:50Z | DXCM | 0 | 144s | 0.25 | 1,263,982 | 0/0/0 | v5.2 (daef642) |   DONE: DXCM rebased (split); snapshot kept at F:\hf_r2_snap |
-| 2026-09-05T13:43:07Z | ETR | 0 | 158s | 0.5 | 1,812,340 | 0/0/0 | v5.2 (daef642) |   DONE: ETR rebased (split); snapshot kept at F:\hf_r2_snaps |
-| 2026-09-05T13:45:45Z | FAST | 0 | 150s | 0.5 | 1,804,374 | 0/0/0 | v5.2 (daef642) |   DONE: FAST rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T12:48:41Z | AMCR | 0 | 74s | - | - | - | v5 (9ba6a3f) |   DONE: AMCR rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T12:49:55Z | AMWL | 0 | 61s | - | - | - | v5 (9ba6a3f) |   DONE: AMWL rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T12:50:56Z | ANET | 0 | 100s | - | - | - | v5 (9ba6a3f) |   DONE: ANET rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:18:12Z | APH | 0 | 154s | - | - | - | v5.1 (a38144c) |   DONE: APH rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:20:46Z | AVGO | 0 | 126s | - | - | - | v5.1 (a38144c) |   DONE: AVGO rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:22:52Z | AZN | 0 | 158s | - | - | - | v5.1 (a38144c) |   DONE: AZN rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:25:30Z | CHPT | 0 | 62s | - | - | - | v5.1 (a38144c) |   DONE: CHPT rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:26:32Z | CMG | 0 | 137s | - | - | - | v5.1 (a38144c) |   DONE: CMG rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:28:49Z | COO | 0 | 154s | - | - | - | v5.1 (a38144c) |   DONE: COO rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:31:23Z | CPRT | 0 | 161s | - | - | - | v5.1 (a38144c) |   DONE: CPRT rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:34:04Z | CTAS | 0 | 152s | - | - | - | v5.1 (a38144c) |   DONE: CTAS rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:36:37Z | DECK | 0 | 194s | - | - | - | v5.1 (a38144c) |   DONE: DECK rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:39:50Z | DXCM | 0 | 144s | - | - | - | v5.2 (daef642) |   DONE: DXCM rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:43:07Z | ETR | 0 | 158s | - | - | - | v5.2 (daef642) |   DONE: ETR rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:45:45Z | FAST | 0 | 150s | - | - | - | v5.2 (daef642) |   DONE: FAST rebased (split); snapshot kept at F:\hf_r2_snap |
 | 2026-09-05T13:48:15Z | FTNT | 0 | 127s | - | - | - | v5.2 (daef642) |   DONE: FTNT rebased (split); snapshot kept at F:\hf_r2_snap |
 | 2026-09-05T13:50:23Z | FUBO | 0 | 68s | - | - | - | v5.2 (daef642) |   DONE: FUBO rebased (split); snapshot kept at F:\hf_r2_snap |
 | 2026-09-05T13:51:31Z | GME | 0 | 152s | - | - | - | v5.2 (daef642) |   DONE: GME rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:54:03Z | GOOG | 0 | 105s | - | - | - | v5.2.1 (fc9d33a) |   DONE: GOOG rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:55:48Z | GOOGL | 0 | 160s | - | - | - | v5.2.1 (fc9d33a) |   DONE: GOOGL rebased (split); snapshot kept at F:\hf_r2_sna |
+| 2026-09-05T13:58:28Z | IBKR | 0 | 135s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IBKR rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T14:00:43Z | IGM | 0 | 103s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IGM rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:02:26Z | IGV | 0 | 116s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IGV rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:04:22Z | IHE | 0 | 88s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IHE rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:05:50Z | IHF | 0 | 95s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IHF rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:07:25Z | IJH | 0 | 139s | - | - | - | v5.2.1 (fc9d33a) |   DONE: IJH rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:09:44Z | IYG | 0 | 112s | 0.333333 | 602,483 | 0/0/0 | v5.2.1 (fc9d33a) |   DONE: IYG rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T14:11:36Z | IYH | 0 | 110s | 0.2 | 583,425 | 0/0/0 | v5.2.1 (fc9d33a) |   DONE: IYH rebased (split); snapshot kept at F:\hf_r2_snaps |
 
-18 rebased (exit 0 DONE), 15 of them verified bar for bar by verify_applied_seam.py at the time of this table; 0 other exit(s). Generated 2026-09-05T13:54:17Z from D:/temp/claude/seam_rebase_batch_pass1.log.
+28 rebased (exit 0 DONE), 2 of them verified bar for bar by verify_applied_seam.py at the time of this table; 0 other exit(s). Generated 2026-09-05T14:14:19Z from D:/temp/claude/seam_rebase_batch_pass1.log.
