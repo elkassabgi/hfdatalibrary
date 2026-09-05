@@ -295,7 +295,7 @@ def main() -> int:
     # No date (the 2026-07-13 "fix") is assumed to mean anything (R719): the rule is accepted only when
     # every recorded event inside the served range measured APPLIED in the served series.
     evs = [(i, float(v)) for i, v in spl.items()]
-    prefixes, prod = [], 1.0
+    prefixes, prod = [(0, 1.0)], 1.0          # k = 0: nothing missing before the seam (already rebased / repaired history-wide)
     for k, (i, v) in enumerate(evs, 1):
         prod *= v; prefixes.append((k, prod))
     match_k = next((k for k, pr in prefixes if abs(P_int / pr - 1) <= 0.002), None)
