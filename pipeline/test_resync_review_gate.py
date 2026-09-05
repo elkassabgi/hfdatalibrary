@@ -230,22 +230,24 @@ def test_an_innocent_comment_still_authorises(passed):
     assert passed(GOOD + "  # cleared; avoid rerunning during the daily window") is True
 
 
-def test_an_unparseable_revoke_mention_refuses_loudly(passed, capsys):
-    """We cannot tell which id it was meant for, so the safe reading of 'somebody tried to withdraw
-    this' is to stop - never to pass over it in silence."""
-    assert passed(GOOD + "\nREVOKE-APPLY resync_varibles.py oops") is False
-    assert "REVOKE-APPLY" in capsys.readouterr().out
+def test_a_revocation_misspelling_the_TOOL_escapes_the_warning(passed):
+    """A stated, deliberate limit rather than a hidden one (R763 #3). The mention check is narrowed to
+    lines that NAME THIS TOOL, so PASSED.md can document the syntax with a `<tool>.py` placeholder
+    without refusing every run. The cost is that a revocation which misspells the filename is not
+    warned about. A mistyped hash or id, far likelier, still is - see the test above."""
+    assert passed(GOOD + "\nREVOKE-APPLY resync_varibles.py oops") is True
 
 
 # ---------------------------------------------------------------- documentation is not a decision
 
-def test_a_fenced_example_neither_authorises_nor_refuses(passed):
+def test_a_fenced_approve_example_neither_authorises_nor_refuses(passed):
     """The fix for R760 #2 made the revoke matcher permissive, and the same commit documented the
     syntax IN PASSED.md - so the file's own examples made the tool refuse every run (measured
-    2026-09-05T20:51Z). Fenced blocks are documentation and are skipped entirely."""
-    doc = ("Some prose.\n```\nAPPROVE-APPLY resync_variables.py <sha12> <id>\n"
-           "REVOKE-APPLY resync_variables.py <sha12> <id>\n```\n" + GOOD)
-    assert passed(doc) is True, "a fenced example must not refuse a genuine approval"
+    2026-09-05T20:51Z). The APPROVE path skips fences, so its example is inert. The revoke example
+    cannot rely on that, because the revoke path reads fences too - it uses a placeholder tool name
+    instead, which is what `test_the_documentation_placeholder_is_inert` covers."""
+    doc = ("Some prose.\n```\nAPPROVE-APPLY resync_variables.py <sha12> <id>\n```\n" + GOOD)
+    assert passed(doc) is True, "a fenced approve example must not refuse a genuine approval"
 
 
 def test_a_fenced_real_token_does_not_authorise(passed):
@@ -257,34 +259,59 @@ def test_an_inline_code_token_does_not_authorise(passed):
     assert passed(f"`{GOOD}`") is False
 
 
-def test_inline_code_mentioning_revoke_does_not_refuse(passed):
-    """Prose like: a line that mentions `REVOKE-APPLY` but does not parse makes the tool refuse."""
-    assert passed(GOOD + "\nprose that mentions `REVOKE-APPLY` in passing") is True
+@pytest.mark.parametrize("wrap", [
+    "```\n{r}\n```",                       # a plain fence
+    "```python\n{r}\n```",                 # a fence with an info string
+    "~~~\n{r}\n~~~",                       # the tilde form
+    "````\n{r}\n````",                     # four backticks
+    "```\nunclosed fence, then:\n{r}",     # an unclosed fence
+    "```\na\n```\n```\nb\n```\n```\n{r}",  # an odd number of fence markers
+    "`{r}`",                               # inline code
+    "text before `x` then {r}",            # after an inline span on the same line
+])
+def test_a_revocation_is_never_hidden_by_quoting(passed, wrap):
+    """R763 #2, and it was MY regression. The first fence fix skipped fenced and inline-code regions
+    before ANY matching, which blinded the revoke path in eight shapes: a genuine revocation inside a
+    fence was silently ignored and the approval it withdrew still stood. Approval fails CLOSED and so
+    ignores quotation; revocation fails OPEN and so reads every line."""
+    assert passed(GOOD + "\n" + wrap.format(r=f"REVOKE-APPLY resync_variables.py {SHA} {ID}")) is False
 
 
-def test_a_real_revoke_outside_a_fence_still_wins(passed):
-    """Skipping fences must not become a way to hide a revocation from the gate."""
-    doc = ("```\nREVOKE-APPLY resync_variables.py <sha12> <id>\n```\n"
-           + GOOD + f"\n  REVOKE-APPLY resync_variables.py {SHA} {ID}")
-    assert passed(doc) is False
+def test_the_documentation_placeholder_is_inert(passed):
+    """The other side of the same coin: PASSED.md documents the syntax, and since the revoke scanner
+    reads fences too, the example must not name a real tool. It uses `<tool>.py`."""
+    doc = "```\nREVOKE-APPLY <tool>.py <sha12> <review id>\n```\n" + GOOD
+    assert passed(doc) is True
 
 
-def test_the_projects_own_passed_file_does_not_refuse():
-    """The live 74 KB PASSED.md must not, by documenting the syntax, refuse every run. It carries no
-    approval for this hash, so the answer is False - but it must be False for THAT reason."""
-    p = r"D:\research\hfdatalibrary\.claude\skills\adversarial-review\PASSED.md"
-    if not os.path.exists(p):
-        pytest.skip("PASSED.md not present in this checkout")
+def test_a_mistyped_revocation_naming_the_tool_still_refuses_loudly(passed, capsys):
+    assert passed(GOOD + "\nREVOKE-APPLY resync_variables.py nonsense") is False
+    assert "REVOKE-APPLY" in capsys.readouterr().out
+
+
+def test_the_projects_own_passed_file_does_not_refuse(tmp_path):
+    """The live PASSED.md must not, by documenting the syntax, refuse every run. Hermetic: R763 #5
+    noted the previous version hard-coded an absolute path to a gitignored file, so it skipped on
+    every other machine and in CI. This rebuilds that file's SHAPE from its own documented examples."""
+    p = tmp_path / "PASSED.md"
+    p.write_text(
+        "# Adversarial review - pass log\n\n"
+        "To authorise, write at column 0:\n\n"
+        "```\nAPPROVE-APPLY resync_variables.py <sha12> <review id>\n```\n\n"
+        "To withdraw one, write anywhere on a line:\n\n"
+        "```\nREVOKE-APPLY <tool>.py <sha12> <review id>\n```\n\n"
+        "| date | id | verdict |\n|---|---|---|\n| 2026-09-05 | AR-001 | PASS |\n",
+        encoding="utf-8")
     import io
     buf = io.StringIO()
     real, rv._say = rv._say, lambda s: buf.write(s + "\n")
     try:
-        assert rv.reviewed_ok(ID, p) is False
+        assert rv.reviewed_ok(ID, str(p)) is False
     finally:
         rv._say = real
-    assert "REVOKE" not in buf.getvalue().upper(), (
-        "PASSED.md's own documentation of the revoke syntax is making the gate refuse:\n" + buf.getvalue())
-    assert "carries no approval line" in buf.getvalue()
+    out = buf.getvalue()
+    assert "REVOKE" not in out.upper(), "the file's own documentation is making the gate refuse:\n" + out
+    assert "carries no approval line" in out, out
 
 
 def test_a_bom_does_not_hide_the_first_line(passed):
@@ -310,13 +337,70 @@ def test_no_child_code_survives_a_drift(rc):
 def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
     """A source pin over the CALL SITE, hardened after R760 #3 showed the old one passing on 5 of 6
     mutations - including `rc = 4` followed by `rc = raw_rc`, a total revert."""
+    import re as _re
     src = open(os.path.join(HERE, "seam_rebase_batch.py"), encoding="utf-8").read()
-    block = src.split("if drift:", 1)[1].split("hash_breach = hash_breach or", 1)[0]
+    # R763 #9: the block used to end at "hash_breach = hash_breach or", so a revert placed one line
+    # AFTER that terminator was outside the pin. Run to the next real statement instead.
+    block = src.split("if drift:", 1)[1].split("detail = os.path.join(", 1)[0]
     code = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith("#")]
-    assigns = [l for l in code if l.startswith("rc =") or l.startswith("rc=")]
-    assert assigns == ["rc = recode_on_drift(rc)"], (
-        f"the drift block must assign rc exactly once, through the shipped function; found {assigns}. "
-        "A second assignment is how a revert hides - the old pin accepted 'rc = 4' followed by "
-        "'rc = raw_rc'")
+    # any rebinding of rc, not just "rc =": tuple targets and augmented assignment both defeated it
+    binds = [l for l in code if _re.match(r"^rc\b\s*(,|=|\+=|-=|\*=|/=|//=|%=|:)", l)]
+    assert binds == ["rc = recode_on_drift(rc)"], (
+        f"between 'if drift:' and the detail-file write, rc must be rebound exactly once and through "
+        f"the shipped function; found {binds}. Defeats already seen: 'rc = 4' then 'rc = raw_rc', "
+        f"'rc, _ = raw_rc, 0', 'rc -= (rc - raw_rc)', and a revert placed after the block terminator")
     assert "snapshot_ok" not in " ".join(code), (
         "the recode must not branch on snapshot_ok - that scoping un-did R754 #5 once already")
+
+
+# ---------------------------------------------------------------- GUARDED vs the tool's own SIBLINGS
+
+OURS = "(" + ", ".join(repr(n[:-3]) for n in srb.GUARDED) + ")"
+
+
+def _write_tool(tmp_path, body):
+    p = tmp_path / "seam_rebase.py"
+    p.write_text("import os" + chr(10) + body + chr(10) * 2 + "def main():" + chr(10) + "    return 0" + chr(10),
+                 encoding="utf-8")
+    return str(p)
+
+
+def test_a_matching_siblings_tuple_passes(tmp_path):
+    srb._assert_guarded_matches_tool(_write_tool(tmp_path, "SIBLINGS = " + OURS))
+
+
+@pytest.mark.parametrize("body", [
+    "PLACEHOLDER = 1",                          # no SIBLINGS at all
+    "SIBLINGS = ('aggregate',)",                # a short tuple: modules nobody hashes
+    "SIBLINGS = tuple(sorted(['a', 'b']))",     # built by an expression, unreadable statically
+])
+def test_a_bad_siblings_declaration_refuses(tmp_path, body):
+    with pytest.raises(SystemExit):
+        srb._assert_guarded_matches_tool(_write_tool(tmp_path, body))
+
+
+def test_a_second_shrinking_assignment_refuses(tmp_path):
+    """R763 #6: the regex read only the FIRST assignment, so a later shrinking one passed while the
+    runtime bound the shrunk tuple - modules unguarded, the first declaration still looking right."""
+    with pytest.raises(SystemExit):
+        srb._assert_guarded_matches_tool(
+            _write_tool(tmp_path, "SIBLINGS = " + OURS + chr(10) + "SIBLINGS = ('aggregate',)"))
+
+
+def test_an_annotated_declaration_is_accepted(tmp_path):
+    """The other direction of R763 #6: the regex REFUSED correct code. A guard that refuses correct
+    behaviour is a guard the next author deletes."""
+    srb._assert_guarded_matches_tool(_write_tool(tmp_path, "SIBLINGS: tuple = " + OURS))
+
+
+def test_a_comment_inside_the_tuple_is_accepted(tmp_path):
+    body = "SIBLINGS = (" + chr(10) + "".join(
+        "    " + repr(n[:-3]) + ",   # guarded" + chr(10) for n in srb.GUARDED) + ")"
+    srb._assert_guarded_matches_tool(_write_tool(tmp_path, body))
+
+
+def test_an_unparseable_tool_refuses(tmp_path):
+    p = tmp_path / "seam_rebase.py"
+    p.write_text("SIBLINGS = (", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        srb._assert_guarded_matches_tool(str(p))

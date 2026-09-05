@@ -56,8 +56,10 @@ STOP_TEXT = {
     4: ("STOPPING - SERVED STATE UNKNOWN or INCONSISTENT. One of: the last ticker was written AND its automatic restore "
         "failed; the tool found a partial earlier write; or a HASH/SIBLING BREACH means unidentified code ran to completion, "
         "so nothing it printed about writing - including 'nothing to rebase' and a missing snapshot line - can be believed. "
-        "Check the snapshot directory first: if it holds objects, run the printed --restore command; if it is absent or "
-        "empty, compare the ticker's served objects against the store yourself before assuming no write happened. " + RELEASE),
+        "Check the snapshot directory first: if it holds objects, run the printed --restore command and then release with "
+        "RELEASE below. IF IT IS ABSENT OR EMPTY there is nothing to restore from, so RELEASE's wording does not apply: "
+        "compare the ticker's served objects against the store yourself, and append code 0 only if you established that "
+        "served state is correct, not that a restore succeeded (R763 #8). " + RELEASE),
 }
 
 
@@ -90,10 +92,7 @@ def _source_sha256s(names=GUARDED) -> dict:
     return out
 
 
-SIBLINGS_DECL_RE = re.compile(r"^SIBLINGS\s*=\s*\(([^)]*)\)", re.M)
-
-
-def _assert_guarded_matches_tool() -> None:
+def _assert_guarded_matches_tool(path: str | None = None) -> None:
     """The driver's GUARDED and seam_rebase.py's SIBLINGS are separate literals in separate files.
     Three reviews recorded that nothing compared them (R757, R760 lesser): drop a name from GUARDED and
     the driver stops hashing a module the child still imports, silently, with no test failing. Both
@@ -101,17 +100,40 @@ def _assert_guarded_matches_tool() -> None:
 
     Refuses rather than warns: a guard that notices a mismatch and continues is the R503 shape.
     """
-    path = os.path.join(HERE, "seam_rebase.py")
+    path = path or os.path.join(HERE, "seam_rebase.py")   # a path only so the check is testable
     try:
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
     except OSError as ex:
         raise SystemExit(f"source guard: cannot read {path} to cross-check SIBLINGS ({type(ex).__name__}: {ex})")
-    m = SIBLINGS_DECL_RE.search(src)
-    if not m:
+    # PARSED, not regexed (R763 #6). The regex read `^SIBLINGS\s*=\s*\(([^)]*)\)`, which took only the
+    # FIRST assignment - so a second, shrinking `SIBLINGS = (...)` later in the file passed while the
+    # runtime bound the shrunk tuple - and refused wrongly on an annotated form or a comment inside
+    # the tuple. ast sees all of them and sees them the way Python does.
+    import ast
+    try:
+        tree = ast.parse(src, filename=path)
+    except SyntaxError as ex:
+        raise SystemExit(f"source guard: cannot parse {path} to cross-check SIBLINGS ({ex}) - refusing")
+    found = []
+    for node in tree.body:                                   # module level only; that is where it binds
+        tgts = ([node.target] if isinstance(node, ast.AnnAssign) else
+                list(node.targets) if isinstance(node, ast.Assign) else [])
+        if any(isinstance(t, ast.Name) and t.id == "SIBLINGS" for t in tgts):
+            found.append(node.value)
+    if not found:
         raise SystemExit(f"source guard: {path} declares no SIBLINGS tuple, so the driver cannot confirm "
                          f"it guards the same modules the child imports - refusing to run")
-    theirs = tuple(p.strip().strip("\"'") for p in m.group(1).split(",") if p.strip())
+    if len(found) > 1:
+        raise SystemExit(f"source guard: {path} assigns SIBLINGS {len(found)} times. The last one wins at "
+                         f"runtime, so a later shrinking assignment would leave modules unguarded while "
+                         f"the first still looked right - refusing to run")
+    value = found[0]
+    if not isinstance(value, (ast.Tuple, ast.List)) or not all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts):
+        raise SystemExit(f"source guard: {path}'s SIBLINGS is not a literal tuple of strings, so the "
+                         f"driver cannot read what the child guards - refusing to run")
+    theirs = tuple(e.value for e in value.elts)
     ours = tuple(n[:-3] for n in GUARDED)
     if theirs != ours:
         raise SystemExit(f"source guard: the guarded set and the tool's SIBLINGS disagree - driver "
@@ -181,17 +203,31 @@ def _sibling_drift(out: str, shas: dict) -> str | None:
                     + ("; every module says not-imported, so nothing is verified" if not real else ""))
     # R755 #5: compare EVERY reading, not just the first and last. The blind spot had moved from
     # "last only" to "first and last only", so three lines with a drifted middle read as clean.
+    # `not-imported` IS NOT A WILDCARD, AND IT IS DIRECTIONAL (R763 #1). This loop used to skip any
+    # pair where either side said `not-imported`, and `child.update()` then let the trailer win, so a
+    # child could print a DRIFTED hash in its header and `not-imported` in its trailer and the drift
+    # was thrown away - logged 0, ticker recorded done, skipped forever. That is R760 #1's defeat
+    # moved from one line to two. An import only ever goes not-imported -> hash; hash -> not-imported
+    # is a module UN-importing itself mid-run, which cannot happen, so it is a contradiction and a
+    # breach. Only the legal direction is tolerated.
     disagree = []
     for i in range(len(readings) - 1):
         a, b = readings[i], readings[i + 1]
-        disagree += [f"{k} reading{i} {a[k]} vs reading{i+1} {b[k]}"
-                     for k in set(a) & set(b)
-                     if a[k] != b[k] and "not-imported" not in (a[k], b[k])]
+        for k in set(a) & set(b):
+            if a[k] == b[k]:
+                continue
+            if a[k] == "not-imported":
+                continue                                         # legal: a lazy import bound later
+            disagree.append(f"{k} reading{i} {a[k]} vs reading{i+1} {b[k]}")
     if disagree:
         return "the child's own sibling readings disagree: " + "; ".join(disagree)
+    # Build the merged view so a REAL HASH always beats `not-imported`, whichever reading carried it.
+    # `child.update()` gave the last reading the final say, which is how the trailer erased the header.
     child = {}
-    for r in readings:                                           # later readings win for lazy imports
-        child.update(r)
+    for r in readings:
+        for k, v in r.items():
+            if child.get(k) in (None, "not-imported") or v != "not-imported":
+                child[k] = v
     drift = []
     for name, short in child.items():
         parent = shas.get(f"{name}.py")
@@ -307,7 +343,11 @@ def main() -> int:
         # followed, and RELEASE told them to append code 0 "if the restore succeeded". Branch on
         # whether the directory is actually there, the same way STOP_TEXT[4] now does.
         snap_dir = os.path.join(a.snapshot_root, last_line[1]) if a.snapshot_root else None
-        have_snap = bool(snap_dir and os.path.isdir(snap_dir) and os.listdir(snap_dir))
+        try:
+            have_snap = bool(snap_dir and os.path.isdir(snap_dir) and os.listdir(snap_dir))
+        except OSError as ex:                                # R763 #7: an unreadable dir killed main()
+            have_snap = False                                # with a traceback and no refusal message
+            print(f"  (could not read {snap_dir}: {type(ex).__name__}: {ex} - treating it as absent)")
         if have_snap:
             how = (f"its served state is UNKNOWN until `python seam_rebase.py {last_line[1]} --restore "
                    f"{snap_dir}` has run (that is the restore for BOTH tools; resync_variables.py has "
@@ -325,6 +365,9 @@ def main() -> int:
         print(f"REFUSING TO START: the log's last line is an exit 4 for {last_line[1]} ({last_line[0]}){who} - {how} "
               f"Both tools write the same objects, so this blocks {a.tool} too.")
         return 1
+    # BEFORE the dry-run return (R763 #6). Sitting after it meant the one command an operator runs to
+    # check the setup was the one command that never checked the guarded set.
+    _assert_guarded_matches_tool()
     todo = [t for t in cands if t not in done]
     print(f"candidates {len(cands)}; already exit-0 in log {len(done & set(cands))}; to do {len(todo)}; mode {a.mode}; apply {a.apply}")
     if not a.apply:
@@ -333,7 +376,6 @@ def main() -> int:
     # THE SOURCE GUARD (R743, after R742): the tool file is hashed at start and re-hashed before every
     # child; a batch never runs bytes that were not there when it started. An edit under the batch
     # stops it - the edit waits, or the batch is restarted deliberately on the new file.
-    _assert_guarded_matches_tool()
     guarded = tuple(dict.fromkeys((a.tool,) + GUARDED))     # the launched tool first, then the live imports
     shas = _source_sha256s(guarded); tool_sha = shas[a.tool]
     print(f"tool {a.tool} source sha256 {tool_sha} at start; guarded modules: " + ", ".join(f"{k} {v[:12]}" for k, v in shas.items())

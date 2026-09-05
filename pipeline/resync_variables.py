@@ -161,11 +161,20 @@ APPROVE_RE_FMT = r"^APPROVE-APPLY resync_variables\.py {sha} (\S+)[ \t]*(?:#(.*)
 # or one with a double space, was silently ignored and the approval it meant to withdraw still stood,
 # with no diagnostic. A revocation is now honoured ANYWHERE on a line, at any indentation, with any
 # run of whitespace between its fields and any text around it.
-REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+(\S+)"
+# The id is captured as an ID SHAPE or `*`, not as `\S+`. With `\S+` a revocation written inside
+# inline code captured the trailing backtick into the id (`AR-038\`` != `AR-038`) and so was ignored -
+# the exact hiding-by-quoting this pattern exists to prevent (R763 #2).
+REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z]{{1,6}}-\d{{1,4}}|\*)"
 # ...and a line that MENTIONS a revocation we could not parse refuses outright rather than passing in
 # silence: we cannot tell who it was for, and the safe reading of "someone tried to withdraw this" is
 # to stop.
-REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
+# Narrowed to lines that name THIS TOOL (R763 #3). A bare "REVOKE-APPLY" also appears in PASSED.md's
+# own documentation of the syntax, and my first attempt to keep that from refusing every run was to
+# blind the parser inside fences - which re-opened the revoke path in eight shapes. The documentation
+# is written with a `<tool>.py` placeholder instead, so it does not name this tool and does not match.
+# The trade is stated rather than hidden: a revocation that MISSPELLS THE TOOL FILENAME escapes this
+# warning. A mistyped hash or id, which is far likelier, still trips it.
+REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY\s+resync_variables\.py", _re.I)
 # PASSED.md is a MARKDOWN file that now documents this very syntax, so the tokens appear in it as
 # EXAMPLES. Fenced blocks and inline-code spans are therefore stripped before anything is matched.
 # This is structural, not another inference: an example lives in a fence or in backticks, a decision
@@ -214,14 +223,17 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
             in_fence = False
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
-                if FENCE_RE.match(ln):
+                fence_marker = bool(FENCE_RE.match(ln))
+                if fence_marker:
                     in_fence = not in_fence
-                    continue
-                if in_fence:
-                    continue
-                # inline code is quotation, not decision; blanking it preserves column positions for
-                # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
-                ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), ln)
+
+                # THE TWO PATHS SKIP DIFFERENT THINGS, AND THAT ASYMMETRY IS THE WHOLE POINT (R763 #2).
+                # My first fence fix skipped fenced and inline-code regions before ANY matching, which
+                # blinded the REVOKE path too: a genuine revocation inside a fence, after an unclosed
+                # fence, or in backticks was silently ignored and the approval it withdrew still
+                # stood - eight new shapes, worse than the defect it fixed. Approval must fail CLOSED,
+                # so it ignores quoted text. Revocation must fail OPEN, so it reads EVERY line, fenced
+                # or not, exactly as PASSED.md promises.
                 r = revoke.search(ln)
                 if r:
                     if r.group(1) in (rid, "*"):
@@ -230,6 +242,13 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                         return False
                 elif REVOKE_MENTION_RE.search(ln):
                     unparsed_revokes.append((n, ln.strip()[:90]))
+
+                # ...and only now, for the APPROVE path, drop quotation.
+                if in_fence or fence_marker:
+                    continue
+                # inline code is quotation, not decision; blanking it preserves column positions for
+                # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
+                ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), ln)
                 m = want.match(ln)
                 if m and m.group(1) == rid:
                     comment = (m.group(2) or "")
