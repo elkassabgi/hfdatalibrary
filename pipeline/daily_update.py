@@ -234,12 +234,12 @@ def parse_day(d: date, universe: Set[str]) -> pd.DataFrame:
             print(f"[parse_day] {d}: remapped IEX spellings -> dataset tickers: "
                   f"{', '.join(f'{k}={v:,}' for k, v in sorted(remapped.items()))}", flush=True)
         if dropped_out_of_bounds:
-            print(f"[parse_day] {d}: dropped (mapping outside its date bounds): "
+            print(f"[parse_day] {d}: dropped (an IEX symbol outside its map bounds, or reassigned to another company - symbol_map.REASSIGNED): "
                   f"{', '.join(f'{k}={v:,}' for k, v in sorted(dropped_out_of_bounds.items()))}", flush=True)
 
     finally:
         # Cleanup temp files
-        for f in [pcap_path, csv_path]:
+        for f in [pcap_path, csv_path, os.path.join(tmp_dir, "tickers_iex.json")]:
             try:
                 os.remove(f)
             except OSError:

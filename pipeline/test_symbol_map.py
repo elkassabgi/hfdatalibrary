@@ -38,6 +38,15 @@ def test_rename_is_date_bounded():
     assert sm.dataset_ticker("FI", D(2022, 1, 3), U) is None
 
 
+def test_reassigned_symbol_is_dropped_in_its_new_owner_era():
+    """GOLD: Barrick until 2025-05-08 (prints as GOLD), Barrick as B from 2025-05-09 (mapped B->GOLD),
+    Gold.com prints as GOLD from 2025-12-02 (must be dropped, never merged into Barrick's series)."""
+    assert sm.dataset_ticker("GOLD", D(2025, 4, 1), U) == "GOLD"       # Barrick still printed GOLD
+    assert sm.dataset_ticker("B", D(2025, 12, 2), U) == "GOLD"         # Barrick's prints
+    assert sm.dataset_ticker("GOLD", D(2025, 12, 2), U) is None        # Gold.com's prints: dropped
+    assert sm.dataset_ticker("GOLD", D(2026, 9, 4), U) is None
+
+
 def test_plain_tickers_pass_through_and_strangers_drop():
     assert sm.dataset_ticker("AAPL", D(2026, 9, 4), U) == "AAPL"
     assert sm.dataset_ticker("ZZZZ", D(2026, 9, 4), U) is None

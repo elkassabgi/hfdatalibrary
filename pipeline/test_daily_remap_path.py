@@ -20,7 +20,8 @@ from build_bars import build_bars              # noqa: E402
 import daily_update                            # noqa: E402
 
 UNIVERSE = {"BRK-B", "BF-B", "PRN-", "GOLD", "AAPL"}
-# 2026-09-04 09:30:00 ET in ns (any consistent minute works for grouping)
+# A 09:30 ET minute in ns (2026-09-05 09:30 ET, a Saturday - build_bars checks time of day only;
+# the DAY the remap is evaluated on is passed separately as `d` below)
 T0 = 1788_615_000_000_000_000
 ROWS = [
     ("BRK.B", T0 + 1_000, "475.17", "4", "1"),
@@ -30,6 +31,7 @@ ROWS = [
     ("B",     T0 + 5_000, "20.00", "100", "5"),   # Barrick-as-B era on 2026-09-04 -> GOLD
     ("AAPL",  T0 + 6_000, "230.00", "10", "6"),
     ("BRK-B", T0 + 7_000, "475.30", "1", "7"),    # a dash print (never happens at IEX; must still pass)
+    ("GOLD",  T0 + 8_000, "41.45", "50", "8"),    # Gold.com, Inc. (owner of "GOLD" since 2025-12-02) -> DROPPED
 ]
 
 
@@ -53,8 +55,9 @@ def test_remap_path_groups_under_dataset_tickers():
     assert n == 7, n
     assert set(by_symbol) == {"BRK-B", "BF-B", "PRN-", "GOLD", "AAPL"}, set(by_symbol)
     assert len(by_symbol["BRK-B"]) == 3
+    assert len(by_symbol["GOLD"]) == 1                      # Barrick's B print only
     assert remapped == {"BRK-B": 2, "BF-B": 1, "PRN-": 1, "GOLD": 1}, remapped
-    assert dropped == {}, dropped
+    assert dropped == {"GOLD": 1}, dropped                  # Gold.com's print, counted and dropped
     bars = {}
     for symbol, trades in by_symbol.items():
         bars[symbol] = build_bars(trades).get(symbol, [])
@@ -71,9 +74,9 @@ def test_out_of_bounds_symbol_is_counted_not_kept():
             parse_trades_csv(path, universe=ext), dt.date(2024, 6, 3), UNIVERSE)
     finally:
         os.remove(path)
-    assert "GOLD" not in by_symbol
+    assert "GOLD" in by_symbol and len(by_symbol["GOLD"]) == 1   # on 2024-06-03 "GOLD" IS Barrick's own print
     assert dropped == {"B": 1}, dropped
-    assert n == 6
+    assert n == 7
 
 
 def test_negative_control_old_exact_filter_loses_the_class_shares():
@@ -82,7 +85,9 @@ def test_negative_control_old_exact_filter_loses_the_class_shares():
         kept = [t.symbol for t in parse_trades_csv(path, universe=UNIVERSE)]   # the OLD call shape
     finally:
         os.remove(path)
-    assert kept == ["AAPL", "BRK-B"], kept          # BRK.B / BF.B / PRN / B all gone
+    # BRK.B / BF.B / PRN / B all gone - and Gold.com's "GOLD" print KEPT, straight into Barrick's
+    # series: the two defects the map fixes, in one line.
+    assert kept == ["AAPL", "BRK-B", "GOLD"], kept
 
 
 if __name__ == "__main__":

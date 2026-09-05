@@ -1,15 +1,25 @@
 """symbol_map.py — the ONE place where an IEX print symbol becomes a dataset ticker.
 
 WHY THIS FILE EXISTS. The dataset spells class shares with a dash (BRK-B, BF-B) and keeps a
-company's series under its ORIGINAL ticker through a rename (the served GOLD series continues
-at Barrick prices straight through the GOLD->B rename; FISV through FISV->FI). IEX prints
-BRK.B, BF.B, and the NEW symbol after a rename. `pipeline/pcap_extract` and
+company's series under its ORIGINAL ticker through a rename (GOLD follows Barrick, FISV follows
+Fiserv). IEX prints BRK.B, BF.B, and the NEW symbol after a rename. `pipeline/pcap_extract` and
 `tops_parser.parse_trades_csv` filter by EXACT symbol against data/tickers.json, so every one
 of those prints was dropped on the daily path. The 2022-03-07..2026-03-27 window only has them
 because the backfill re-scanned all 1,019 window pcaps with a second, remapped universe
 (hist_backfill_classshares.py, whose REMAP this file now owns). The daily path never got that
 pass: measured 2026-09-05, the served BRK-B, BF-B and PRN- series end on 2026-03-27, the last
 window day, while IEX printed 3,087 / 5,636 / 17 trades for them on that very day.
+
+THE OTHER HALF OF THE SAME DEFECT (R727). An exact-symbol filter also keeps a symbol's prints
+after the symbol passes to ANOTHER company. The served GOLD series is Barrick's through
+2025-12-01 (the backfill's B->GOLD recovery worked) and Gold.com, Inc.'s from 2025-12-02, the
+day Gold.com took the NYSE symbol (raw prints: 2025-12-01 B 12,075 last 42.34 = the served bar
+exactly; 2025-12-02 GOLD 321 @ 28.91-30.09 = the served bar exactly): 191 contaminated sessions
+to 2026-09-04, in raw and clean. The backfill's own docstring said the GOLD series "continues at
+Barrick prices straight through the GOLD->B rename" - measured only at the 2025-05 boundary,
+where it was true. REASSIGNED below drops such prints; the served objects need a separate repair.
+The same census found the pattern on STI (Solidion Technology's prints under SunTrust's symbol
+since 2022), IPW, SKK, VRM (the post-bankruptcy equity), USLV and PARA - see the handoff.
 
 USE. Two calls, both pure:
   extractor_universe(universe) -> the symbol set to hand the Go extractor (dataset tickers PLUS
@@ -38,7 +48,20 @@ REMAP: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {
     "PRN":   ("PRN-",  None, None),           # Invesco DWA Industrials ETF — the dataset ticker
                                               # carries a trailing dash; IEX prints plain PRN
     "B":     ("GOLD",  "2025-05-01", None),   # Barrick traded as GOLD until 2025-05-08, as B after
-    "FI":    ("FISV",  "2023-06-01", None),   # Fiserv traded as FISV until mid-2023, as FI after
+    "FI":    ("FISV",  "2023-06-01", "2025-11-10"),   # Fiserv traded as FI on the NYSE 2023-06-07..2025-11-10,
+                                                      # then moved back to Nasdaq as FISV (raw prints: FI 3,895 on
+                                                      # 11-10 -> 0; FISV 0 -> 1,950 on 11-11). Closed so the next
+                                                      # issuer to take "FI" is not fed to Fiserv's series.
+}
+
+
+# IEX symbols that were REASSIGNED to a different company while the dataset ticker keeps following
+# the original one. Prints of the symbol inside the window are another security and are dropped
+# (counted, never merged). Measured 2026-09-05: NYSE "GOLD" passed from Barrick (now B) to Gold.com,
+# Inc. on 2025-12-02 - our served GOLD daily closes equal Barrick through 2025-12-01 and Gold.com
+# from 2025-12-02 (42.34 -> 29.82 overnight while B printed 41.03), 190 contaminated sessions.
+REASSIGNED: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    "GOLD": ("2025-12-02", None),
 }
 
 
@@ -68,4 +91,7 @@ def dataset_ticker(symbol: str, day: dt.date, universe: Set[str]) -> Optional[st
         ticker, lo, hi = m
         if ticker in universe and _in_bounds(day, lo, hi):
             return ticker
+    r = REASSIGNED.get(symbol)
+    if r is not None and _in_bounds(day, r[0], r[1]):
+        return None            # the symbol now belongs to another company; the series does not
     return symbol if symbol in universe else None
