@@ -237,6 +237,56 @@ def test_an_unparseable_revoke_mention_refuses_loudly(passed, capsys):
     assert "REVOKE-APPLY" in capsys.readouterr().out
 
 
+# ---------------------------------------------------------------- documentation is not a decision
+
+def test_a_fenced_example_neither_authorises_nor_refuses(passed):
+    """The fix for R760 #2 made the revoke matcher permissive, and the same commit documented the
+    syntax IN PASSED.md - so the file's own examples made the tool refuse every run (measured
+    2026-09-05T20:51Z). Fenced blocks are documentation and are skipped entirely."""
+    doc = ("Some prose.\n```\nAPPROVE-APPLY resync_variables.py <sha12> <id>\n"
+           "REVOKE-APPLY resync_variables.py <sha12> <id>\n```\n" + GOOD)
+    assert passed(doc) is True, "a fenced example must not refuse a genuine approval"
+
+
+def test_a_fenced_real_token_does_not_authorise(passed):
+    """The other half, and the last of R757 #3's class: a column-0 token INSIDE a fence is a quotation."""
+    assert passed("```\n" + GOOD + "\n```") is False
+
+
+def test_an_inline_code_token_does_not_authorise(passed):
+    assert passed(f"`{GOOD}`") is False
+
+
+def test_inline_code_mentioning_revoke_does_not_refuse(passed):
+    """Prose like: a line that mentions `REVOKE-APPLY` but does not parse makes the tool refuse."""
+    assert passed(GOOD + "\nprose that mentions `REVOKE-APPLY` in passing") is True
+
+
+def test_a_real_revoke_outside_a_fence_still_wins(passed):
+    """Skipping fences must not become a way to hide a revocation from the gate."""
+    doc = ("```\nREVOKE-APPLY resync_variables.py <sha12> <id>\n```\n"
+           + GOOD + f"\n  REVOKE-APPLY resync_variables.py {SHA} {ID}")
+    assert passed(doc) is False
+
+
+def test_the_projects_own_passed_file_does_not_refuse():
+    """The live 74 KB PASSED.md must not, by documenting the syntax, refuse every run. It carries no
+    approval for this hash, so the answer is False - but it must be False for THAT reason."""
+    p = r"D:\research\hfdatalibrary\.claude\skills\adversarial-review\PASSED.md"
+    if not os.path.exists(p):
+        pytest.skip("PASSED.md not present in this checkout")
+    import io
+    buf = io.StringIO()
+    real, rv._say = rv._say, lambda s: buf.write(s + "\n")
+    try:
+        assert rv.reviewed_ok(ID, p) is False
+    finally:
+        rv._say = real
+    assert "REVOKE" not in buf.getvalue().upper(), (
+        "PASSED.md's own documentation of the revoke syntax is making the gate refuse:\n" + buf.getvalue())
+    assert "carries no approval line" in buf.getvalue()
+
+
 def test_a_bom_does_not_hide_the_first_line(passed):
     """A UTF-8 BOM made line 1 unmatchable; harmless for an approval, but it would also swallow a
     revocation written there."""

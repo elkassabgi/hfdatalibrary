@@ -166,6 +166,14 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+(\S+)"
 # silence: we cannot tell who it was for, and the safe reading of "someone tried to withdraw this" is
 # to stop.
 REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
+# PASSED.md is a MARKDOWN file that now documents this very syntax, so the tokens appear in it as
+# EXAMPLES. Fenced blocks and inline-code spans are therefore stripped before anything is matched.
+# This is structural, not another inference: an example lives in a fence or in backticks, a decision
+# is written as live text. It also closes the last of R757 #3's class - a column-0 token inside a
+# fenced block used to authorise - and it is what stops the documentation added for R760 #3 from
+# making this tool refuse every run, which it did (measured 2026-09-05T20:51Z, before this fix).
+FENCE_RE = _re.compile(r"^\s*(```|~~~)")
+INLINE_CODE_RE = _re.compile(r"`[^`]*`")
 REVOKING_COMMENT_RE = _re.compile(
     r"(\brevok\w*|\bsupersed\w*|\bwithdraw\w*|\brescind\w*|\bcancel\w*|\bvoid\b|\bobsolete\b"
     r"|\bexpired\b|\binvalid\b|\bnot\s+valid\b|\bno\s+longer\b|\bdo\s+not\s+use\b|\bdon'?t\s+use\b)",
@@ -203,8 +211,17 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
         # utf-8-sig, because a BOM makes the FIRST line unmatchable and a first-line approval would
         # then be silently ignored - harmless for an approval, but it would also swallow a revocation.
         with open(passed_file, encoding="utf-8-sig", errors="replace") as fh:
+            in_fence = False
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
+                if FENCE_RE.match(ln):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
+                # inline code is quotation, not decision; blanking it preserves column positions for
+                # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
+                ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), ln)
                 r = revoke.search(ln)
                 if r:
                     if r.group(1) in (rid, "*"):
