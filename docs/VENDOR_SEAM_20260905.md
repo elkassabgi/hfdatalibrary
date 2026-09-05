@@ -39,7 +39,8 @@ to explain it and to be measured as applied in the served series, refuse any tic
 half still carries an unapplied split, rescale raw **and** the served clean in place (the clean set
 is not rescale-invariant; a re-clean would change bar membership), verify three ways from the
 served side, keep a content-checked snapshot of all 22 objects. AMZN was rebased on 2026-09-05
-01:54–01:57 and verified at bar level by an independent reviewer (1,871,960 pre-seam bars exactly
+06:54–06:57Z (the snapshot manifest's measured mtime is 06:54:47Z; an earlier draft wrote the
+local-clock 01:54, UTC−5) and verified at bar level by an independent reviewer (1,871,960 pre-seam bars exactly
 old × 0.05, 438,045 post-seam bars byte-identical). The rest of the split-component population runs
 after the daily update of 2026-09-05; the dividend component waits for a decision on the
 library's price convention (keep "dividend-adjusted", which requires rewriting every payer's
