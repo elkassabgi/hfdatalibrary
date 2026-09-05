@@ -270,13 +270,15 @@ def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = 
     date, and the recorded ratio is exact where the observed one is noisy (BYND observed x31.86,
     recorded 1:30).
 
-    Returns the recorded price ratio (new/old: 20:1 forward -> 0.05, 1:30 reverse -> 30.0) when a
-    recorded event within +-5 calendar days of `day` matches `r_obs` (or the open-period ratio
-    `r_open`) within 20 %; else None. 20 %, not 10 %: a 3x leveraged ETF moves ~10 % intraday on its
-    split day (SOXS 2026-07-15 observed x11.05 for a recorded 1:10), and with a recorded event on
-    the day the check only has to separate 2:1 from 3:1 or 10 from 25, which are 50-150 % apart.
-    The dependency is optional and this runs on the ALERT path only (a handful of calls a month);
-    any failure returns None and the alert stands exactly as before.
+    Returns (status, ratio): ("match", recorded price ratio new/old — 20:1 forward -> 0.05, 1:30
+    reverse -> 30.0) when a split-shaped recorded event within +-1 business day of `day` matches
+    `r_obs` (or the open-period ratio `r_open`) within 20 %; ("no_match", None) when the lookup
+    worked and nothing matched; ("lookup_failed", None) when the lookup itself failed. 20 %, not
+    10 %: a 3x leveraged ETF moves ~10 % intraday on its split day (SOXS 2026-07-15 observed x11.05
+    for a recorded 1:10), and with a recorded event on the day the check only has to separate 2:1
+    from 3:1 or 10 from 25, which are 50-150 % apart. The dependency is optional and this runs on
+    the ALERT path only (a handful of calls a month); a failure leaves the alert standing and says
+    the lookup failed rather than claiming nothing matched.
     """
     try:
         import yfinance as yf
@@ -313,10 +315,13 @@ def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = 
         return "lookup_failed", None
 
 
-# 3:2, 5:2, 7:2 — fractional ratios that occur as real splits AND whose price move leaves the detector's
-# no-fire band (1/1.4 .. 1.4). 5:4 and 4:3 are excluded on purpose: their moves (0.8, 0.75) never fire the
-# detector, so they could only ever confirm a spin-off factor by accident (GE 2024-04-02 GEV factor 1.253).
-_FRACTIONAL_SPLITS = (1.5, 2.5, 3.5)
+# 3:2 and 5:2 — the fractional ratios that occur as real splits in the served universe (ODFL, PCAR, RJF,
+# ROL, WRB ... are 3:2) AND whose price move leaves the detector's no-fire band (1/1.4 .. 1.4). 5:4 and
+# 4:3 are excluded on purpose: their moves (0.8, 0.75) never fire the detector, so they could only ever
+# confirm a spin-off factor by accident (GE 2024-04-02 GEV 1.253; AA 2016 1.2484; HPE 2017 1.3348).
+# 7:2 is excluded because no genuine 7:2 exists in the universe since 2015 and MTCH's 2020 reorganisation
+# factor 3.502 would match it (reviewer's universe scan, 2026-09-05).
+_FRACTIONAL_SPLITS = (1.5, 2.5)
 
 
 def _split_shaped(shares: float) -> bool:
@@ -478,6 +483,10 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
             existing_raw["datetime"] = existing_raw["datetime"].dt.tz_localize(None)
         # 1b. overnight corporate action? rescale the served history to today's basis
         existing_raw, ca_rescaled = _detect_and_apply_split(existing_raw, new_bars, ticker, stats, dry_run=dry_run)
+        if ca_rescaled and not dry_run:
+            # APPLYING before any upload: if the upload pool raises, R2 may be partially rescaled and the
+            # only other trace would be "TICKER FAILED" - this line names the ticker, day and ratio first
+            _record_ca_event("APPLYING", ticker, stats.get("ca_day", ""), stats["ca_applied"])
         merged_raw = pd.concat([existing_raw, new_bars], ignore_index=True)
     else:
         merged_raw = new_bars
@@ -936,9 +945,11 @@ def main():
         for cd, kind, msg in ca_all:
             color = "#b45309" if kind == "ALERT" else "#166534"
             body += f"<li><strong style='color:{color}'>{kind}</strong> [{cd}] {msg}</li>"
-        body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1, "
-                 "stable all day). ALERT = needs review; a confirmed split below the "
-                 "auto floor is applied with <code>pipeline/manual_split.py</code>.</p>")
+        body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1 stable all day, "
+                 "or a split-sized move confirmed by a recorded split event on the day and applied with "
+                 "the recorded ratio). ALERT = no recorded event matched, or the lookup failed — needs "
+                 "review; a confirmed split is applied with <code>pipeline/manual_split.py</code>. "
+                 "Every event is also appended to <code>data/ca_alerts.jsonl</code>.</p>")
     if nodata:
         body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
     if deferred:
