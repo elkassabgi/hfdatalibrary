@@ -28,7 +28,14 @@ def main() -> int:
     import os, sys as _sys
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from symbol_map import REASSIGNED
-    d = pd.read_csv(SRC); d = d[d.n_unapplied > 0]
+    d = pd.read_csv(SRC)
+    # a scan that ERRORED on a ticker knows nothing about it - it must not silently leave the list.
+    # (The scanner used to leave n_unapplied at 0 on an exception, so GSK and J read as clean.)
+    errored = d[d.n_unapplied.astype(str).str.upper().eq("ERROR") | d.note.astype(str).str.startswith("ERROR")]
+    if len(errored):
+        print(f"!! THE SCAN FAILED ON {len(errored)} TICKER(S) AND KNOWS NOTHING ABOUT THEM - they are NOT cleared: "
+              + ", ".join(f"{r.ticker} ({str(r.note)[:60]})" for r in errored.itertuples()) + "\n")
+    d = d[pd.to_numeric(d.n_unapplied, errors="coerce").fillna(0) > 0]
     # R732, the class fix: an event recorded by Yahoo under a REASSIGNED symbol is the new owner's
     # (iPower's x8/x9 were applied to a 2008-2017 instrument served as IPW this way). Never listed.
     dropped = sorted(set(d.ticker) & set(REASSIGNED))

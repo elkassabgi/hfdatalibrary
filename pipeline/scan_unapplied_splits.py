@@ -43,12 +43,21 @@ def main() -> int:
             y = h["Close"]
             rec["events"] = ";".join(f"{i2.date()}:{v:g}" for i2, v in spl.items())
             una = unapplied_splits(dd["Close"], y, spl)
-            rec["unapplied"] = ";".join(f"{ev}:{s:g}(rel {rel:.3f})" for ev, s, rel in una); rec["n_unapplied"] = len(una)
+            # event_steps appends a FOURTH element when the observed step is seen at a different date than
+            # the event (seam_rebase.py:292) - i.e. exactly the non-standard cases. Unpacking three
+            # crashed on them, and the except-branch below then left n_unapplied at its initialised 0,
+            # so the most interesting tickers were recorded as having nothing unapplied (GSK and J).
+            rec["unapplied"] = ";".join(
+                f"{ev}:{s:g}(rel {rel:.3f}{'; ' + str(rest[0]) if rest else ''})" for ev, s, rel, *rest in una)
+            rec["n_unapplied"] = len(una)
             pre = [x for x in dd.index if x < SEAM][-WIN:]; post = [x for x in dd.index if x >= SEAM][:WIN]
             P, _, _ = ratio_over(dd["Close"], y, pre); D, _, _ = ratio_over(dd["Close"], y, post)
             rec["P"], rec["D"] = (round(P, 6) if P else None), (round(D, 6) if D else None)
         except Exception as ex:
+            # FAIL CLOSED: an error must not read downstream as "nothing unapplied". n_unapplied goes to
+            # the string ERROR so any consumer that expects a count sees something it cannot treat as 0.
             rec["note"] = f"ERROR:{str(ex)[:60]}"
+            rec["n_unapplied"] = "ERROR"
         rows.append(rec)
         if i % 20 == 0 or i == len(tickers):
             print(f"  {i}/{len(tickers)} {t}: unapplied={rec['n_unapplied']} {rec['unapplied'][:60]}", flush=True)
