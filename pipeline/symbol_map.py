@@ -67,8 +67,10 @@ REASSIGNED: Dict[str, Tuple[Optional[str], Optional[str]]] = {
     "GOLD": ("2025-12-02", None),   # Barrick -> Gold.com, Inc. (Barrick prints as B; REMAP above)
     "STI":  ("2024-02-05", None),   # SunTrust (last bar 2019-12-06, merged into Truist) -> Solidion Technology, Inc.
                                     # (our first foreign bar 2024-02-05 @ 145.00)
-    "IPW":  ("2021-05-12", None),   # a 2008-2017 instrument -> iPower Inc.
-    "SKK":  ("2024-10-08", None),   # ProShares UltraShort SmallCap600 (closed 2015) -> SKK Holdings Limited
+    "IPW":  ("2021-05-12", None),   # "SPDR S&P International Energy Sector ETF" (SPDR Index Shares Funds, 485BPOS
+                                    # 2008-07-16, acc. 0000950135-08-004982; series 2008-2017) -> iPower Inc.
+    "SKK":  ("2024-10-08", None),   # "ProShares UltraShort Russell2000 Growth (SKK)" (ProShares Trust, 497 2014-12-23,
+                                    # acc. 0001193125-14-452796; series 2007-2015) -> SKK Holdings Limited
     "VRM":  ("2025-02-20", None),   # Vroom's cancelled equity -> the post-Chapter-11 Vroom, Inc. (a new security)
     "USLV": ("2026-05-27", None),   # VelocityShares 3x Silver ETN (delisted 2020) -> Direxion Daily Silver Bull 2X ETF
     "PARA": ("2026-08-07", None),   # Paramount Global (last bar 2025-08-06, -> PSKY) -> Banzai International, Inc.

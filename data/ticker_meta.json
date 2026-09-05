@@ -4716,10 +4716,10 @@
     "indices": []
   },
   "IPW": {
-    "name": "iPower Inc.",
-    "type": "Stock",
-    "sector": "Consumer Discretionary",
-    "industry": "Home Improvement Retail",
+    "name": "SPDR S&P International Energy Sector ETF",
+    "type": "ETF",
+    "sector": "International",
+    "industry": "Energy",
     "indices": []
   },
   "IQ": {
@@ -8611,9 +8611,9 @@
     "indices": []
   },
   "SKK": {
-    "name": "iShares MSCI South Korea ETF",
+    "name": "ProShares UltraShort Russell2000 Growth",
     "type": "ETF",
-    "sector": "International",
+    "sector": "Leveraged/Inverse",
     "industry": "",
     "indices": []
   },
