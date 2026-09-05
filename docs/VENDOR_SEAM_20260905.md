@@ -151,6 +151,49 @@ Pass 1 (`D:/temp/claude/seam_pass1_plan67.txt`, 66 PLAN tickers + RZG), `--mode 
 
 67 tickers rebased (exit 0 DONE; 1 of them through a release line), 67 of them verified bar for bar by verify_applied_seam.py at the time of this table; 1 other exit line(s). Tool labels by evidence: sha256 49c89a659d88: 20; sha256 ee9701168d57: 10; v5 file: 3; v5.1 file: 8; v5.1 file [UNDECIDABLE]: 1; v5.2 file: 5; v5.2.1 file: 4; v5.3 file: 14; v5.3 file [pid-less record]: 1. Generated 2026-09-05T18:19:44Z from D:/temp/claude/seam_rebase_batch_pass1.log.
 
+## Did the repair work? An independent measurement, with its control
+
+The table above reports the repair tool's own verification. This section reports a separate one, made
+after the fact from the served objects, because a tool confirming its own arithmetic is not evidence
+that the defect is gone.
+
+The quantity is the **seam step**: the first post-seam session's closing price divided by the last
+pre-seam session's closing price. If the two halves sat on different price bases, that ratio carries
+the split factor. If they sit on one basis, it is an ordinary overnight move. Measured on all 67
+rebased tickers against `F:\hf_r2_snapshot_20260713`, a copy predating any repair, at
+2026-09-05T20:35–20:36Z. None was unmeasurable.
+
+| | median seam step | within 10 % of continuous |
+|---|---|---|
+| before the repair | 0.2964 | 0 of 67 |
+| after the repair | 0.9357 | 54 of 67 |
+| **control: tickers that never had a seam** | **0.9520** | **33 of 38** |
+
+**The control is not decoration, and the "after" row should not be read against 1.0.** The seam spans
+2022-03-04 to 2022-03-07, a weekend inside a violently moving week, so a genuinely continuous series
+does not show 1.0 there either. The control is 38 tickers the fleet measurement flagged as having no
+seam, which were never touched by the repair; their step is what the market alone did. Repaired
+tickers now sit where untouched tickers sit. Quoting the repaired figure against 1.0 would overstate
+what remains by roughly five percentage points.
+
+The gap that does remain is the **dividend factor**, which the split-mode repair deliberately leaves
+in place pending the price-basis convention decision described above. Tested rather than asserted: for
+50 of 67 tickers the residual step matches, to within 5 %, the dividend factor `D` that the fleet
+measurement recorded independently. Four tickers do not fit that explanation — FTNT, GME, CMG and
+CHPT, all with `D` at essentially 1.0 — and their residual is market movement across the seam weekend,
+which the control shows is of the same size.
+
+Two supporting checks the same hour. Bar for bar, NVDA's and AVGO's pre-seam prices are at exactly `K`
+times the anchor on 1,872,208 of 1,872,208 and 1,186,232 of 1,186,232 bars, with volumes at exactly
+`1/K`. NVDA matters because its batch line was an exit 4, "served state unknown", released by hand on
+the ground that an older driver had misread a newer record format; that release is now confirmed by
+measurement rather than by assertion. Post-seam bars sit within about 1 % of the anchor rather than
+exactly on it, which is the dividend-adjusted window being rewritten at each ex-date since July —
+the documented convention, not the repair.
+
+Instruments: `tools/seam/seam_step_now.py`, `seam_step_control.py`, `residual_is_dividend.py`,
+`verify_seam_live.py`, with the two result tables beside them as CSVs.
+
 ## Variables and quality objects changed by the rebase
 
 **Variables and quality objects, measured per ticker (67 applied tickers, `verify_variables_delta.py` v2, served vs the pre-rebase snapshot, pre- and post-seam columns separated, measured 18:06:58-18:20:20Z).** RAW variables, PRE-seam: share_volume differs on every pre-seam session on 67 of 67 tickers (x V, the volume factor, 1/K for a split); dollar_volume is UNCHANGED on 20 of 67 (ANET, APH, COO, CPRT, CTAS, DXCM, ETR, FAST, GME, IBKR, IYT, ODFL, SMH, SRE, TECH, XLB, XLE, XLK, XLU, XLY) and amihud_illiquidity on 62 of 67 - price x K times volume x V is exact when K x V = 1 and K x price rounds exactly; they change only where it does not. On 15 of 67 tickers (DECK, IGM, IHE, IYG, IYK, NDAQ, ORLY, PANW, PSI, PTF, PTH, RZG, SOXX, TSLA, WMT) the scale-invariant columns (rv_1min, rv_5min, bipower_variation, hl_range, ac1, bns_z, corwin_schultz_bps, roll_spread_bps ...) also differ pre-seam: these are exactly the tickers whose K is a non-terminating decimal (1/15, 1/6 or 1/3) and the tool rounds K x price to 6 decimals (seam_rebase.py, `.round(6)`), which moves 1-minute returns at the 1e-6 level. Magnitude (`magnitude_pre` in the JSON, |served - snapshot| / |snapshot|): on the variance and range columns the median per column, taken across the affected tickers, runs 1.8e-06..1.0e-05 (the widest single ticker-and-column median is 2.1e-05), and the largest single-session difference is 7.3e-01 (intraday_return_std, a near-zero denominator); the ratio columns amplify it - ac1 max 4.5e-01, bns_z max 7.1e-01, corwin_schultz_bps max 5.8e-01, vr5 max 5.9e-02, vr10 max 9.4e-02 - on 2,350 of 281,716 differing column-sessions beyond 1e-3; roll_spread_bps, a square root of a near-zero covariance, reaches max 3.7e+06 relative on 316 of 44,986 sessions. The class is cut at MORE THAN 10 differing sessions on a scale-invariant column; 3 further tickers (FUBO, SIRI, SPCE) fall below that cut, each on one or two sessions of roll_spread_bps - a square root of a near-zero covariance, so the relative figure is large while the value itself barely moves: FUBO roll_spread_bps on 1 session(s), largest move 2.4e-07 in absolute terms (relative 1.0e+00, against a near-zero denominator); SIRI roll_spread_bps on 1 session(s), largest move 3.3e-09 in absolute terms (relative 3.3e+03, against a near-zero denominator); SPCE roll_spread_bps on 2 session(s), largest move 2.8e-08 in absolute terms (relative 1.0e+00, against a near-zero denominator). The remaining 49 tickers have K with at most two decimals, so K x price lands on a 6-decimal value exactly, and they show no scale-invariant difference at all. Note this does NOT mean their price-LEVEL columns are unchanged: dollar_volume is price x K times volume x V, and each side is rounded separately (prices to 6 decimals, minute volumes to integers), so the two roundings cancel only sometimes - which is exactly why dollar_volume is unchanged on 20 of 67 tickers rather than on all of the terminating-K ones. One discrete column, bns_jump_5pct (a jump flag, not a level), flips on a session where the rounding moved a statistic across its threshold - a flag change, which the 1e-6 description above does not cover. RAW variables, POST-seam: the seam-day overnight_return (the seam artefact removed) and, on some, 2026-03-30 (the first daily-append session after the backfill window). RAW quality: identical on 67 of 67. CLEAN quality PRE-seam (columns gap_rate, observed_bars, longest_gap, max_bars_since_trade, which no rescale can touch) differs on 66 of 67 tickers (APH 0 .. DECK 5,265 sessions); APH fresh: the served clean variables and quality were STALE against their served clean bars before the rebase, and the full recompute corrected every session - the same condition as the fleet (next paragraph). CLEAN variables POST-seam, by date (`post_dates`): 66 of 67 tickers differ on 2026 sessions; the 2026 differences start on 2026-03-30 for 37, on 2026-03-31 for 1, in June-July for 28; 65 have differences inside 2026-06-15..2026-07-31; 1 differ post-seam on the seam day only. CLEAN quality differs from 2026-03-30 on 8 tickers (COO, DECK, IHE, IHF, LCID, NKTR, OTLY, PRF) and on some 2026 session on 65. (An earlier version of this paragraph said 0 tickers start on 2026-03-30: it read post_seam_first, which is the seam-day row on most tickers - R744.) Nothing in the PRICE objects after the seam day changed.
