@@ -112,6 +112,9 @@ jobs:
           git config user.name "HF Data Library Bot"
           git config user.email "admin@hfdatalibrary.com"
           git add data/metadata.json
+          # corporate-action ledger (alerts + applied rescales), written by the split detector;
+          # the daily email carries the same events, this is the durable queue
+          if [ -f data/ca_alerts.jsonl ]; then git add data/ca_alerts.jsonl; fi
           if git diff --cached --quiet; then
             echo "No metadata changes to commit"
             echo "committed=false" >> "$GITHUB_OUTPUT"
