@@ -109,11 +109,16 @@ def _say(msg: str) -> None:
 def _record(snap_dir: str, text: str) -> None:
     """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
     the console is gone (R735). Never raises - not even for an interrupt (R738)."""
-    try:
-        with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:
-            f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\t{text}\n")
-    except BaseException:                                       # noqa: BLE001
-        pass
+    for attempt in (1, 2):
+        try:
+            with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:
+                f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\t{text}\n")
+            return
+        except BaseException:                                   # noqa: BLE001
+            # one retry (R739): an interrupt landing inside the first attempt kept the exit code
+            # and lost the record
+            if attempt == 2:
+                return
 
 from aggregate import aggregate_all
 from r2_client import download_parquet, get_client, upload_csv, upload_parquet
@@ -378,6 +383,10 @@ def main() -> int:
     if a.mode == "full" and not a.convention_decided:
         print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded."); return 5
 
+    # the events file is validated BEFORE the first download (R739): a malformed file used to cost
+    # every ticker the daily and the Yahoo fetch before it was refused
+    extra = load_events_file(a.events_file, t) if a.events_file else None
+
     daily = download_parquet(client, "raw", t, "daily")
     if daily is None or daily.empty:
         print(f"{t}: no served daily file - aborted before any write"); return 5
@@ -395,7 +404,6 @@ def main() -> int:
         # forward splits), and RZG's 3:1 the same day sits behind a 0.29 % snap miss. The file is a
         # citation, not a guess: ticker,date,ratio,source. It is UNIONED with Yahoo's events (file wins on
         # a shared date) and then flows through exactly the same event_steps / prefix checks.
-        extra = load_events_file(a.events_file, t)
         if extra is not None and len(extra):
             spl = pd.concat([spl, extra]) if len(spl) else extra
             spl = spl[~spl.index.duplicated(keep="last")].sort_index()
@@ -557,7 +565,12 @@ def main() -> int:
     # minutes). Comparing P (a multi-session market ratio) with P_raw (one bar) is not that test -
     # RENT differed by 0.39 % between the two with nothing wrong (v5.2's first form of this check).
     d_r_day = pd.Timestamp(d_r).normalize()
-    if d_r_day in dd.index:
+    if d_r_day not in dd.index:
+        # refuse, never skip (R739, R503's class): a 1-minute session the daily does not carry is
+        # itself an inconsistency between the two files
+        print(f"  REFUSED: the 1-minute raw file's last pre-seam session {d_r_day.date()} has no bar in the served daily - "
+              f"the two files disagree on which sessions exist; re-aggregate or restore before rebasing"); return 2
+    else:
         daily_close = float(dd.loc[d_r_day, "Close"])
         if abs(c_r / daily_close - 1) > 0.003:
             print(f"  INCONSISTENT SERVED SET: on {d_r_day.date()} the served daily close is {daily_close:.6f} while the 1-minute "

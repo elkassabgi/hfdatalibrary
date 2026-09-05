@@ -68,3 +68,30 @@ two are real K=3 seams on series dead since 2023-08 (PSJ, PWC — their post hal
 
 - 23 splits left unapplied in served 2026 data, repaired the same night: `UNAPPLIED_SPLITS_20260905.md` (PR #9).
 - The detector fix that stops it recurring: PR #11.
+
+## What was applied on 2026-09-05
+
+Pass 1 (`D:/temp/claude/seam_pass1_plan67.txt`, 66 PLAN tickers + RZG), `--mode split` only: the pre-2022-03-07 half of each served series (raw and clean 1-minute files, the 14 timeframe aggregates, variables and quality) was multiplied by K on price and divided by K on volume, where K is the integer split ratio the tool measured between the two halves and matched to the recorded split events after the seam; nothing after 2022-03-07 changed; the dividend/spin factor D is NOT applied (Ahmed's convention decision). Each ticker ran under the tool version named, in bounded batches, each batch after an adversarial review of the tool (ledger R719/R720, R725, R728, R731, R735, R738); every ticker has a content-checked snapshot of its 22 objects under `F:/hf_r2_snapshot_seam_20260905/<T>` (with `_RESULT.txt` from v5.1 on) and, from 13:18Z, its full run output under `D:/temp/claude/seam_detail_<UTC>_<T>.txt`. The table is generated from the batch log by `D:/temp/claude/seam_applied_table.py` and regenerated at the end of the pass; "verified bar for bar" means `verify_applied_seam.py` read the served 1-minute raw and daily back and found every pre-seam bar equal to snapshot x K (prices to 6 dp, volumes rounded) and every post-seam bar identical. Held back for a pass 1b: BIRD, EVX, PCAR, RENT (their PLAN came from code changes in R725/R728 and has no independent confirmation yet); pass 2 = 27 ETFs (`seam_pass2_plan27.txt`).
+
+| UTC | ticker | exit | secs | K (price) | pre-seam 1-min bars | mismatches price/volume/post | tool | outcome |
+|---|---|---|---|---|---|---|---|---|
+| 2026-09-05T12:48:41Z | AMCR | 0 | 74s | 5 | 266,582 | 0/0/0 | v5 (9ba6a3f) |   DONE: AMCR rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
+| 2026-09-05T12:49:55Z | AMWL | 0 | 61s | 20 | 140,518 | 0/0/0 | v5 (9ba6a3f) |   DONE: AMWL rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
+| 2026-09-05T12:50:56Z | ANET | 0 | 100s | 0.25 | 647,822 | 0/0/0 | v5 (9ba6a3f) |   DONE: ANET rebased (split); snapshot kept at F:\hf_r2_snap (local stamp, +5 h) |
+| 2026-09-05T13:18:12Z | APH | 0 | 154s | 0.5 | 1,713,462 | 0/0/0 | v5.1 (a38144c) |   DONE: APH rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:20:46Z | AVGO | 0 | 126s | 0.1 | 1,186,232 | 0/0/0 | v5.1 (a38144c) |   DONE: AVGO rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:22:52Z | AZN | 0 | 158s | 2 | 1,770,416 | 0/0/0 | v5.1 (a38144c) |   DONE: AZN rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:25:30Z | CHPT | 0 | 62s | 20 | 144,090 | 0/0/0 | v5.1 (a38144c) |   DONE: CHPT rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:26:32Z | CMG | 0 | 137s | 0.02 | 1,304,364 | 0/0/0 | v5.1 (a38144c) |   DONE: CMG rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:28:49Z | COO | 0 | 154s | 0.25 | 1,441,198 | 0/0/0 | v5.1 (a38144c) |   DONE: COO rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:31:23Z | CPRT | 0 | 161s | 0.25 | 1,577,679 | 0/0/0 | v5.1 (a38144c) |   DONE: CPRT rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:34:04Z | CTAS | 0 | 152s | 0.25 | 1,642,019 | 0/0/0 | v5.1 (a38144c) |   DONE: CTAS rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:36:37Z | DECK | 0 | 194s | 0.166667 | 1,532,996 | 0/0/0 | v5.1 (a38144c) |   DONE: DECK rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:39:50Z | DXCM | 0 | 144s | 0.25 | 1,263,982 | 0/0/0 | v5.2 (daef642) |   DONE: DXCM rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:43:07Z | ETR | 0 | 158s | 0.5 | 1,812,340 | 0/0/0 | v5.2 (daef642) |   DONE: ETR rebased (split); snapshot kept at F:\hf_r2_snaps |
+| 2026-09-05T13:45:45Z | FAST | 0 | 150s | 0.5 | 1,804,374 | 0/0/0 | v5.2 (daef642) |   DONE: FAST rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:48:15Z | FTNT | 0 | 127s | - | - | - | v5.2 (daef642) |   DONE: FTNT rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:50:23Z | FUBO | 0 | 68s | - | - | - | v5.2 (daef642) |   DONE: FUBO rebased (split); snapshot kept at F:\hf_r2_snap |
+| 2026-09-05T13:51:31Z | GME | 0 | 152s | - | - | - | v5.2 (daef642) |   DONE: GME rebased (split); snapshot kept at F:\hf_r2_snaps |
+
+18 rebased (exit 0 DONE), 15 of them verified bar for bar by verify_applied_seam.py at the time of this table; 0 other exit(s). Generated 2026-09-05T13:54:17Z from D:/temp/claude/seam_rebase_batch_pass1.log.
