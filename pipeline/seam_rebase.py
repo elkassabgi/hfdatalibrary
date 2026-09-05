@@ -289,19 +289,26 @@ def main() -> int:
     P_int = snap_int(P)
     if P_int is None:
         print(f"  REFUSED: P={P:.6f} does not snap to an integer split ratio within 0.2 % (spin-off or unclear)"); return 2
-    match = "all" if abs(P_int / prod_all - 1) <= 0.002 else ("prefix" if abs(P_int / prod_prefix - 1) <= 0.002 else None)
-    if match is None:
-        print(f"  REFUSED: P_int={P_int:g} matches neither Yahoo's split product ({prod_all:g}) nor the <=2026-07-13 product ({prod_prefix:g})"); return 2
-    if match == "prefix":
-        # "prefix" is accepted only on POSITIVE evidence: every post-FIX event must be measured as APPLIED
-        # in the served series (rel ~ 1). Assuming it (R719) is how MNST/SOXS/TECS were misread.
-        post_fix = [(d, s) for d, s in ((i.date(), float(v)) for i, v in spl.items()) if pd.Timestamp(d) > FIX]
-        applied_dates = {d for d, s, rel in app}
-        missing = [e for e in post_fix if e[0] not in applied_dates]
-        if missing:
-            print(f"  REFUSED: P matches the pre-2026-07-13 split product only if the later event(s) {missing} were applied to the "
-                  f"full history, and the served data does not show them as applied (measured applied: {app})"); return 2
-        print(f"  post-FIX event(s) measured APPLIED in the served series: {app}")
+    # P_int must equal the product of the OLDEST k recorded events for some k. k = n: the pre-seam half
+    # misses all of them. k < n: the later events were applied history-wide (by the daily path, or by a
+    # manual_split repair - SCO/SMN tonight) and only the oldest k are still missing before the seam.
+    # No date (the 2026-07-13 "fix") is assumed to mean anything (R719): the rule is accepted only when
+    # every recorded event inside the served range measured APPLIED in the served series.
+    evs = [(i, float(v)) for i, v in spl.items()]
+    prefixes, prod = [], 1.0
+    for k, (i, v) in enumerate(evs, 1):
+        prod *= v; prefixes.append((k, prod))
+    match_k = next((k for k, pr in prefixes if abs(P_int / pr - 1) <= 0.002), None)
+    if match_k is None:
+        print(f"  REFUSED: P_int={P_int:g} equals no chronological-prefix product of the recorded events {[(str(i.date()), v) for i, v in evs]}"); return 2
+    in_range = [(i.date(), v) for i, v in evs if i <= dd.index.max()]
+    applied_dates = {d for d, s, rel in app}
+    missing = [e for e in in_range if e[0] not in applied_dates]
+    if missing:
+        print(f"  REFUSED: event(s) {missing} are not measured APPLIED in the served series (measured applied: {app}); nothing is assumed"); return 2
+    match = "all" if match_k == len(evs) else f"oldest {match_k} of {len(evs)}"
+    if match_k < len(evs):
+        print(f"  later event(s) measured APPLIED history-wide; the pre-seam half misses only the oldest {match_k}: {[(str(i.date()), v) for i, v in evs[:match_k]]}")
     if sP > 0.003:
         print(f"  REFUSED: PiTrading side unstable over its window ({sP:.3%}){' - ' + ex_note if ex_note else ''}"); return 2
     K = 1.0 / P_int; V = P_int
