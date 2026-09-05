@@ -30,7 +30,9 @@ def main() -> int:
     ap.add_argument("--log", default=r"D:\temp\claude\seam_rebase_batch.log")
     ap.add_argument("--snapshot-root", default=os.path.join("F:\\", f"hf_r2_snapshot_seam_{dt.date.today():%Y%m%d}"))
     a = ap.parse_args()
-    if a.tickers:
+    if a.tickers and os.path.isfile(a.tickers):
+        cands = [l.strip().upper() for l in open(a.tickers, encoding="utf-8") if l.strip()]   # one ticker per line
+    elif a.tickers:
         cands = [t.strip().upper() for t in a.tickers.split(",") if t.strip()]
     else:
         d = pd.read_csv(a.candidates); d["flag"] = d.flag.fillna("")
