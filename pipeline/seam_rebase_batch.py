@@ -117,6 +117,24 @@ def main() -> int:
         t0 = dt.datetime.now(dt.timezone.utc)
         rc, out, err, interrupted = _run_child(cmd)
         last = (out.strip().splitlines() or [""])[-1]
+        # THE RECORD OUTRANKS THE EXIT CODE (R738 finding 1). A child killed from outside
+        # (TerminateProcess) exits 1 - the code that means "written then RESTORED" - with nothing
+        # restored and no record. Once the tool printed its "snapshot:" line, writes may have
+        # happened, and the exit code is believed only when <snap_dir>/_RESULT.txt's last line says
+        # the same thing; otherwise the ticker is logged as 4: served state UNKNOWN.
+        if "snapshot:" in out:
+            rec_path = os.path.join(a.snapshot_root, t, "_RESULT.txt")
+            rec_last = None
+            try:
+                lines = [ln.rstrip("\n") for ln in open(rec_path, encoding="utf-8") if ln.strip()]
+                rec_last = lines[-1] if lines else None
+            except OSError:
+                pass
+            said = rec_last.split("\t", 1)[1] if rec_last and "\t" in rec_last else (rec_last or "")
+            if not said.startswith(f"EXIT {rc} ") and not said.startswith(f"EXIT {rc}"):
+                last = (f"died without its record (exit {rc}, _RESULT.txt says {said[:80]!r}) - served state UNKNOWN; "
+                        f"inspect {os.path.join(a.snapshot_root, t)} and --restore if the objects there differ from R2")
+                rc = 4
         stamp = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
         detail = os.path.join(detail_dir, f"seam_detail_{t0:%Y%m%dT%H%M%SZ}_{t}.txt")
         try:

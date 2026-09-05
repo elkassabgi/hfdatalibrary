@@ -91,24 +91,28 @@ import sys
 import pandas as pd
 
 
+_STATE = {"wrote": False}     # set the moment the first upload starts (R738): a late escape is then 4, never 5
+
+
 def _say(msg: str) -> None:
     """A print that survives a dead stdout. The fourth review (R735) measured that when the batch
     driver's pipe is gone, `print` raises OSError 22 - and the old handler printed BEFORE it
     restored, so the restore was never reached. Nothing on the restore path may depend on the
-    console."""
+    console. Catches BaseException (R738): a Ctrl-C landing inside this print must not turn a
+    finished restore into an unrecorded exit."""
     try:
         print(msg, flush=True)
-    except (OSError, ValueError):
+    except BaseException:                                       # noqa: BLE001
         pass
 
 
 def _record(snap_dir: str, text: str) -> None:
     """Append the outcome to <snap_dir>/_RESULT.txt BEFORE any stdout: the file is the record when
-    the console is gone (R735). Never raises."""
+    the console is gone (R735). Never raises - not even for an interrupt (R738)."""
     try:
         with open(os.path.join(snap_dir, "_RESULT.txt"), "a", encoding="utf-8") as f:
             f.write(f"{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}\t{text}\n")
-    except Exception:                                           # noqa: BLE001
+    except BaseException:                                       # noqa: BLE001
         pass
 
 from aggregate import aggregate_all
@@ -362,11 +366,14 @@ def main() -> int:
     a = ap.parse_args(); t = a.ticker.upper()
     client = get_client()
     if a.restore:
+        _STATE["wrote"] = True                                  # a restore IS a write to the served set
         try:
             n = restore(client, a.restore)
         except BaseException as ex:                             # noqa: BLE001
+            _record(a.restore, f"EXIT 4 --restore FAILED: {type(ex).__name__}: {str(ex)[:200]}")
             _say(f"{t}: RESTORE FAILED ({type(ex).__name__}: {str(ex)[:200]}) - served state UNKNOWN; fix the snapshot "
                  f"directory and re-run --restore"); return 4
+        _record(a.restore, f"EXIT 0 --restore put back {n} objects")
         _say(f"{t}: restored {n} objects from {a.restore}"); return 0
     if a.mode == "full" and not a.convention_decided:
         print("--mode full folds dividends into the pre-2022 half; that is the convention decision. Pass --convention-decided only once it is recorded."); return 5
@@ -543,6 +550,15 @@ def main() -> int:
     print(f"  1-minute self-check: raw last pre-seam bar {d_r.date()} P_raw={P_raw:.6f}; clean {d_c.date()} P_clean={P_clean:.6f}; target after rebase {P_raw * K:.6f}")
     if abs(P_raw / P_clean - 1) > 0.003:
         print(f"  REFUSED: raw and clean disagree on the pre-seam basis (P_raw={P_raw:.6f}, P_clean={P_clean:.6f}) - a previous run was interrupted; use --restore"); return 2
+    # THE 1-MINUTE FILES MUST AGREE WITH THE DAILY THAT PRODUCED P (R738 finding 4): a daily at P = 1
+    # over 1-minute files still at 20x is a surviving partial write, and both no-op exits below would
+    # have called it healthy. Same tolerance as everything else on this basis; the largest live
+    # disagreement seen today is 0.03 % (AMZN).
+    if abs(P_raw / P - 1) > 0.003:
+        print(f"  INCONSISTENT SERVED SET: the served daily measures P={P:.6f} against the market while the 1-minute raw "
+              f"file measures P_raw={P_raw:.6f} on its last pre-seam bar - the aggregates and the 1-minute objects sit on "
+              f"different bases (a partial earlier write). Restore that run's snapshot or re-aggregate from the 1-minute "
+              f"files; nothing touched"); return 4
     if abs(K - 1) <= 0.002 and abs(V - 1) <= 1e-9:
         print(f"  nothing to rebase in --mode {a.mode} (P_int=1{'; dividend/spin seam D=%.4f held for the convention decision' % D if abs(D - 1) > 0.002 else ''}); raw and clean agree"); return 0
     if abs(P_raw / target - 1) <= 0.003:
@@ -567,12 +583,13 @@ def main() -> int:
         print(f"  REFUSED: Daily Data Update workflow is {st}; a rebase inside its window is overwritten. "
               f"Re-run when idle{' (or --allow-queued if the queued run cannot start for >30 min)' if st == 'queued' else ''}."); return 2
 
-    snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_seam_{pd.Timestamp.today():%Y%m%d}", t)
+    snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_seam_{_dt.datetime.now(_dt.timezone.utc):%Y%m%d}", t)
     n_snap = snapshot(client, t, snap_dir)
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
 
     raw2, clean2 = rescale(raw, K, V), rescale(clean, K, V)
     n = 0; sync_failed = []
+    _STATE["wrote"] = True                                      # from here an escape is exit 4, never 5 (R738)
     # ONE try from the first upload through the last VERIFY print (R728 item 2, R731 finding 1).
     # Anything that dies in here - an upload, a read-back returning None, a botocore error on the
     # three verification downloads, a format error in a VERIFY line - restores the snapshot and
@@ -666,11 +683,21 @@ def _guarded_main() -> int:
     snapshot() passes through unchanged."""
     try:
         return main()
-    except SystemExit:
-        raise
+    except SystemExit as ex:
+        if isinstance(ex.code, int) or ex.code is None:
+            raise                                               # the tool's own numeric codes (5 from snapshot(), argparse's 2)
+        # SystemExit(<string>) - Python would exit 1 = "restored" (R738 finding 2): the events-file
+        # checks raise these before any write
+        _say(f"  {ex.code}")
+        _say("  ABORTED before any write (exit 5)" if not _STATE["wrote"] else "  ESCAPED AFTER WRITES - served state UNKNOWN (exit 4)")
+        return 4 if _STATE["wrote"] else 5
     except KeyboardInterrupt:
+        if _STATE["wrote"]:
+            _say("  interrupted AFTER writes began and outside the guarded block - served state UNKNOWN; read _RESULT.txt in the snapshot dir - exit 4"); return 4
         _say("  interrupted before any write (an interrupt after the first upload is caught inside and restores) - exit 5"); return 5
     except BaseException as ex:                                 # noqa: BLE001
+        if _STATE["wrote"]:
+            _say(f"  ESCAPED AFTER WRITES by an unhandled {type(ex).__name__}: {str(ex)[:300]} - served state UNKNOWN; read _RESULT.txt - exit 4"); return 4
         _say(f"  ABORTED before any write by an unhandled {type(ex).__name__}: {str(ex)[:300]} - exit 5"); return 5
 
 
