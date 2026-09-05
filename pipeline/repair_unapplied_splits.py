@@ -108,9 +108,16 @@ def main() -> int:
         with open(a.log, "a", encoding="utf-8") as f:
             f.write(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}\t{t}\t{ca.date()}\t{ratio:g}\t{verdict}\t{detail}\t{snap}\n")
 
+    from symbol_map import REASSIGNED
     for t, ratio, ca in events:
         if a.limit is not None and n >= a.limit:
             break
+        if t in REASSIGNED:
+            # R732, the class fix: Yahoo's split record under a reassigned symbol is the NEW owner's.
+            # This tool applied iPower's splits (x8, x9) to a 2008-2017 instrument served as IPW and
+            # SKK Holdings' 1:10 to a 2007-2015 instrument served as SKK, 2026-09-05 02:07-02:46Z.
+            print(f"  {t} {ca.date()}: symbol reassigned to another issuer from {REASSIGNED[t][0]} - the recorded "
+                  f"split is the new owner's, not this instrument's - SKIP"); log(t, ca, ratio, "SKIP", "reassigned symbol (R732)"); continue
         h, _, _ = yahoo(t)
         if h is None:
             print(f"  {t} {ca.date()}: no Yahoo reference - SKIP"); log(t, ca, ratio, "SKIP", "no yahoo"); continue
