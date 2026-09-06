@@ -368,9 +368,9 @@ def _standin(body: str) -> str:
         "def h(n):\n"
         "    with open(os.path.join(HERE, n + '.py'), 'rb') as f:\n"
         "        return hashlib.sha256(f.read()).hexdigest()[:12]\n"
-        "def sibs(**over):\n"
+        "def sibs(drop=(), **over):\n"
         "    return ', '.join(f'{n} ' + over.get(n, 'not-imported' if n == 'seam_rebase' else h(n))\n"
-        "                     for n in SIBLINGS)\n"
+        "                     for n in SIBLINGS if n not in drop)\n"
         "own = hashlib.sha256(open(os.path.abspath(__file__),'rb').read()).hexdigest()\n"
         "snap = sys.argv[sys.argv.index('--snapshot-dir') + 1]\n"
         + body)
@@ -404,6 +404,64 @@ _SCENARIOS = {
                     "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
                     "sys.exit(5)\n", 5),
 }
+
+# R770 #1. The four scenarios above notice ONE of nine deliberate re-openings of defects earlier
+# reviews already found: three clauses are LIVE, turn a breach's logged 4 into 0 - which records the
+# ticker done and skips it forever, R760 #1's exact harm - and are invisible to every test. Each
+# scenario below is aimed at exactly one of them, and `test_each_new_scenario_needs_its_own_clause`
+# proves the aim by deleting the clause and requiring the code to fall to 0.
+_HDR = ("print(f'  tool source sha256 {own} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n")
+_WROTE = ("os.makedirs(snap, exist_ok=True)\n"
+          "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'x\\tpid={os.getpid()}\\tEXIT 0 DONE rebased (split)\\n')\n"
+          "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+          "print('  DONE: rebased (split)', flush=True)\n")
+
+_SCENARIOS.update({
+    # (a) the COVERAGE clause: a sibling line that simply OMITS a guarded module. Every value it
+    # does print is honest, both readings agree, and nothing else in _sibling_drift objects - only
+    # `missing` does. A child that stops naming a module is a child whose imports are unverified.
+    "sib_missing": (_HDR
+                    + "print('  imported module sha256: ' + sibs(drop=('aggregate',)), flush=True)\n"
+                    + _WROTE
+                    + "print('  imported module sha256 at exit: ' + sibs(drop=('aggregate',)), flush=True)\n"
+                    "sys.exit(0)\n", 4),
+    # (b) header DRIFTED, trailer `not-imported` - the original R760 #1 shape, where `child.update()`
+    # gave the trailer the final say and erased the drift.
+    #
+    # HONEST SCOPE, because the mutation control refused to let me claim more. I added this to test
+    # the MERGE clause ("a real hash beats not-imported"). It does not: with the merge re-opened to
+    # plain last-wins the code still comes out 4, because the DIRECTIONAL rule refuses this input
+    # first - a drifted hash followed by not-imported is the illegal direction. Given that loop, the
+    # merge is not independently reachable through the driver at all; every input that would need it
+    # is already a disagreement. So the merge is defence in depth, deliberately kept and deliberately
+    # NOT claimed as tested. This scenario earns its place as the R760 #1 regression itself, caught
+    # by the directional rule - which is exactly what (c) below proves is load-bearing.
+    "sib_drift_then_notimported": (_HDR
+                                   + "print('  imported module sha256: ' + sibs(aggregate='9'*12), flush=True)\n"
+                                   + _WROTE
+                                   + "print('  imported module sha256 at exit: ' + sibs(aggregate='not-imported'), flush=True)\n"
+                                   "sys.exit(0)\n", 4),
+    # (c) the DIRECTIONAL rule, ISOLATED. Here the header hash is CORRECT, so the merge sees nothing
+    # wrong and every value matches the driver's reading - only the direction is impossible. A module
+    # goes not-imported -> hash; hash -> not-imported is a module un-importing itself mid-run, which
+    # cannot happen, so the child is misreporting and the served state is unknown. My first attempt
+    # at this scenario used a DRIFTED header and was caught by the merge instead, proving nothing
+    # about this clause (R346: a control that passes for the wrong reason is not a control).
+    "sib_hash_then_notimported": (_HDR
+                                  + "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                                  + _WROTE
+                                  + "print('  imported module sha256 at exit: ' + sibs(aggregate='not-imported'), flush=True)\n"
+                                  "sys.exit(0)\n", 4),
+    # (c) the WRITE-PATH header-hash compare. This is a DIFFERENT comparison from the one the drift
+    # scenario exercises: here the child's own tool hash disagrees with what the driver hashed at
+    # launch, on the path where a snapshot and a result line were already written. The tool running
+    # is not the tool that was checked, so the served state is unknown however cleanly it exited.
+    "hdr_wrong_sha": ("print(f'  tool source sha256 {chr(48)*64} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n"
+                      "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                      + _WROTE
+                      + "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                      "sys.exit(0)\n", 4),
+})
 
 
 def _logged_code(tmp_path, body):
