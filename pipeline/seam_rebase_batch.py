@@ -132,11 +132,36 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         elts = list(t.elts) if isinstance(t, (ast.Tuple, ast.List)) else [t]
         return any(isinstance(e, ast.Name) and e.id == "SIBLINGS" for e in elts)
 
+    # WHICH BINDINGS CAN REACH MODULE SCOPE (R770 #3). ast.walk sees every node, including bodies of
+    # functions and classes - so `def f(): SIBLINGS = 3`, an ordinary LOCAL that cannot touch the
+    # module global, refused every batch. That is the false-refusal shape R767 rule 5 warns about, and
+    # it is how a guard gets disabled. A binding matters here only if it executes at module scope, or
+    # if its enclosing function declares `global SIBLINGS`. Nothing below is weakened for module-level
+    # code; the walk simply stops crediting a local with power it does not have.
+    for _p in ast.walk(tree):
+        for _c in ast.iter_child_nodes(_p):
+            _c._guard_parent = _p                                # ast gives no parent links
+
+    def _declares_global(fn) -> bool:
+        return any(isinstance(g, ast.Global) and "SIBLINGS" in g.names for g in ast.walk(fn))
+
+    def _reaches_module_scope(node) -> bool:
+        n = node
+        while getattr(n, "_guard_parent", None) is not None:
+            n = n._guard_parent
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                return _declares_global(n)                       # `global SIBLINGS` puts it back
+            if isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                return False        # py3 gives a comprehension its own scope; its target is a local
+        return True
+
     # EVERY BINDING FORM, not only `=` (R767 #4). A target list that knows about Assign and AnnAssign
     # alone accepted seven shapes that rebind at runtime: a `for` target, a walrus, `with ... as`,
     # `import *`, a list `.pop()`, `del`, and setattr with a split string.
     found, dynamic = [], []
     for node in ast.walk(tree):
+        if not _reaches_module_scope(node):
+            continue                                             # a local cannot rebind the global
         tgts = []
         if isinstance(node, ast.Assign):
             tgts = list(node.targets)
@@ -187,13 +212,41 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
                 and node.func.id == "setattr" and len(node.args) >= 2:
             dynamic.append("setattr")
+        # BINDING THROUGH THE NAMESPACE MAPPING (R770 #4). `globals().update(SIBLINGS=...)` rebinds the
+        # module global with no assignment target and no setattr, so every check above misses it - the
+        # runtime bound 4 of 6 modules in the reviewer's control while this guard said nothing. The
+        # receiver, not the name, is what makes it dangerous: a computed key (`globals()[k] = v`, or
+        # `.update({"SIBL"+"INGS": v})`) is R767 #4's split-string escape in another costume, so any
+        # MUTATING call on globals()/vars() is refused. Reads - `globals().get(...)`, `vars(obj)` -
+        # are untouched, because refusing a read is the false refusal that gets a guard deleted.
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Call) \
+                and isinstance(node.func.value.func, ast.Name) \
+                and node.func.value.func.id in ("globals", "vars") \
+                and node.func.attr in ("update", "__setitem__", "setdefault", "pop", "clear"):
+            dynamic.append(f"{node.func.value.func.id}().{node.func.attr}()")
+        # and the subscript form, whether or not the key is a readable literal
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Call) \
+                        and isinstance(t.value.func, ast.Name) \
+                        and t.value.func.id in ("globals", "vars"):
+                    dynamic.append(f"{t.value.func.id}()[...] = ...")
 
-    # NOTE ON exec/eval/setattr: these are refused whether or not SIBLINGS visibly appears in them,
-    # because R767 #4's escape was `setattr` with the name SPLIT ACROSS STRINGS - which no static
-    # match can see. The cost is stated rather than discovered: adding any of the three to
-    # seam_rebase.py for an UNRELATED reason will refuse every batch. That is deliberate, it fails
-    # closed, and `test_the_guard_ACCEPTS_THE_REAL_SHIPPED_TOOL` is what stops it reaching production
-    # unnoticed - the real tool contains none of them today.
+    # NOTE ON exec/eval/setattr/globals(): these are refused whether or not SIBLINGS visibly appears
+    # in them, because R767 #4's escape was `setattr` with the name SPLIT ACROSS STRINGS - which no
+    # static match can see. The cost is stated rather than discovered: adding any of them to
+    # seam_rebase.py AT MODULE SCOPE for an UNRELATED reason will refuse every batch. That is
+    # deliberate and fails closed, and `test_the_guard_ACCEPTS_THE_REAL_SHIPPED_TOOL` is what stops it
+    # reaching production unnoticed - the real tool contains none of them today.
+    #
+    # WHAT THIS GUARD DOES NOT CLAIM (R770 #3, said plainly rather than left to the next reviewer):
+    # it reads the DECLARED set at module scope. Bindings inside a function body are skipped unless
+    # that function declares `global SIBLINGS`, so a rebind performed at RUNTIME by calling such a
+    # function is outside what a static read can settle. That hole is covered elsewhere and by a
+    # different instrument - the child prints its own sibling hashes and `_sibling_drift` compares
+    # them against the driver's reading, which sees a module swapped DURING the child. Static guard =
+    # what the file declares; drift check = what the child actually imported. Neither alone suffices.
     if dynamic:
         raise SystemExit(f"source guard: {path} binds SIBLINGS in a way no static read can follow "
                          f"({', '.join(sorted(set(dynamic)))}) - refusing to run")

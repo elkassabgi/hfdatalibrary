@@ -478,6 +478,16 @@ _SHORT = "SIBLINGS = " + repr(_REAL[:4])
     ("list + pop",     "SIBLINGS = " + repr(list(_REAL)) + "\nSIBLINGS.pop()"),
     ("del",            _FULL + "\ndel SIBLINGS\n" + _FULL),
     ("exec",           _FULL + "\nexec('SIB' + 'LINGS = ()')"),
+    # R770 #4 - binding through the namespace MAPPING. No assignment target, no setattr, so every
+    # check above misses it; the reviewer's runtime control bound 4 of 6 modules while the guard
+    # said nothing. The computed-key forms are R767 #4's split string wearing a different hat.
+    ("globals().update",     _FULL + "\nglobals().update(SIBLINGS=" + repr(_REAL[:4]) + ")"),
+    ("globals().__setitem__", _FULL + "\nglobals().__setitem__('SIBLINGS', " + repr(_REAL[:4]) + ")"),
+    ("globals()[computed]",  _FULL + "\n_k = 'SIB' + 'LINGS'\nglobals()[_k] = " + repr(_REAL[:4])),
+    ("vars().update",        _FULL + "\nvars().update(SIBLINGS=" + repr(_REAL[:4]) + ")"),
+    # R770 #3's other direction: scoping the walk to module level must NOT open the `global` door.
+    ("global in a function", _FULL + "\ndef f():\n    global SIBLINGS\n    SIBLINGS = "
+                             + repr(_REAL[:4]) + "\nf()"),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
@@ -492,6 +502,14 @@ def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     ("tuple unpack read", _FULL + "\na, b, c, d, e, f = SIBLINGS"),
     ("dict value read",   _FULL + "\nD = {}\nD['x'] = SIBLINGS"),
     ("attribute read",    _FULL + "\nimport types\nns = types.SimpleNamespace()\nns.m = SIBLINGS"),
+    # R770 #3: ast.walk reaches into function and class bodies, so an ordinary LOCAL that cannot
+    # touch the module global refused every batch. These are the shapes that were wrongly refused.
+    ("local in a function",  _FULL + "\ndef f():\n    SIBLINGS = 3\n    return SIBLINGS"),
+    ("local in a class",     _FULL + "\nclass C:\n    SIBLINGS = 3"),
+    ("for target in a func", _FULL + "\ndef f():\n    for SIBLINGS in (1, 2):\n        pass"),
+    ("comprehension target", _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
+    ("setattr in a function", _FULL + "\ndef f(o):\n    setattr(o, 'x', 1)"),
+    ("globals() READ",       _FULL + "\n_g = globals().get('X')"),
 ])
 def test_innocent_READS_of_SIBLINGS_are_not_refused(tmp_path, shape, src):
     """The other half of R767 #4, and the half that matters for whether the guard survives contact
