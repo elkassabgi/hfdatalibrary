@@ -346,6 +346,95 @@ def test_the_projects_own_passed_file_does_not_refuse(tmp_path):
     assert "carries no approval line" in out, out
 
 
+# ---------------------------------------------------------------- the LOGGED code, end to end (R767 #3)
+#
+# Everything above tests the driver's parts. The number that actually matters is the one written to
+# the batch log, because the next start reads it: a 0 marks the ticker done forever. Those assertions
+# lived ONLY in drv58/run_harness.sh, a bash script outside the repo, so `pytest pipeline/` could and
+# did stay green at 127 passed while a one-line change collapsed 17 of 20 breach scenarios from 4 to
+# 0 (R767 #1). These tests drive the REAL driver against generated stand-ins and assert the logged
+# code, so that failure mode is now visible to the runner everyone actually runs.
+
+_SIB = ", ".join(f"{n[:-3]} {{{n[:-3]}}}" for n in srb.GUARDED)
+
+
+def _standin(body: str) -> str:
+    """A stand-in seam_rebase.py. It prints the real tool's header and sibling grammar, then does
+    whatever `body` says. Hashes are computed at run time from the sibling modules beside it."""
+    return (
+        "import hashlib, os, sys\n"
+        "SIBLINGS = " + repr(tuple(n[:-3] for n in srb.GUARDED)) + "\n"
+        "HERE = os.path.dirname(os.path.abspath(__file__))\n"
+        "def h(n):\n"
+        "    with open(os.path.join(HERE, n + '.py'), 'rb') as f:\n"
+        "        return hashlib.sha256(f.read()).hexdigest()[:12]\n"
+        "def sibs(**over):\n"
+        "    return ', '.join(f'{n} ' + over.get(n, 'not-imported' if n == 'seam_rebase' else h(n))\n"
+        "                     for n in SIBLINGS)\n"
+        "own = hashlib.sha256(open(os.path.abspath(__file__),'rb').read()).hexdigest()\n"
+        "snap = sys.argv[sys.argv.index('--snapshot-dir') + 1]\n"
+        + body)
+
+
+_SCENARIOS = {
+    # name: (stand-in body, the code the DRIVER must write to the log)
+    "clean": ("print(f'  tool source sha256 {own} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n"
+              "print('  imported module sha256: ' + sibs(), flush=True)\n"
+              "os.makedirs(snap, exist_ok=True)\n"
+              "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'x\\tpid={os.getpid()}\\tEXIT 0 DONE rebased (split)\\n')\n"
+              "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+              "print('  DONE: rebased (split)', flush=True)\n"
+              "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+              "sys.exit(0)\n", 0),
+    "drift": ("print(f'  tool source sha256 {own} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n"
+              "print('  imported module sha256: ' + sibs(), flush=True)\n"
+              "os.makedirs(snap, exist_ok=True)\n"
+              "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'x\\tpid={os.getpid()}\\tEXIT 0 DONE rebased (split)\\n')\n"
+              "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+              "print('  DONE: rebased (split)', flush=True)\n"
+              "print('  imported module sha256 at exit: ' + sibs(aggregate='9'*12), flush=True)\n"
+              "sys.exit(0)\n", 4),
+    "no_header": ("print('  nothing to rebase in --mode split (P_int=1)', flush=True)\n"
+                  "sys.exit(0)\n", 4),
+    "clean_abort": ("print(f'  tool source sha256 {own} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n"
+                    "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                    "os.makedirs(snap, exist_ok=True)\n"
+                    "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'x\\tpid={os.getpid()}\\tEXIT 5 aborted before any write\\n')\n"
+                    "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+                    "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                    "sys.exit(5)\n", 5),
+}
+
+
+def _logged_code(tmp_path, body):
+    """Run the REAL driver over one stand-in ticker and return the code it wrote to the log."""
+    import shutil
+    import subprocess
+    d = tmp_path
+    for f in ("seam_rebase_batch.py",) + srb.GUARDED[1:]:
+        shutil.copyfile(os.path.join(HERE, f), str(d / f))
+    (d / "seam_rebase.py").write_text(_standin(body), encoding="utf-8")
+    (d / "tick.txt").write_text("TEST\n", encoding="utf-8")
+    log = d / "b.log"
+    subprocess.run(
+        [sys.executable, str(d / "seam_rebase_batch.py"), "--apply",
+         "--tickers", str(d / "tick.txt"), "--log", str(log),
+         "--snapshot-root", str(d / "snaps")],
+        capture_output=True, text=True, cwd=str(d))
+    if not log.exists():
+        return None
+    lines = [l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return int(lines[-1].split("\t")[2]) if lines else None
+
+
+@pytest.mark.parametrize("name", sorted(_SCENARIOS))
+def test_the_driver_logs_the_right_code(tmp_path, name):
+    """The end-to-end assertion pytest was missing. A breach must log 4; only a CLEAN child keeps its
+    own code. R767 #1 shipped because this lived in bash and nothing in CI read it."""
+    body, want = _SCENARIOS[name]
+    assert _logged_code(tmp_path, body) == want, name
+
+
 # ---------------------------------------------------------------- the SIBLINGS cross-check (R765 #3)
 
 def _guard_verdict(tmp_path, sibling_src):
@@ -436,26 +525,71 @@ def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
     blocks = [n for n in _ast.walk(tree)
               if isinstance(n, _ast.If) and isinstance(n.test, _ast.Name) and n.test.id == "drift"]
     assert len(blocks) == 1, f"expected exactly one `if drift:` block, found {len(blocks)}"
+    drift = blocks[0]
 
-    binds = []
-    for node in _ast.walk(blocks[0]):
+    # THE REGION IS THE BLOCK **PLUS EVERY STATEMENT UP TO THE DETAIL WRITE** (R767 #1).
+    # My ast rewrite guarded the If node alone and so SHRANK the window the string version had -
+    # re-opening R763 #9 exactly. `rc = raw_rc` placed after the block and before
+    # `detail = os.path.join(` was missed, and it collapses 17 of 20 harness breach scenarios from
+    # 4 to 0 while pytest stays green. The string version's wider anchor was the point of R763 #9,
+    # and I deleted the comment that said so along with the code.
+    parent = None
+    for n in _ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            seq = getattr(n, field, None)
+            # `body` is a plain expression on Lambda/IfExp, so check it really is a statement list
+            if isinstance(seq, list) and any(s is drift for s in seq):
+                parent = seq
+    assert parent is not None, "could not locate the statement list holding `if drift:`"
+    start = parent.index(drift)
+    end = next((i for i in range(start + 1, len(parent))
+                if "detail = os.path.join(" in _ast.unparse(parent[i])), len(parent))
+    region = parent[start:end]
+    # The detail write must actually be FOUND. If it were not, `end` falls back to the end of the
+    # function and the region silently widens to everything after the block - which would over-fire
+    # rather than under-fire, but either way the pin would no longer mean what it says.
+    assert end < len(parent), (
+        "could not find the `detail = os.path.join(` statement after the drift block; the pin's "
+        "region is only meaningful between those two anchors")
+    assert len(region) >= 1
+
+    def _rebinds_rc(node):
+        """Every way a statement can bind the name rc, not only `rc = ...`."""
+        out = []
         tgts = []
         if isinstance(node, _ast.Assign):
-            tgts = node.targets
+            tgts = list(node.targets)
         elif isinstance(node, (_ast.AugAssign, _ast.AnnAssign)):
             tgts = [node.target]
+        elif isinstance(node, (_ast.For, _ast.AsyncFor)):
+            tgts = [node.target]                                  # `for rc in ...`
+        elif isinstance(node, (_ast.With, _ast.AsyncWith)):
+            tgts = [i.optional_vars for i in node.items if i.optional_vars]   # `with ... as rc`
+        elif isinstance(node, _ast.NamedExpr):
+            tgts = [node.target]                                  # `(rc := ...)`
+        elif isinstance(node, _ast.comprehension):
+            tgts = [node.target]
         for t in tgts:
-            # a tuple target, a parenthesised name and an augmented assignment all rebind rc too
-            names = ([e for e in t.elts] if isinstance(t, (_ast.Tuple, _ast.List)) else [t])
+            names = list(t.elts) if isinstance(t, (_ast.Tuple, _ast.List)) else [t]
             if any(isinstance(e, _ast.Name) and e.id == "rc" for e in names):
-                binds.append(_ast.unparse(node))
+                out.append(_ast.unparse(node).splitlines()[0][:90])
+        # and the forms no static target list can see
+        if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name) \
+                and node.func.id in ("exec", "eval", "setattr") and "rc" in _ast.dump(node):
+            out.append(_ast.unparse(node)[:90])
+        if isinstance(node, _ast.Subscript) and isinstance(node.value, _ast.Call) \
+                and isinstance(node.value.func, _ast.Name) and node.value.func.id in ("globals", "vars"):
+            out.append(_ast.unparse(node)[:90])
+        return out
 
+    binds = [b for stmt in region for n in _ast.walk(stmt) for b in _rebinds_rc(n)]
     assert binds == ["rc = recode_on_drift(rc)"], (
-        f"inside `if drift:`, rc must be rebound exactly ONCE and through the shipped function; "
-        f"found {binds}. Defeats already seen: 'rc = 4' then 'rc = raw_rc', 'rc, _ = raw_rc, 0', "
-        f"'rc -= (rc - raw_rc)', a revert after the old text anchor, and a comment carrying that "
-        f"anchor so the block appeared to end early")
-    assert not [n for n in _ast.walk(blocks[0])
+        f"from `if drift:` up to the detail write, rc must be rebound exactly ONCE and through the "
+        f"shipped function; found {binds}. Defeats already seen: 'rc = 4' then 'rc = raw_rc'; "
+        f"'rc, _ = raw_rc, 0'; 'rc -= (rc - raw_rc)'; a comment carrying the text anchor; and - the "
+        f"one this wider region exists for - a revert placed AFTER the block and BEFORE the detail "
+        f"write, which pytest missed while the driver harness went 4 -> 0 on 17 of 20 scenarios")
+    assert not [n for stmt in region for n in _ast.walk(stmt)
                 if isinstance(n, _ast.Name) and n.id == "snapshot_ok"], (
         "the recode must not branch on snapshot_ok - that scoping un-did R754 #5 once already")
 
