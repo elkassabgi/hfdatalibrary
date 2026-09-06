@@ -139,28 +139,60 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
     # if its enclosing function declares `global SIBLINGS`. Nothing below is weakened for module-level
     # code; the walk simply stops crediting a local with power it does not have.
     for _p in ast.walk(tree):
-        for _c in ast.iter_child_nodes(_p):
-            _c._guard_parent = _p                                # ast gives no parent links
+        for _f, _v in ast.iter_fields(_p):
+            for _c in (_v if isinstance(_v, list) else [_v]):
+                if isinstance(_c, ast.AST):
+                    _c._guard_parent = _p                        # ast gives no parent links
+                    _c._guard_field = _f                         # ...and the FIELD decides scope
 
     def _declares_global(fn) -> bool:
-        return any(isinstance(g, ast.Global) and "SIBLINGS" in g.names for g in ast.walk(fn))
+        """`global SIBLINGS` in THIS function's own body - not in a nested one, whose declaration
+        rebinds the module name only when that inner function runs and says nothing about this
+        one (R779 #4: the old walk reported an inner `global` as a second assignment out here)."""
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Global) and "SIBLINGS" in node.names:
+                p = node
+                while getattr(p, "_guard_parent", None) is not None:
+                    p = p._guard_parent
+                    if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                        break
+                if p is fn:
+                    return True
+        return False
 
     def _reaches_module_scope(node) -> bool:
+        """FAILS CLOSED: everything is checked unless it is PROVABLY a local.
+
+        R779 #2 - my previous version asked only "is any ancestor a def/class?", which accepted
+        EIGHT module-scope walrus disguises the predecessor refused (decorator on a def, decorator
+        on a class, a default argument, a lambda default, a class base, and three comprehension
+        forms), each binding 4 of 6 modules at runtime. Two facts it had wrong:
+          * a def's decorator_list, argument DEFAULTS and a class's bases/keywords are AST children
+            of that def but EXECUTE in the enclosing scope - only its `body` is the new scope;
+          * PEP 572 puts a comprehension's walrus in the CONTAINING scope. Only the comprehension's
+            own `for` TARGET is comprehension-local, which is the single case that may be skipped.
+        """
         n = node
         while getattr(n, "_guard_parent", None) is not None:
-            n = n._guard_parent
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
-                return _declares_global(n)                       # `global SIBLINGS` puts it back
-            if isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-                return False        # py3 gives a comprehension its own scope; its target is a local
+            p, fld = n._guard_parent, getattr(n, "_guard_field", None)
+            if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)) \
+                    and fld == "body":
+                return _declares_global(p)                       # `global SIBLINGS` puts it back
+            n = p
         return True
+
+    def _is_comprehension_target(node) -> bool:
+        """The one provable local: `[... for SIBLINGS in xs]` binds only inside the comprehension."""
+        return (isinstance(node, ast.comprehension)
+                and isinstance(getattr(node, "_guard_parent", None),
+                               (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)))
 
     # EVERY BINDING FORM, not only `=` (R767 #4). A target list that knows about Assign and AnnAssign
     # alone accepted seven shapes that rebind at runtime: a `for` target, a walrus, `with ... as`,
     # `import *`, a list `.pop()`, `del`, and setattr with a split string.
     found, dynamic = [], []
     for node in ast.walk(tree):
-        if not _reaches_module_scope(node):
+        if _is_comprehension_target(node) or not _reaches_module_scope(node):
             continue                                             # a local cannot rebind the global
         tgts = []
         if isinstance(node, ast.Assign):
@@ -223,8 +255,24 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
                 and isinstance(node.func.value, ast.Call) \
                 and isinstance(node.func.value.func, ast.Name) \
                 and node.func.value.func.id in ("globals", "vars") \
+                and not node.func.value.args and not node.func.value.keywords \
                 and node.func.attr in ("update", "__setitem__", "setdefault", "pop", "clear"):
+            # R779 #4: `vars(obj).update(...)` on an UNRELATED object is not a namespace write, and
+            # refusing it was a fresh false refusal. Only the zero-argument forms name THIS module.
             dynamic.append(f"{node.func.value.func.id}().{node.func.attr}()")
+        # `sys.modules[__name__].__dict__.update(SIBLINGS=...)` reaches the same dict by a third
+        # route, with no `globals()` call for the clause above to match (R779 #2, and R770's own
+        # REQUIRED #5 named it). Any mutating call on a `__dict__` attribute is refused.
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Attribute) \
+                and node.func.value.attr == "__dict__" \
+                and node.func.attr in ("update", "__setitem__", "setdefault", "pop", "clear"):
+            dynamic.append(f"__dict__.{node.func.attr}()")
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) \
+                        and t.value.attr == "__dict__":
+                    dynamic.append("__dict__[...] = ...")
         # and the subscript form, whether or not the key is a readable literal
         if isinstance(node, ast.Assign):
             for t in node.targets:

@@ -408,8 +408,19 @@ _SCENARIOS = {
 # R770 #1. The four scenarios above notice ONE of nine deliberate re-openings of defects earlier
 # reviews already found: three clauses are LIVE, turn a breach's logged 4 into 0 - which records the
 # ticker done and skips it forever, R760 #1's exact harm - and are invisible to every test. Each
-# scenario below is aimed at exactly one of them, and `test_each_new_scenario_needs_its_own_clause`
-# proves the aim by deleting the clause and requiring the code to fall to 0.
+# scenario below is aimed at exactly one of them.
+#
+# HOW THE AIM IS PROVEN, and where (R779 #5 - the previous version of this comment cited
+# `test_each_new_scenario_needs_its_own_clause`, which does not exist; `grep -rn` over the repo
+# returns exactly one hit, the citation itself). The aim is proven OUT OF TREE, by
+# scratchpad/scenario_control.py, which copies the driver, deletes one clause, drives the REAL
+# driver end to end and requires the LOGGED code to fall 4 -> 0. It is not a pytest test because
+# it mutates the driver's source, which a test running beside the real one must not do. Latest
+# receipt, on driver sha256 fed3af7f7a0b:
+#   `missing` -> sib_missing 4->0 | directional not-imported -> sib_hash_then_notimported 4->0
+#   write-path header hash -> hdr_wrong_sha 4->0 | `malformed` -> sib_malformed 4->0
+#   no-write header hash -> nw_hash_wrong 4->0 | no-write missing header -> nw_no_header 4->0
+#   the MERGE clause -> no change, and it is declared untested rather than claimed (see below)
 _HDR = ("print(f'  tool source sha256 {own} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n")
 _WROTE = ("os.makedirs(snap, exist_ok=True)\n"
           "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'x\\tpid={os.getpid()}\\tEXIT 0 DONE rebased (split)\\n')\n"
@@ -460,6 +471,31 @@ _SCENARIOS.update({
                       "print('  imported module sha256: ' + sibs(), flush=True)\n"
                       + _WROTE
                       + "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                      "sys.exit(0)\n", 4),
+    # ---- R779 #1: three MORE clauses whose removal takes a logged breach from 4 to 0 with all
+    # 160 tests green, and two of them invisible to the 25-scenario harness as well. R770's own
+    # text claimed RONEPAIR exercised `malformed`; it does not - with `malformed = []` every
+    # harness scenario is identical to shipped, because RONEPAIR is refused by `missing`.
+    #
+    # (d) the MALFORMED clause: every guarded module named exactly once with a good value, plus one
+    # trailing segment that is not a `name value` pair. missing/dupes/unknown/bad all stay quiet.
+    "sib_malformed": (_HDR
+                      + "print('  imported module sha256: ' + sibs() + ', bogus', flush=True)\n"
+                      + _WROTE
+                      + "print('  imported module sha256 at exit: ' + sibs() + ', bogus', flush=True)\n"
+                      "sys.exit(0)\n", 4),
+    # (e) and (f) the NO-WRITE path - a child that wrote nothing at all. Both differ from the
+    # write-path comparisons above, and the pre-existing `no_header` scenario reaches NEITHER,
+    # because a child printing no sibling line is refused earlier by _sibling_drift. To isolate
+    # these the child must print a VALID sibling line and still write nothing.
+    "nw_no_header": ("print('  imported module sha256: ' + sibs(), flush=True)\n"
+                     "print('  nothing to rebase in --mode split (P_int=1)', flush=True)\n"
+                     "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                     "sys.exit(0)\n", 4),
+    "nw_hash_wrong": ("print(f'  tool source sha256 {chr(48)*64} ({os.path.abspath(__file__)}) pid {os.getpid()}', flush=True)\n"
+                      "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                      "print('  nothing to rebase in --mode split (P_int=1)', flush=True)\n"
+                      "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
                       "sys.exit(0)\n", 4),
 })
 
@@ -518,6 +554,7 @@ def _guard_verdict(tmp_path, sibling_src):
 _REAL = tuple(n[:-3] for n in srb.GUARDED)
 _FULL = "SIBLINGS = " + repr(_REAL)
 _SHORT = "SIBLINGS = " + repr(_REAL[:4])
+_W = repr(_REAL[:4])          # the shrunk value, for the walrus-disguise cases below
 
 
 @pytest.mark.parametrize("shape,src", [
@@ -546,6 +583,31 @@ _SHORT = "SIBLINGS = " + repr(_REAL[:4])
     # R770 #3's other direction: scoping the walk to module level must NOT open the `global` door.
     ("global in a function", _FULL + "\ndef f():\n    global SIBLINGS\n    SIBLINGS = "
                              + repr(_REAL[:4]) + "\nf()"),
+    # R779 #2 - EIGHT module-scope walrus disguises my first scope fix accepted while the runtime
+    # bound 4 of 6. A def's decorators, its argument DEFAULTS and a class's BASES are AST children
+    # of that def but execute in the ENCLOSING scope; and PEP 572 puts a comprehension's walrus in
+    # the CONTAINING scope, so only the comprehension's `for` target is genuinely comp-local.
+    ("walrus in a def decorator",
+     _FULL + "\ndef _d(x):\n    return lambda f: f\n@_d((SIBLINGS := " + _W + "))\ndef g(): pass"),
+    ("walrus in a class decorator",
+     _FULL + "\ndef _d(x):\n    return lambda c: c\n@_d((SIBLINGS := " + _W + "))\nclass C: pass"),
+    ("walrus in an argument default",
+     _FULL + "\ndef g(a=(SIBLINGS := " + _W + ")):\n    return a"),
+    ("walrus in a lambda default",
+     _FULL + "\n_l = lambda a=(SIBLINGS := " + _W + "): a"),
+    ("walrus in a class base",
+     _FULL + "\nclass C(dict if (SIBLINGS := " + _W + ") else dict): pass"),
+    ("walrus in a list comprehension",
+     _FULL + "\n_x = [1 for _ in (1,) if (SIBLINGS := " + _W + ")]"),
+    ("walrus in a comprehension inside if",
+     _FULL + "\nif True:\n    _x = [1 for _ in (1,) if (SIBLINGS := " + _W + ")]"),
+    ("walrus in a generator expression",
+     _FULL + "\n_g = list(1 for _ in (1,) if (SIBLINGS := " + _W + "))"),
+    # R779 #2 / R770 REQUIRED #5's second named shape: the module dict reached without globals().
+    ("sys.modules __dict__.update",
+     _FULL + "\nimport sys\nsys.modules[__name__].__dict__.update(SIBLINGS=" + _W + ")"),
+    ("sys.modules __dict__[...] =",
+     _FULL + "\nimport sys\nsys.modules[__name__].__dict__['SIBLINGS'] = " + _W),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
@@ -568,6 +630,12 @@ def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     ("comprehension target", _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
     ("setattr in a function", _FULL + "\ndef f(o):\n    setattr(o, 'x', 1)"),
     ("globals() READ",       _FULL + "\n_g = globals().get('X')"),
+    # R779 #4: I removed one false refusal and added another. `vars(obj)` on an UNRELATED object is
+    # not a namespace write; only the ZERO-argument form names this module.
+    ("vars(obj).update",     _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
+                             "vars(_o).update(x=1)"),
+    ("a comprehension FOR target is genuinely comp-local",
+     _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
 ])
 def test_innocent_READS_of_SIBLINGS_are_not_refused(tmp_path, shape, src):
     """The other half of R767 #4, and the half that matters for whether the guard survives contact
@@ -674,16 +742,22 @@ def _is_detail_write(stmt) -> bool:
     left the near-identical DOCSTRING one wide open: a bare string expression carrying that text
     unparses to itself, so it matched, truncated the region early, and hid a later `rc = raw_rc`
     - the exact defeat R763 #9 and R767 #1 were each written about, arriving a third time by a
-    third route. A string constant is not an assignment, so the anchor is now a shape that
-    cannot be spelled in one."""
+    third route. A string constant is not an assignment.
+
+    R779 #3: but matching "an Attribute called `join`" was STILL forgeable, now by an ordinary
+    line - `detail = ', '.join(())`, and equally `''.join`, `sep.join`, `os.sep.join`. That
+    collapsed the region from 2 statements to 1 while `found_end` stayed True, so the fail-closed
+    assertion never fired and a revert after the block was invisible again. The anchor is
+    `os.path.join` specifically: Attribute(join) of Attribute(path) of Name(os)."""
     import ast as _a
+    f = stmt.value.func if (isinstance(stmt, _a.Assign) and isinstance(stmt.value, _a.Call)) else None
     return (isinstance(stmt, _a.Assign)
             and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], _a.Name)
             and stmt.targets[0].id == "detail"
-            and isinstance(stmt.value, _a.Call)
-            and isinstance(stmt.value.func, _a.Attribute)
-            and stmt.value.func.attr == "join")
+            and isinstance(f, _a.Attribute) and f.attr == "join"
+            and isinstance(f.value, _a.Attribute) and f.value.attr == "path"
+            and isinstance(f.value.value, _a.Name) and f.value.value.id == "os")
 
 
 def _drift_region(src: str):
