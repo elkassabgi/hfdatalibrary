@@ -711,6 +711,40 @@ _W = repr(_REAL[:4])          # the shrunk value, for the walrus-disguise cases 
      _FULL + "\nimport contextlib\nwith contextlib.nullcontext((1, 2)) as (*SIBLINGS, _x): pass"),
     ("starred assignment",
      _FULL + "\n*SIBLINGS, _x = (1, 2, 3)"),
+    # ---- R798: THE FAIL-CLOSED FORK, and these four are its PRICE, stated rather than discovered.
+    # They were ACCEPT cases in the previous five revisions, on the argument that `vars(_o)` and
+    # `_o.__dict__` name a maintainer's own object rather than the module. That distinction is the
+    # one five consecutive rounds could not make reliably: R779, R787, R793 and R798 each found
+    # spellings the rule missed, and R798 found nine still open. The guard no longer tries. Every
+    # member of the namespace family is refused AT MODULE SCOPE whatever it is used for - including
+    # a pure READ like `globals().get('X')`.
+    #
+    # The price is measured, not assumed: `seam_rebase.py` today contains globals( = 0, vars( = 0,
+    # __dict__ = 0, importlib = 0, exec( = 0, eval( = 0, setattr( = 0, and one `sys.modules.get`
+    # inside a function body that the module-scope walk skips. Zero false refusals on the real tool.
+    # A maintainer who genuinely wants one of these at module scope gets a loud refusal naming the
+    # token, and the fix is to move it into a function - which is where it belongs anyway, since a
+    # module-scope namespace call is what every one of the nine evasions used.
+    ("globals() READ at module scope",
+     _FULL + "\n_g = globals().get('X')"),
+    ("vars(obj).update at module scope",
+     _FULL + "\nimport types\n_o = types.SimpleNamespace()\nvars(_o).update(x=1)"),
+    ("obj.__dict__.update at module scope",
+     _FULL + "\nimport types\n_o = types.SimpleNamespace()\n_o.__dict__.update(x=1)"),
+    ("obj.__dict__[...] = at module scope",
+     _FULL + "\nimport types\n_o = types.SimpleNamespace()\n_o.__dict__['x'] = 1"),
+    # and the nine spellings R798 enumerated as still open under the rule this replaces
+    ("sys.modules.get(__name__)",
+     _FULL + "\nimport sys\nsys.modules.get(__name__).__dict__.update(SIBLINGS=" + _W + ")"),
+    ("import sys as _s",
+     _FULL + "\nimport sys as _s\n_s.modules[__name__].__dict__.update(SIBLINGS=" + _W + ")"),
+    ("from sys import modules",
+     _FULL + "\nfrom sys import modules\nmodules[__name__].__dict__.update(SIBLINGS=" + _W + ")"),
+    ("importlib.import_module",
+     _FULL + "\nimport importlib\nimportlib.import_module(__name__).__dict__.update(SIBLINGS="
+     + _W + ")"),
+    ("alias then globals().update",
+     _FULL + "\n_g = globals()\n_g.update(SIBLINGS=" + _W + ")"),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
@@ -732,20 +766,8 @@ def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     ("for target in a func", _FULL + "\ndef f():\n    for SIBLINGS in (1, 2):\n        pass"),
     ("comprehension target", _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
     ("setattr in a function", _FULL + "\ndef f(o):\n    setattr(o, 'x', 1)"),
-    ("globals() READ",       _FULL + "\n_g = globals().get('X')"),
-    # R779 #4: I removed one false refusal and added another. `vars(obj)` on an UNRELATED object is
-    # not a namespace write; only the ZERO-argument form names this module.
-    ("vars(obj).update",     _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
-                             "vars(_o).update(x=1)"),
     ("a comprehension FOR target is genuinely comp-local",
      _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
-    # R787 #5: `vars(_o).update()` was accepted while the IDENTICAL `_o.__dict__.update()` was
-    # refused — the same operation on the same object judged two ways. Both are ordinary objects
-    # and both are accepted now; only THIS module's namespace is refused.
-    ("obj.__dict__.update",  _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
-                             "_o.__dict__.update(x=1)"),
-    ("obj.__dict__[...] =",  _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
-                             "_o.__dict__['x'] = 1"),
 ])
 def test_innocent_READS_of_SIBLINGS_are_not_refused(tmp_path, shape, src):
     """The other half of R767 #4, and the half that matters for whether the guard survives contact
@@ -1132,3 +1154,74 @@ def test_a_ticker_logged_0_is_SKIPPED_on_the_next_run(tmp_path):
     _rc2, _out2, lines2 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps)
     assert lines2 == lines1, (
         "a ticker already logged 0 was processed again; the `done` set is not being honoured")
+
+
+# ------------------------------------------------------ R798 #2 and #6: the two real classification
+# misses. #2 was mine: I filed `main:554 not a.convention_decided` under "inert CLI flag" in the
+# sweep's miss classification. It is the sole gate on the PRICE-BASIS CONVENTION - whether dividends
+# are folded into the pre-2022 half - which is a decision reserved for Ahmed, and the driver was
+# disabling its own backstop by passing --convention-decided to the child regardless.
+
+def test_the_convention_flag_is_NEVER_implied_for_the_child():
+    """The module header says '--mode full needs --convention-decided on the driver too; it is never
+    implied.' It was implied: the child got the flag whenever mode was full. A source pin, because
+    reaching this line end-to-end needs --mode full, which the gate above correctly refuses."""
+    import ast as _a
+    src = open(os.path.join(HERE, "seam_rebase_batch.py"), encoding="utf-8").read()
+    tree = _a.parse(src)
+    adds = [n for n in _a.walk(tree)
+            if isinstance(n, _a.AugAssign) and isinstance(n.target, _a.Name) and n.target.id == "cmd"
+            and "--convention-decided" in _a.unparse(n.value)]
+    assert len(adds) == 1, f"expected one place that appends --convention-decided, found {len(adds)}"
+    guard = None
+    for n in _a.walk(tree):
+        if isinstance(n, _a.If) and any(s is adds[0] for s in n.body):
+            guard = n
+    assert guard is not None, "the append is not inside an `if` at all"
+    cond = _a.unparse(guard.test)
+    assert "a.convention_decided" in cond, (
+        f"the child receives --convention-decided under `{cond}` - it must also require that the "
+        f"DRIVER was given it, or the gate in main() is the only thing standing between an "
+        f"undecided convention and a dividend fold, and its own message says the child is the "
+        f"backstop")
+
+
+def test_the_gate_refuses_full_mode_without_the_decision(tmp_path):
+    """And the gate itself, end to end: --mode full without --convention-decided must refuse before
+    any child runs, writing no log line."""
+    import shutil
+    import subprocess
+    for f in ("seam_rebase_batch.py",) + srb.GUARDED[1:]:
+        shutil.copyfile(os.path.join(HERE, f), str(tmp_path / f))
+    (tmp_path / "seam_rebase.py").write_text(_standin(_SCENARIOS["clean"][0]), encoding="utf-8")
+    (tmp_path / "tick.txt").write_text("TEST" + chr(10), encoding="utf-8")
+    log = tmp_path / "b.log"
+    r = subprocess.run(
+        [sys.executable, str(tmp_path / "seam_rebase_batch.py"), "--apply", "--mode", "full",
+         "--tickers", str(tmp_path / "tick.txt"), "--log", str(log),
+         "--snapshot-root", str(tmp_path / "snaps")],
+        capture_output=True, text=True, cwd=str(tmp_path))
+    assert r.returncode == 1, r.stdout[-400:]
+    assert "convention" in (r.stdout + r.stderr).lower()
+    assert not log.exists() or not log.read_text(encoding="utf-8").strip(), (
+        "a pre-child refusal must write NO log line")
+
+
+def test_the_SKIPPED_test_is_not_satisfied_by_a_driver_that_refuses_everything(tmp_path):
+    """R798 #6: `test_a_ticker_logged_0_is_SKIPPED` asserts only that the log did not GROW, so a
+    driver that refuses ALL work passes it. The discriminating question is whether a ticker that is
+    NOT done still gets processed - which is what makes the `done` set a skip rather than a halt."""
+    log, snaps = tmp_path / "b.log", tmp_path / "snaps"
+    _rc1, _o1, lines1 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps, ticker="AAA")
+    assert len(lines1) == 1 and _code_of(lines1[0]) == "0", lines1
+
+    # the SAME ticker again: skipped, no new line
+    _rc2, _o2, lines2 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps, ticker="AAA")
+    assert lines2 == lines1, "a ticker already logged 0 was processed again"
+
+    # a DIFFERENT ticker: must still be processed, or `done` is halting rather than skipping
+    _rc3, out3, lines3 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps, ticker="BBB")
+    assert len(lines3) == 2, (
+        f"a ticker that was NOT done was not processed - the driver is refusing everything, which "
+        f"is what makes the log-did-not-grow assertion vacuous. out={out3[-300:]}")
+    assert lines3[-1].split(chr(9))[1] == "BBB", lines3[-1]

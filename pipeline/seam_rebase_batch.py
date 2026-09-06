@@ -135,52 +135,23 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         elts = [e.value if isinstance(e, ast.Starred) else e for e in elts]
         return any(isinstance(e, ast.Name) and e.id == "SIBLINGS" for e in elts)
 
-    # ---- the module-namespace rule, STRUCTURAL and hoisted out of the walk -----------------
-    # R793 #3: two of the four needles were DEAD. `ast.dump` never renders a dotted path, so
-    # `"sys.modules" in ast.dump(...)` cannot match `sys.modules[__name__]` - deleting either needle
-    # left the suite green, which is how a clause that never fires looks. R783's shape too: these
-    # were rebuilt on every node of the walk.
-    MUTATORS = ("update", "__setitem__", "setdefault", "pop", "clear")
-
-    def _is_sys_modules(expr) -> bool:
-        """`sys.modules[...]`, matched by SHAPE: Subscript of Attribute('modules') of Name('sys')."""
-        return (isinstance(expr, ast.Subscript)
-                and isinstance(expr.value, ast.Attribute) and expr.value.attr == "modules"
-                and isinstance(expr.value.value, ast.Name) and expr.value.value.id == "sys")
-
-    def _module_aliases(tree) -> set:
-        """Names bound at module scope to a module namespace. R793 #2: `_m = sys.modules[__name__]`
-        followed by `_m.__dict__.update(...)` reached the same dict through a name, which no
-        expression-local check can see."""
-        out = set()
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Assign) and len(n.targets) == 1 \
-                    and isinstance(n.targets[0], ast.Name):
-                v = n.value
-                if _is_sys_modules(v) or (isinstance(v, ast.Call) and isinstance(v.func, ast.Name)
-                                          and v.func.id in ("globals", "vars")
-                                          and not v.args and not v.keywords):
-                    out.add(n.targets[0].id)
-        return out
-
-    def _is_module_namespace(expr, aliases) -> bool:
-        """The receiver is THIS interpreter's module namespace, however it is spelled.
-
-        Deliberately symmetric between `vars(X)` and `X.__dict__` - R793 #2 found the previous
-        version refusing one spelling and accepting the other for the same object, in the commit
-        whose message claimed to have ended exactly that inconsistency."""
-        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) \
-                and expr.func.id in ("globals", "vars"):
-            if not expr.args and not expr.keywords:
-                return True                                   # globals() / vars()
-            return any(_is_sys_modules(a)
-                       or (isinstance(a, ast.Name) and a.id in aliases) for a in expr.args)
-        if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
-            v = expr.value
-            return _is_sys_modules(v) or (isinstance(v, ast.Name) and v.id in aliases)
-        return False
-
-    _aliases = _module_aliases(tree)
+    # ---- THE MODULE NAMESPACE: FAIL CLOSED, because enumerating its spellings does not work
+    # R798's judgement, and it is the R791 lesson applied to this guard. Five consecutive rounds
+    # wrote a rule for 'the module namespace however it is spelled' - globals()/vars(),
+    # sys.modules[...], an alias, __dict__, vars(sys.modules[name]) - and each round a reviewer
+    # found spellings it missed, four of those rounds on the PREVIOUS round's fix. Nine open
+    # spellings from five rules. Enumeration is the wrong shape here: the set of ways to reach a
+    # module's own namespace is not closed, so a matcher over it can never be either.
+    #
+    # So refuse the whole FAMILY at module scope, whatever it is used for. The price is measured,
+    # not assumed: in pipeline/seam_rebase.py today, globals( = 0, vars( = 0, __dict__ = 0,
+    # importlib = 0, exec( = 0, eval( = 0, setattr( = 0, and the single `sys.modules` is
+    # `sys.modules.get(name)` at line 158 INSIDE a function body, which the module-scope walk
+    # already skips. Zero false refusals today, and the cost of a future one is a loud, named
+    # refusal that says exactly which token to move into a function - not a silent unguarded
+    # module. `test_the_guard_ACCEPTS_THE_REAL_SHIPPED_TOOL` is what keeps that price honest.
+    NAMESPACE_CALLS = ('globals', 'vars', 'exec', 'eval', 'setattr', 'compile')
+    NAMESPACE_ATTRS = ('__dict__', 'modules', '__globals__', 'import_module')
 
     # WHICH BINDINGS CAN REACH MODULE SCOPE (R770 #3). ast.walk sees every node, including bodies of
     # functions and classes - so `def f(): SIBLINGS = 3`, an ordinary LOCAL that cannot touch the
@@ -315,17 +286,14 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         #   * `vars(sys.modules[__name__]).update(SIBLINGS=...)` accepted by BOTH, because my R779
         #     zero-argument restriction let an argument through and the `__dict__` clause saw no
         #     `__dict__`. The runtime bound 4 of 6.
-        # One rule now: the receiver is the module namespace when it is a bare `globals()`/`vars()`,
-        # or when it names `sys.modules` or `__name__` however it is spelled. Ordinary objects —
-        # `vars(_o)` and `_o.__dict__` alike — are left alone, because refusing a maintainer's own
-        # object is the false refusal that gets a guard deleted (R767 rule 5).
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr in MUTATORS and _is_module_namespace(node.func.value, _aliases):
-            dynamic.append(f"a mutating call on this module's namespace (.{node.func.attr}())")
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Subscript) and _is_module_namespace(t.value, _aliases):
-                    dynamic.append("this module's namespace[...] = ...")
+        # FAIL CLOSED on the whole namespace family (see NAMESPACE_CALLS above). No receiver
+        # analysis, no alias tracking, no 'is this really the module' judgement - those are the
+        # five rules that produced nine holes. If it appears at module scope, it is refused.
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in NAMESPACE_CALLS:
+            dynamic.append(f"{node.func.id}() at module scope")
+        if isinstance(node, ast.Attribute) and node.attr in NAMESPACE_ATTRS:
+            dynamic.append(f".{node.attr} at module scope")
         # and the subscript form, whether or not the key is a readable literal
         if isinstance(node, ast.Assign):
             for t in node.targets:
@@ -641,7 +609,13 @@ def main() -> int:
         hash_breach = None
         cmd = [sys.executable, "-u", os.path.join(HERE, a.tool), t] + (["--mode", a.mode] if seam else []) + \
               ["--apply", "--snapshot-dir", os.path.join(a.snapshot_root, t)]
-        if seam and a.mode == "full":
+        # PASS IT ONLY IF THE DRIVER WAS GIVEN IT (R798 #2). This used to append the flag whenever
+        # the mode was full, so the child received the convention decision whether or not anyone had
+        # made one - which disabled the very backstop the gate at the top of main() names in its own
+        # message ("every ticker would exit 5 otherwise"). With the gate the only route, the driver
+        # refuses AND the child would refuse: the header's "it is never implied" is now true of the
+        # code as well as of the sentence.
+        if seam and a.mode == "full" and a.convention_decided:
             cmd += ["--convention-decided"]
         if seam and a.events_file:
             cmd += ["--events-file", a.events_file]
