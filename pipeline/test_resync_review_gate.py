@@ -421,20 +421,42 @@ def test_no_child_code_survives_a_drift(rc):
 
 def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
     """A source pin over the CALL SITE, hardened after R760 #3 showed the old one passing on 5 of 6
-    mutations - including `rc = 4` followed by `rc = raw_rc`, a total revert."""
-    import re as _re
+    mutations - including `rc = 4` followed by `rc = raw_rc`, a total revert.
+
+    PARSED, NOT SPLIT (R765 #5). Every string-splitting version of this pin was defeated by moving
+    text across its anchors: a COMMENT containing `detail = os.path.join(` truncated the block early
+    and hid a later rebinding, and `globals()`, `(rc) =` and a backslash continuation each slipped
+    past the line-oriented regex. ast sees the block the way Python does, so the anchors cannot be
+    forged by text that is not code."""
+    import ast as _ast
     src = open(os.path.join(HERE, "seam_rebase_batch.py"), encoding="utf-8").read()
-    # R763 #9: the block used to end at "hash_breach = hash_breach or", so a revert placed one line
-    # AFTER that terminator was outside the pin. Run to the next real statement instead.
-    block = src.split("if drift:", 1)[1].split("detail = os.path.join(", 1)[0]
-    code = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith("#")]
-    # any rebinding of rc, not just "rc =": tuple targets and augmented assignment both defeated it
-    binds = [l for l in code if _re.match(r"^rc\b\s*(,|=|\+=|-=|\*=|/=|//=|%=|:)", l)]
+    tree = _ast.parse(src)
+
+    # find `if drift:` - the guard is a bare Name test, so it cannot be confused with `if drift and x`
+    blocks = [n for n in _ast.walk(tree)
+              if isinstance(n, _ast.If) and isinstance(n.test, _ast.Name) and n.test.id == "drift"]
+    assert len(blocks) == 1, f"expected exactly one `if drift:` block, found {len(blocks)}"
+
+    binds = []
+    for node in _ast.walk(blocks[0]):
+        tgts = []
+        if isinstance(node, _ast.Assign):
+            tgts = node.targets
+        elif isinstance(node, (_ast.AugAssign, _ast.AnnAssign)):
+            tgts = [node.target]
+        for t in tgts:
+            # a tuple target, a parenthesised name and an augmented assignment all rebind rc too
+            names = ([e for e in t.elts] if isinstance(t, (_ast.Tuple, _ast.List)) else [t])
+            if any(isinstance(e, _ast.Name) and e.id == "rc" for e in names):
+                binds.append(_ast.unparse(node))
+
     assert binds == ["rc = recode_on_drift(rc)"], (
-        f"between 'if drift:' and the detail-file write, rc must be rebound exactly once and through "
-        f"the shipped function; found {binds}. Defeats already seen: 'rc = 4' then 'rc = raw_rc', "
-        f"'rc, _ = raw_rc, 0', 'rc -= (rc - raw_rc)', and a revert placed after the block terminator")
-    assert "snapshot_ok" not in " ".join(code), (
+        f"inside `if drift:`, rc must be rebound exactly ONCE and through the shipped function; "
+        f"found {binds}. Defeats already seen: 'rc = 4' then 'rc = raw_rc', 'rc, _ = raw_rc, 0', "
+        f"'rc -= (rc - raw_rc)', a revert after the old text anchor, and a comment carrying that "
+        f"anchor so the block appeared to end early")
+    assert not [n for n in _ast.walk(blocks[0])
+                if isinstance(n, _ast.Name) and n.id == "snapshot_ok"], (
         "the recode must not branch on snapshot_ok - that scoping un-did R754 #5 once already")
 
 
