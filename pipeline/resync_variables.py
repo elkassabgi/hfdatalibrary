@@ -168,13 +168,24 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # ...and a line that MENTIONS a revocation we could not parse refuses outright rather than passing in
 # silence: we cannot tell who it was for, and the safe reading of "someone tried to withdraw this" is
 # to stop.
-# Narrowed to lines that name THIS TOOL (R763 #3). A bare "REVOKE-APPLY" also appears in PASSED.md's
-# own documentation of the syntax, and my first attempt to keep that from refusing every run was to
-# blind the parser inside fences - which re-opened the revoke path in eight shapes. The documentation
-# is written with a `<tool>.py` placeholder instead, so it does not name this tool and does not match.
-# The trade is stated rather than hidden: a revocation that MISSPELLS THE TOOL FILENAME escapes this
-# warning. A mistyped hash or id, which is far likelier, still trips it.
-REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY\s+resync_variables\.py", _re.I)
+# BROAD ON PURPOSE, and the third attempt at this line (R760 #2, R763 #3, R765 #1).
+#
+# Attempt 2 narrowed it to `REVOKE-APPLY\s+resync_variables\.py` so PASSED.md's own documentation of
+# the syntax would not refuse every run. That let NINE shapes of genuine revocation through with no
+# diagnostic at all - `REVOKE-APPLY pipeline/resync_variables.py ...` among them, which is the exact
+# string PASSED.md used to name the tool. A revocation must fail OPEN; narrowing this is the same act
+# as skipping a region, and both make a decision written in the file invisible.
+#
+# R765 prescribed paying at the SOURCE instead - writing the doc example with a look-alike hyphen so
+# it cannot match. I did not do that, because the REVOKE example exists to be COPIED: a reviewer
+# pasting a U+2011 token would write a revocation that matches neither the parser nor this warning,
+# which is the silent failure this whole line exists to prevent, handed to the one person actually
+# trying to withdraw an approval.
+#
+# The root fix is that the gate reads ONE file, so that file carries no example tokens: the syntax is
+# documented in the skill's SKILL.md, which this tool never opens, and PASSED.md holds only a pointer.
+# Nothing legitimate in PASSED.md can now contain this token except a real revocation.
+REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
 # PASSED.md is a MARKDOWN file that now documents this very syntax, so the tokens appear in it as
 # EXAMPLES. Fenced blocks and inline-code spans are therefore stripped before anything is matched.
 # This is structural, not another inference: an example lives in a fence or in backticks, a decision

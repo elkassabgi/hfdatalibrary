@@ -115,12 +115,32 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         tree = ast.parse(src, filename=path)
     except SyntaxError as ex:
         raise SystemExit(f"source guard: cannot parse {path} to cross-check SIBLINGS ({ex}) - refusing")
+    # WALK THE WHOLE TREE, not just tree.body (R765 #3). "Module level only; that is where it binds"
+    # was wrong: a module-level `if True:`, `try:`, `for`, or `if not TYPE_CHECKING:` block also binds
+    # at module scope, and a shrinking SIBLINGS inside one was invisible to a tree.body scan while the
+    # runtime bound the shrunk tuple - confirmed end to end in a dry run. ast.walk sees every nesting.
     found = []
-    for node in tree.body:                                   # module level only; that is where it binds
+    for node in ast.walk(tree):
         tgts = ([node.target] if isinstance(node, ast.AnnAssign) else
                 list(node.targets) if isinstance(node, ast.Assign) else [])
         if any(isinstance(t, ast.Name) and t.id == "SIBLINGS" for t in tgts):
             found.append(node.value)
+    # A name bound by anything other than a plain assignment cannot be read statically at all, so it
+    # is refused rather than ignored: `globals()["SIBLINGS"] = ...`, `exec(...)`, `setattr(...)`.
+    # Note the shape being matched: for `globals()["SIBLINGS"] = x` the string sits in the ASSIGNMENT's
+    # subscript, not inside the `globals()` Call, so looking for it in the Call finds nothing - that
+    # was my first attempt and it let the case straight through.
+    dynamic = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and any(not isinstance(t, ast.Name) for t in n.targets) \
+                and "SIBLINGS" in ast.dump(n):
+            dynamic.append("indirect assignment target")
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                and n.func.id in ("exec", "eval", "setattr") and "SIBLINGS" in ast.dump(n):
+            dynamic.append(n.func.id)
+    if dynamic:
+        raise SystemExit(f"source guard: {path} binds SIBLINGS in a way no static read can follow "
+                         f"({', '.join(sorted(set(dynamic)))}) - refusing to run")
     if not found:
         raise SystemExit(f"source guard: {path} declares no SIBLINGS tuple, so the driver cannot confirm "
                          f"it guards the same modules the child imports - refusing to run")
@@ -135,10 +155,21 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
                          f"driver cannot read what the child guards - refusing to run")
     theirs = tuple(e.value for e in value.elts)
     ours = tuple(n[:-3] for n in GUARDED)
-    if theirs != ours:
-        raise SystemExit(f"source guard: the guarded set and the tool's SIBLINGS disagree - driver "
-                         f"{ours} vs seam_rebase.py {theirs}. One of them was edited without the other; "
-                         f"whichever is short is a module nobody is hashing.")
+    # COMPARE AS SETS (R765 #3's rider). The property this guard exists for is WHICH modules are
+    # covered; the declaration order is not part of it, and refusing on a reorder is a false refusal
+    # that teaches the next author to disable the guard. A duplicate is still refused, because a
+    # tuple naming a module twice hides a missing one behind an equal length.
+    if len(set(theirs)) != len(theirs):
+        dupes = sorted({n for n in theirs if theirs.count(n) > 1})
+        raise SystemExit(f"source guard: seam_rebase.py's SIBLINGS names {dupes} more than once, which "
+                         f"can hide a missing module behind an equal count - refusing to run")
+    if set(theirs) != set(ours):
+        missing, extra = sorted(set(ours) - set(theirs)), sorted(set(theirs) - set(ours))
+        raise SystemExit(f"source guard: the guarded set and the tool's SIBLINGS disagree - "
+                         + (f"the tool does not name {missing}; " if missing else "")
+                         + (f"the tool names {extra} which the driver does not hash; " if extra else "")
+                         + f"driver {ours} vs seam_rebase.py {theirs}. One was edited without the "
+                         f"other; whichever is short is a module nobody is hashing.")
 
 
 HEADER_RE = re.compile(r"tool source sha256 (\S+) \(.*\) pid (\d+)")

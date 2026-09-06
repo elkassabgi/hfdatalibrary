@@ -230,12 +230,36 @@ def test_an_innocent_comment_still_authorises(passed):
     assert passed(GOOD + "  # cleared; avoid rerunning during the daily window") is True
 
 
-def test_a_revocation_misspelling_the_TOOL_escapes_the_warning(passed):
-    """A stated, deliberate limit rather than a hidden one (R763 #3). The mention check is narrowed to
-    lines that NAME THIS TOOL, so PASSED.md can document the syntax with a `<tool>.py` placeholder
-    without refusing every run. The cost is that a revocation which misspells the filename is not
-    warned about. A mistyped hash or id, far likelier, still is - see the test above."""
-    assert passed(GOOD + "\nREVOKE-APPLY resync_varibles.py oops") is True
+@pytest.mark.parametrize("shape,line", [
+    ("path prefix",       f"REVOKE-APPLY pipeline/resync_variables.py {SHA} {ID}"),
+    ("dot-slash prefix",  f"REVOKE-APPLY ./resync_variables.py {SHA} {ID}"),
+    ("absolute path",     f"REVOKE-APPLY D:/x/pipeline/resync_variables.py {SHA} {ID}"),
+    ("bold filename",     f"REVOKE-APPLY **resync_variables.py** {SHA} {ID}"),
+    ("backticked file",   f"REVOKE-APPLY `resync_variables.py` {SHA} {ID}"),
+    ("colon after token", f"REVOKE-APPLY: resync_variables.py {SHA} {ID}"),
+    ("word between",      f"REVOKE-APPLY for resync_variables.py {SHA} {ID}"),
+    ("no .py",            f"REVOKE-APPLY resync_variables {SHA} {ID}"),
+    ("bolded token",      f"**REVOKE-APPLY** resync_variables.py {SHA} {ID}"),
+    ("wrapped over two",  f"REVOKE-APPLY\n    resync_variables.py {SHA} {ID}"),
+    ("misspelled file",   f"REVOKE-APPLY resync_varibles.py {SHA} {ID}"),
+])
+def test_no_shape_of_revocation_is_silently_ignored(passed, shape, line):
+    """R765 #1, and this test REPLACES one that pinned the hole as intended.
+
+    The previous version asserted `is True` for the misspelled-filename shape and called it a stated
+    limit. It was not a limit, it was a fail-open with eleven members: narrowing the mention scan to
+    `REVOKE-APPLY\\s+resync_variables\\.py` dropped every shape below with no diagnostic, including
+    `REVOKE-APPLY pipeline/resync_variables.py ...` - the exact string PASSED.md used to name the
+    tool. Pinning a fail-open as intended is worse than the fail-open, because the next author who
+    fixes it breaks a test.
+
+    A revocation fails OPEN by design: anything that mentions one and does not parse must refuse."""
+    assert passed(GOOD + "\n" + line) is False, shape
+
+
+def test_a_revocation_for_a_DIFFERENT_id_does_not_block_this_one(passed):
+    """The other side of the asymmetry: it parses, names another review, and must be ignored."""
+    assert passed(GOOD + f"\nREVOKE-APPLY resync_variables.py {SHA} AR-999") is True
 
 
 # ---------------------------------------------------------------- documentation is not a decision
@@ -277,11 +301,19 @@ def test_a_revocation_is_never_hidden_by_quoting(passed, wrap):
     assert passed(GOOD + "\n" + wrap.format(r=f"REVOKE-APPLY resync_variables.py {SHA} {ID}")) is False
 
 
-def test_the_documentation_placeholder_is_inert(passed):
-    """The other side of the same coin: PASSED.md documents the syntax, and since the revoke scanner
-    reads fences too, the example must not name a real tool. It uses `<tool>.py`."""
+def test_even_a_PLACEHOLDER_revoke_example_now_refuses(passed):
+    """R765 #1's resolution, and it reverses this test's previous assertion on purpose.
+
+    The placeholder `<tool>.py` was the second attempt at letting PASSED.md document the syntax. It
+    only worked because the mention scan had been narrowed to lines naming this tool - and that
+    narrowing dropped eleven shapes of GENUINE revocation. Given a choice between "documentation can
+    live in the decision file" and "no withdrawal is ever silently ignored", the second wins.
+
+    So the scan is broad again and PASSED.md carries NO example tokens at all; the syntax moved to
+    the skill's SKILL.md, which this tool never opens. A revoke example written into PASSED.md now
+    refuses, loudly, which is the correct answer to someone putting an example in the decision file."""
     doc = "```\nREVOKE-APPLY <tool>.py <sha12> <review id>\n```\n" + GOOD
-    assert passed(doc) is True
+    assert passed(doc) is False
 
 
 def test_a_mistyped_revocation_naming_the_tool_still_refuses_loudly(passed, capsys):
@@ -298,8 +330,8 @@ def test_the_projects_own_passed_file_does_not_refuse(tmp_path):
         "# Adversarial review - pass log\n\n"
         "To authorise, write at column 0:\n\n"
         "```\nAPPROVE-APPLY resync_variables.py <sha12> <review id>\n```\n\n"
-        "To withdraw one, write anywhere on a line:\n\n"
-        "```\nREVOKE-APPLY <tool>.py <sha12> <review id>\n```\n\n"
+        "The syntax for granting and withdrawing lives in SKILL.md, not here, because this file's\n"
+        "withdrawal scanner reads every line and would read an example as a real attempt.\n\n"
         "| date | id | verdict |\n|---|---|---|\n| 2026-09-05 | AR-001 | PASS |\n",
         encoding="utf-8")
     import io
@@ -312,6 +344,59 @@ def test_the_projects_own_passed_file_does_not_refuse(tmp_path):
     out = buf.getvalue()
     assert "REVOKE" not in out.upper(), "the file's own documentation is making the gate refuse:\n" + out
     assert "carries no approval line" in out, out
+
+
+# ---------------------------------------------------------------- the SIBLINGS cross-check (R765 #3)
+
+def _guard_verdict(tmp_path, sibling_src):
+    """Run the driver's own _assert_guarded_matches_tool against a stand-in seam_rebase.py.
+
+    Returns True if it ACCEPTED. The guard raises SystemExit to refuse, which is the shape the real
+    driver relies on, so it is caught here rather than mocked."""
+    import shutil
+    import subprocess
+    for f in ("seam_rebase_batch.py", "aggregate.py", "r2_client.py", "variables_sync.py",
+              "compute_variables.py", "symbol_map.py"):
+        shutil.copyfile(os.path.join(HERE, f), str(tmp_path / f))
+    (tmp_path / "seam_rebase.py").write_text(sibling_src + "\n", encoding="utf-8")
+    runner = tmp_path / "_run.py"
+    runner.write_text(
+        "import sys\nsys.path.insert(0, sys.argv[1])\n"
+        "import seam_rebase_batch as s\ns._assert_guarded_matches_tool()\nprint('ACCEPTED')\n",
+        encoding="utf-8")
+    r = subprocess.run([sys.executable, str(runner), str(tmp_path)], capture_output=True, text=True)
+    return "ACCEPTED" in r.stdout
+
+
+_REAL = tuple(n[:-3] for n in srb.GUARDED)
+_FULL = "SIBLINGS = " + repr(_REAL)
+_SHORT = "SIBLINGS = " + repr(_REAL[:4])
+
+
+@pytest.mark.parametrize("shape,src", [
+    ("if True",        _FULL + "\nif True:\n    " + _SHORT),
+    ("try",            _FULL + "\ntry:\n    " + _SHORT + "\nexcept Exception:\n    pass"),
+    ("for",            _FULL + "\nfor _ in (1,):\n    " + _SHORT),
+    ("TYPE_CHECKING",  _FULL + "\nimport typing\nif not typing.TYPE_CHECKING:\n    " + _SHORT),
+    ("globals()",      _FULL + "\nglobals()['SIBLINGS'] = " + repr(_REAL[:4])),
+    ("duplicate name", "SIBLINGS = " + repr(_REAL[:5] + (_REAL[0],))),
+])
+def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
+    """R765 #3: the guard walked `tree.body` only, so a shrink inside ANY module-level block bound at
+    runtime while the guard read the honest declaration above it. `globals()[...]` escaped even the
+    first fix, because the name sits in the assignment's subscript, not inside the `globals()` call."""
+    assert _guard_verdict(tmp_path, src) is False, shape
+
+
+def test_an_honest_declaration_is_accepted(tmp_path):
+    assert _guard_verdict(tmp_path, _FULL) is True
+
+
+def test_a_REORDERED_tuple_is_accepted(tmp_path):
+    """R765's rider, and it reverses the previous behaviour. The property the guard exists for is
+    WHICH modules are covered, not the order they are declared in. Refusing a reorder is a false
+    refusal, and a guard that cries wolf is the one that gets commented out."""
+    assert _guard_verdict(tmp_path, "SIBLINGS = " + repr(tuple(reversed(_REAL)))) is True
 
 
 def test_a_bom_does_not_hide_the_first_line(passed):
