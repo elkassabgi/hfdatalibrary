@@ -128,9 +128,59 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
     # at module scope, and a shrinking SIBLINGS inside one was invisible to a tree.body scan while the
     # runtime bound the shrunk tuple - confirmed end to end in a dry run. ast.walk sees every nesting.
     def _binds_siblings(t) -> bool:
-        """Is this assignment TARGET the name SIBLINGS? Tuple/list unpacking counts."""
+        """Is this assignment TARGET the name SIBLINGS? Tuple/list unpacking counts, and so does a
+        STARRED target: `for *SIBLINGS, x in ...` and `with cm as (*SIBLINGS, x)` bind it just as
+        surely, and both were accepted by every revision until R793 #7 enumerated them."""
         elts = list(t.elts) if isinstance(t, (ast.Tuple, ast.List)) else [t]
+        elts = [e.value if isinstance(e, ast.Starred) else e for e in elts]
         return any(isinstance(e, ast.Name) and e.id == "SIBLINGS" for e in elts)
+
+    # ---- the module-namespace rule, STRUCTURAL and hoisted out of the walk -----------------
+    # R793 #3: two of the four needles were DEAD. `ast.dump` never renders a dotted path, so
+    # `"sys.modules" in ast.dump(...)` cannot match `sys.modules[__name__]` - deleting either needle
+    # left the suite green, which is how a clause that never fires looks. R783's shape too: these
+    # were rebuilt on every node of the walk.
+    MUTATORS = ("update", "__setitem__", "setdefault", "pop", "clear")
+
+    def _is_sys_modules(expr) -> bool:
+        """`sys.modules[...]`, matched by SHAPE: Subscript of Attribute('modules') of Name('sys')."""
+        return (isinstance(expr, ast.Subscript)
+                and isinstance(expr.value, ast.Attribute) and expr.value.attr == "modules"
+                and isinstance(expr.value.value, ast.Name) and expr.value.value.id == "sys")
+
+    def _module_aliases(tree) -> set:
+        """Names bound at module scope to a module namespace. R793 #2: `_m = sys.modules[__name__]`
+        followed by `_m.__dict__.update(...)` reached the same dict through a name, which no
+        expression-local check can see."""
+        out = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 \
+                    and isinstance(n.targets[0], ast.Name):
+                v = n.value
+                if _is_sys_modules(v) or (isinstance(v, ast.Call) and isinstance(v.func, ast.Name)
+                                          and v.func.id in ("globals", "vars")
+                                          and not v.args and not v.keywords):
+                    out.add(n.targets[0].id)
+        return out
+
+    def _is_module_namespace(expr, aliases) -> bool:
+        """The receiver is THIS interpreter's module namespace, however it is spelled.
+
+        Deliberately symmetric between `vars(X)` and `X.__dict__` - R793 #2 found the previous
+        version refusing one spelling and accepting the other for the same object, in the commit
+        whose message claimed to have ended exactly that inconsistency."""
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) \
+                and expr.func.id in ("globals", "vars"):
+            if not expr.args and not expr.keywords:
+                return True                                   # globals() / vars()
+            return any(_is_sys_modules(a)
+                       or (isinstance(a, ast.Name) and a.id in aliases) for a in expr.args)
+        if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
+            v = expr.value
+            return _is_sys_modules(v) or (isinstance(v, ast.Name) and v.id in aliases)
+        return False
+
+    _aliases = _module_aliases(tree)
 
     # WHICH BINDINGS CAN REACH MODULE SCOPE (R770 #3). ast.walk sees every node, including bodies of
     # functions and classes - so `def f(): SIBLINGS = 3`, an ordinary LOCAL that cannot touch the
@@ -269,25 +319,12 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         # or when it names `sys.modules` or `__name__` however it is spelled. Ordinary objects —
         # `vars(_o)` and `_o.__dict__` alike — are left alone, because refusing a maintainer's own
         # object is the false refusal that gets a guard deleted (R767 rule 5).
-        MUTATORS = ("update", "__setitem__", "setdefault", "pop", "clear")
-
-        def _is_module_namespace(expr) -> bool:
-            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) \
-                    and expr.func.id in ("globals", "vars"):
-                if not expr.args and not expr.keywords:
-                    return True                       # globals() / vars() == this module
-                return any(s in ast.dump(a) for a in expr.args
-                           for s in ("sys.modules", "__name__", "'modules'"))
-            if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
-                return any(s in ast.dump(expr.value) for s in ("sys.modules", "__name__"))
-            return False
-
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr in MUTATORS and _is_module_namespace(node.func.value):
+                and node.func.attr in MUTATORS and _is_module_namespace(node.func.value, _aliases):
             dynamic.append(f"a mutating call on this module's namespace (.{node.func.attr}())")
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Subscript) and _is_module_namespace(t.value):
+                if isinstance(t, ast.Subscript) and _is_module_namespace(t.value, _aliases):
                     dynamic.append("this module's namespace[...] = ...")
         # and the subscript form, whether or not the key is a readable literal
         if isinstance(node, ast.Assign):

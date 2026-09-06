@@ -690,6 +690,27 @@ _W = repr(_REAL[:4])          # the shrunk value, for the walrus-disguise cases 
     # a computed key on the module namespace - R767 #4's split string, third costume
     ("globals()[split key] =",
      _FULL + "\n_k = 'SIB' 'LINGS'\nglobals()[_k] = " + _W),
+    # R793 #2 and #3 - the module namespace reached through an ALIAS, which no expression-local
+    # check can see, and which the previous version missed because two of its four needles were
+    # dead code (`ast.dump` never renders a dotted path, so `"sys.modules" in dump(...)` could not
+    # match `sys.modules[__name__]`).
+    ("alias __dict__.update",
+     _FULL + "\nimport sys\n_m = sys.modules[__name__]\n_m.__dict__.update(SIBLINGS=" + _W + ")"),
+    ("alias __dict__[computed] =",
+     _FULL + "\nimport sys\n_m = sys.modules[__name__]\n_k = 'SIB' 'LINGS'\n_m.__dict__[_k] = " + _W),
+    ("alias vars().update",
+     _FULL + "\nimport sys\n_m = sys.modules[__name__]\nvars(_m).update(SIBLINGS=" + _W + ")"),
+    ("sys.modules by NAME .__dict__",
+     _FULL + "\nimport sys\nsys.modules['seam_rebase'].__dict__.update(SIBLINGS=" + _W + ")"),
+    ("vars(sys.modules by name)",
+     _FULL + "\nimport sys\nvars(sys.modules['seam_rebase']).update(SIBLINGS=" + _W + ")"),
+    # R793 #7 - starred unpacking targets, accepted by every revision so far
+    ("starred for target",
+     _FULL + "\nfor *SIBLINGS, _x in ((1, 2),): pass"),
+    ("starred with-as target",
+     _FULL + "\nimport contextlib\nwith contextlib.nullcontext((1, 2)) as (*SIBLINGS, _x): pass"),
+    ("starred assignment",
+     _FULL + "\n*SIBLINGS, _x = (1, 2, 3)"),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
@@ -940,38 +961,23 @@ def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
     forged by text that is not code."""
     import ast as _ast
     src = open(os.path.join(HERE, "seam_rebase_batch.py"), encoding="utf-8").read()
-    tree = _ast.parse(src)
 
-    # find `if drift:` - the guard is a bare Name test, so it cannot be confused with `if drift and x`
-    blocks = [n for n in _ast.walk(tree)
-              if isinstance(n, _ast.If) and isinstance(n.test, _ast.Name) and n.test.id == "drift"]
-    assert len(blocks) == 1, f"expected exactly one `if drift:` block, found {len(blocks)}"
-    drift = blocks[0]
-
+    # ONE DEFINITION OF THE REGION (R66), which R779 REQUIRED #3 asked for and I skipped three
+    # rounds running. The pin used to re-implement `_drift_region` inline, so a shrink applied to
+    # the PIN's copy left 188 tests passing and the shrunken pin then accepted a driver carrying
+    # R767 #1's exact revert - the forgery test below guards the shared function, and this guards
+    # the shipped source, and until now they were not the same code (R793 #4).
+    region, found_end = _drift_region(src)
     # THE REGION IS THE BLOCK **PLUS EVERY STATEMENT UP TO THE DETAIL WRITE** (R767 #1).
-    # My ast rewrite guarded the If node alone and so SHRANK the window the string version had -
-    # re-opening R763 #9 exactly. `rc = raw_rc` placed after the block and before
+    # My first ast rewrite guarded the If node alone and so SHRANK the window the string version
+    # had - re-opening R763 #9 exactly. `rc = raw_rc` placed after the block and before
     # `detail = os.path.join(` was missed, and it collapses 17 of 20 harness breach scenarios from
-    # 4 to 0 while pytest stays green. The string version's wider anchor was the point of R763 #9,
-    # and I deleted the comment that said so along with the code.
-    parent = None
-    for n in _ast.walk(tree):
-        for field in ("body", "orelse", "finalbody"):
-            seq = getattr(n, field, None)
-            # `body` is a plain expression on Lambda/IfExp, so check it really is a statement list
-            if isinstance(seq, list) and any(s is drift for s in seq):
-                parent = seq
-    assert parent is not None, "could not locate the statement list holding `if drift:`"
-    start = parent.index(drift)
-    # STRUCTURAL end anchor (R770 #2) - see _is_detail_write: the text test was forgeable by a
-    # docstring, which is the comment forge R765 #5 closed, returning by another door.
-    end = next((i for i in range(start + 1, len(parent)) if _is_detail_write(parent[i])),
-               len(parent))
-    region = parent[start:end]
-    # The detail write must actually be FOUND. If it were not, `end` falls back to the end of the
-    # function and the region silently widens to everything after the block - which would over-fire
-    # rather than under-fire, but either way the pin would no longer mean what it says.
-    assert end < len(parent), (
+    # 4 to 0 while pytest stays green.
+    #
+    # The detail write must actually be FOUND. If it were not, the region silently widens to
+    # everything after the block - which would over-fire rather than under-fire, but either way the
+    # pin would no longer mean what it says.
+    assert found_end, (
         "could not find the `detail = os.path.join(` statement after the drift block; the pin's "
         "region is only meaningful between those two anchors")
     assert len(region) >= 1
@@ -1068,3 +1074,61 @@ def test_an_unparseable_tool_refuses(tmp_path):
     p.write_text("SIBLINGS = (", encoding="utf-8")
     with pytest.raises(SystemExit):
         srb._assert_guarded_matches_tool(str(p))
+
+
+# ------------------------------------------------------- the RESUME LEDGER (R793 #1's real gap)
+# The AST-derived sweep put 39 of 82 control-flow tests under a scenario. Classifying the 43 misses
+# by reading them: 11 are CLI flags, 6 are the end-of-run summary counters, ~20 build the
+# human-readable reason string (the DECISION they explain, `fresh = ...`, IS caught), 2 are the
+# merge R787 proved unreachable over 120 sequences - and FIVE are real: the resume ledger. No
+# scenario ever ran the driver TWICE, so neither half of it had ever been exercised.
+
+def _run_driver(tmp_path, body, log, snaps, ticker="TEST"):
+    """One driver run against a chosen log/snapshot root, returning (rc, output, log lines)."""
+    import shutil
+    import subprocess
+    d = tmp_path
+    for f in ("seam_rebase_batch.py",) + srb.GUARDED[1:]:
+        if not (d / f).exists():
+            shutil.copyfile(os.path.join(HERE, f), str(d / f))
+    (d / "seam_rebase.py").write_text(_standin(body), encoding="utf-8")
+    (d / "tick.txt").write_text(ticker + chr(10), encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(d / "seam_rebase_batch.py"), "--apply",
+         "--tickers", str(d / "tick.txt"), "--log", str(log), "--snapshot-root", str(snaps)],
+        capture_output=True, text=True, cwd=str(d))
+    lines = ([l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
+             if log.exists() else [])
+    return r.returncode, (r.stdout or "") + (r.stderr or ""), lines
+
+
+def _code_of(line):
+    return line.split(chr(9))[2]
+
+
+def test_an_unresolved_4_in_the_log_REFUSES_the_next_run(tmp_path):
+    """A logged 4 means served state is UNKNOWN, and starting more work on top of that is exactly
+    what this code exists to prevent. Until now nothing tested it: every scenario ran the driver
+    once, against a fresh log."""
+    log, snaps = tmp_path / "b.log", tmp_path / "snaps"
+    _rc1, _out1, lines1 = _run_driver(tmp_path, _SCENARIOS["drift"][0], log, snaps)
+    assert lines1 and _code_of(lines1[-1]) == "4", lines1
+
+    _rc2, out2, lines2 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps)
+    assert lines2 == lines1, (
+        f"the driver ran MORE work on top of an unresolved 4 and wrote "
+        f"{len(lines2) - len(lines1)} new log line(s) while served state was still UNKNOWN")
+    assert "UNKNOWN" in out2 or "restore" in out2, out2[-400:]
+
+
+def test_a_ticker_logged_0_is_SKIPPED_on_the_next_run(tmp_path):
+    """The other half of the same ledger, and the mechanism R760 #1's harm runs through: a breach
+    mis-logged as 0 marks the ticker done and it is never revisited. Pinning that a 0 really does
+    mean skip makes the value of logging 4 instead a tested property rather than an assumption."""
+    log, snaps = tmp_path / "b.log", tmp_path / "snaps"
+    _rc1, _o1, lines1 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps)
+    assert lines1 and _code_of(lines1[-1]) == "0", lines1
+
+    _rc2, _out2, lines2 = _run_driver(tmp_path, _SCENARIOS["clean"][0], log, snaps)
+    assert lines2 == lines1, (
+        "a ticker already logged 0 was processed again; the `done` set is not being honoured")
