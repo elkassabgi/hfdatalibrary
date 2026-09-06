@@ -607,6 +607,76 @@ def test_no_child_code_survives_a_drift(rc):
     assert srb.recode_on_drift(rc) == 4
 
 
+def _is_detail_write(stmt) -> bool:
+    """The pin's END anchor, matched STRUCTURALLY (R770 #2).
+
+    Every earlier version asked whether the TEXT `detail = os.path.join(` appeared in the
+    statement - first by splitting source lines, then, after R765 #5, by searching
+    `ast.unparse(stmt)`. The ast rewrite closed the COMMENT forge (comments are not nodes) and
+    left the near-identical DOCSTRING one wide open: a bare string expression carrying that text
+    unparses to itself, so it matched, truncated the region early, and hid a later `rc = raw_rc`
+    - the exact defeat R763 #9 and R767 #1 were each written about, arriving a third time by a
+    third route. A string constant is not an assignment, so the anchor is now a shape that
+    cannot be spelled in one."""
+    import ast as _a
+    return (isinstance(stmt, _a.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], _a.Name)
+            and stmt.targets[0].id == "detail"
+            and isinstance(stmt.value, _a.Call)
+            and isinstance(stmt.value.func, _a.Attribute)
+            and stmt.value.func.attr == "join")
+
+
+def _drift_region(src: str):
+    """(region, found_end) for the statements from `if drift:` up to the detail write.
+
+    Shared by the pin and by the forgery test below, so the property the pin rests on is
+    exercised against a source I control as well as against the shipped one."""
+    import ast as _a
+    tree = _a.parse(src)
+    blocks = [n for n in _a.walk(tree)
+              if isinstance(n, _a.If) and isinstance(n.test, _a.Name) and n.test.id == "drift"]
+    assert len(blocks) == 1, f"expected exactly one `if drift:` block, found {len(blocks)}"
+    drift = blocks[0]
+    parent = None
+    for n in _a.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            seq = getattr(n, field, None)
+            if isinstance(seq, list) and any(s is drift for s in seq):
+                parent = seq
+    assert parent is not None, "could not locate the statement list holding `if drift:`"
+    start = parent.index(drift)
+    end = next((i for i in range(start + 1, len(parent)) if _is_detail_write(parent[i])),
+               len(parent))
+    return parent[start:end], end < len(parent)
+
+
+def test_the_end_anchor_cannot_be_FORGED_by_a_docstring():
+    """R770 #2, shown able to fail. A module whose drift block is followed by a string expression
+    carrying the anchor text, then a revert, then the REAL detail write: the region must still
+    reach the revert. Under the text rule the region stopped at the string and `rc = 99` was
+    invisible - which is how a 4 becomes a 0 and a ticker is skipped forever."""
+    forged = (
+        "import os\n"
+        "def f(drift, raw_rc):\n"
+        "    rc = 1\n"
+        "    if drift:\n"
+        "        rc = recode_on_drift(rc)\n"
+        '    """detail = os.path.join(a, b)"""\n'
+        "    rc = 99\n"
+        "    detail = os.path.join('a', 'b')\n"
+        "    return rc, detail\n")
+    region, found_end = _drift_region(forged)
+    assert found_end, "the real detail write must still be the anchor, not the string"
+    import ast as _a
+    rebinds = [_a.unparse(n) for stmt in region for n in _a.walk(stmt)
+               if isinstance(n, _a.Assign) and len(n.targets) == 1
+               and isinstance(n.targets[0], _a.Name) and n.targets[0].id == "rc"]
+    assert "rc = 99" in rebinds, (
+        f"the forged docstring truncated the region: the pin would not see the revert. got {rebinds}")
+
+
 def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
     """A source pin over the CALL SITE, hardened after R760 #3 showed the old one passing on 5 of 6
     mutations - including `rc = 4` followed by `rc = raw_rc`, a total revert.
@@ -641,8 +711,10 @@ def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():
                 parent = seq
     assert parent is not None, "could not locate the statement list holding `if drift:`"
     start = parent.index(drift)
-    end = next((i for i in range(start + 1, len(parent))
-                if "detail = os.path.join(" in _ast.unparse(parent[i])), len(parent))
+    # STRUCTURAL end anchor (R770 #2) - see _is_detail_write: the text test was forgeable by a
+    # docstring, which is the comment forge R765 #5 closed, returning by another door.
+    end = next((i for i in range(start + 1, len(parent)) if _is_detail_write(parent[i])),
+               len(parent))
     region = parent[start:end]
     # The detail write must actually be FOUND. If it were not, `end` falls back to the end of the
     # function and the region silently widens to everything after the block - which would over-fire
