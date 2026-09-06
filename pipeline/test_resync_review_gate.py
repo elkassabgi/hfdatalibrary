@@ -505,6 +505,17 @@ def test_an_honest_declaration_is_accepted(tmp_path):
     assert _guard_verdict(tmp_path, _FULL) is True
 
 
+def test_the_guard_ACCEPTS_THE_REAL_SHIPPED_TOOL():
+    """The check that stands between this guard and a production outage.
+
+    Every other test here drives a stand-in. But `_assert_guarded_matches_tool` runs against the REAL
+    seam_rebase.py on every batch start, and the guard now refuses `exec`, `eval` and `setattr`
+    outright - deliberately, because a name built from parts cannot be read statically (R767 #4). The
+    cost of that choice is that adding any of them to seam_rebase.py for an unrelated reason would
+    refuse EVERY run, and no stand-in test would notice. This one would."""
+    srb._assert_guarded_matches_tool()          # raises SystemExit to refuse
+
+
 def test_a_REORDERED_tuple_is_accepted(tmp_path):
     """R765's rider, and it reverses the previous behaviour. The property the guard exists for is
     WHICH modules are covered, not the order they are declared in. Refusing a reorder is a false

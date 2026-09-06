@@ -188,6 +188,12 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
                 and node.func.id == "setattr" and len(node.args) >= 2:
             dynamic.append("setattr")
 
+    # NOTE ON exec/eval/setattr: these are refused whether or not SIBLINGS visibly appears in them,
+    # because R767 #4's escape was `setattr` with the name SPLIT ACROSS STRINGS - which no static
+    # match can see. The cost is stated rather than discovered: adding any of the three to
+    # seam_rebase.py for an UNRELATED reason will refuse every batch. That is deliberate, it fails
+    # closed, and `test_the_guard_ACCEPTS_THE_REAL_SHIPPED_TOOL` is what stops it reaching production
+    # unnoticed - the real tool contains none of them today.
     if dynamic:
         raise SystemExit(f"source guard: {path} binds SIBLINGS in a way no static read can follow "
                          f"({', '.join(sorted(set(dynamic)))}) - refusing to run")
