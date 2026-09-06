@@ -465,16 +465,40 @@ _SHORT = "SIBLINGS = " + repr(_REAL[:4])
 @pytest.mark.parametrize("shape,src", [
     ("if True",        _FULL + "\nif True:\n    " + _SHORT),
     ("try",            _FULL + "\ntry:\n    " + _SHORT + "\nexcept Exception:\n    pass"),
-    ("for",            _FULL + "\nfor _ in (1,):\n    " + _SHORT),
+    ("for block",      _FULL + "\nfor _ in (1,):\n    " + _SHORT),
     ("TYPE_CHECKING",  _FULL + "\nimport typing\nif not typing.TYPE_CHECKING:\n    " + _SHORT),
     ("globals()",      _FULL + "\nglobals()['SIBLINGS'] = " + repr(_REAL[:4])),
     ("duplicate name", "SIBLINGS = " + repr(_REAL[:5] + (_REAL[0],))),
+    # R767 #4 - seven more shapes that bound at runtime while the guard read the honest declaration
+    ("for target",     _FULL + "\nfor SIBLINGS in (" + repr(_REAL[:4]) + ",): pass"),
+    ("with-as",        _FULL + "\nimport contextlib\nwith contextlib.nullcontext("
+                       + repr(_REAL[:4]) + ") as SIBLINGS: pass"),
+    ("walrus",         _FULL + "\n_ = (SIBLINGS := " + repr(_REAL[:4]) + ")"),
+    ("import star",    _FULL + "\nfrom os.path import *"),
+    ("list + pop",     "SIBLINGS = " + repr(list(_REAL)) + "\nSIBLINGS.pop()"),
+    ("del",            _FULL + "\ndel SIBLINGS\n" + _FULL),
+    ("exec",           _FULL + "\nexec('SIB' + 'LINGS = ()')"),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
-    """R765 #3: the guard walked `tree.body` only, so a shrink inside ANY module-level block bound at
-    runtime while the guard read the honest declaration above it. `globals()[...]` escaped even the
-    first fix, because the name sits in the assignment's subscript, not inside the `globals()` call."""
+    """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
+    block bound at runtime while the guard read the honest declaration above it. `globals()[...]`
+    escaped even the first fix, because the name sits in the assignment's subscript rather than
+    inside the `globals()` call. R767 then found seven more that a target list of Assign/AnnAssign
+    cannot see at all."""
     assert _guard_verdict(tmp_path, src) is False, shape
+
+
+@pytest.mark.parametrize("shape,src", [
+    ("tuple unpack read", _FULL + "\na, b, c, d, e, f = SIBLINGS"),
+    ("dict value read",   _FULL + "\nD = {}\nD['x'] = SIBLINGS"),
+    ("attribute read",    _FULL + "\nimport types\nns = types.SimpleNamespace()\nns.m = SIBLINGS"),
+])
+def test_innocent_READS_of_SIBLINGS_are_not_refused(tmp_path, shape, src):
+    """The other half of R767 #4, and the half that matters for whether the guard survives contact
+    with a maintainer. My first version matched the name ANYWHERE in an indirect assignment, so
+    merely READING SIBLINGS into a tuple, a dict or an attribute refused the whole batch. It removed
+    one false refusal and added three. A guard that cries wolf is the one that gets commented out."""
+    assert _guard_verdict(tmp_path, src) is True, shape
 
 
 def test_an_honest_declaration_is_accepted(tmp_path):

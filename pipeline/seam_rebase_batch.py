@@ -127,25 +127,67 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
     # was wrong: a module-level `if True:`, `try:`, `for`, or `if not TYPE_CHECKING:` block also binds
     # at module scope, and a shrinking SIBLINGS inside one was invisible to a tree.body scan while the
     # runtime bound the shrunk tuple - confirmed end to end in a dry run. ast.walk sees every nesting.
-    found = []
+    def _binds_siblings(t) -> bool:
+        """Is this assignment TARGET the name SIBLINGS? Tuple/list unpacking counts."""
+        elts = list(t.elts) if isinstance(t, (ast.Tuple, ast.List)) else [t]
+        return any(isinstance(e, ast.Name) and e.id == "SIBLINGS" for e in elts)
+
+    # EVERY BINDING FORM, not only `=` (R767 #4). A target list that knows about Assign and AnnAssign
+    # alone accepted seven shapes that rebind at runtime: a `for` target, a walrus, `with ... as`,
+    # `import *`, a list `.pop()`, `del`, and setattr with a split string.
+    found, dynamic = [], []
     for node in ast.walk(tree):
-        tgts = ([node.target] if isinstance(node, ast.AnnAssign) else
-                list(node.targets) if isinstance(node, ast.Assign) else [])
-        if any(isinstance(t, ast.Name) and t.id == "SIBLINGS" for t in tgts):
-            found.append(node.value)
-    # A name bound by anything other than a plain assignment cannot be read statically at all, so it
-    # is refused rather than ignored: `globals()["SIBLINGS"] = ...`, `exec(...)`, `setattr(...)`.
-    # Note the shape being matched: for `globals()["SIBLINGS"] = x` the string sits in the ASSIGNMENT's
-    # subscript, not inside the `globals()` Call, so looking for it in the Call finds nothing - that
-    # was my first attempt and it let the case straight through.
-    dynamic = []
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Assign) and any(not isinstance(t, ast.Name) for t in n.targets) \
-                and "SIBLINGS" in ast.dump(n):
-            dynamic.append("indirect assignment target")
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
-                and n.func.id in ("exec", "eval", "setattr") and "SIBLINGS" in ast.dump(n):
-            dynamic.append(n.func.id)
+        tgts = []
+        if isinstance(node, ast.Assign):
+            tgts = list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            tgts = [node.target]
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            tgts = [node.target]
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            tgts = [i.optional_vars for i in node.items if i.optional_vars]
+        elif isinstance(node, ast.NamedExpr):
+            tgts = [node.target]
+        elif isinstance(node, ast.comprehension):
+            tgts = [node.target]
+        if any(_binds_siblings(t) for t in tgts):
+            # Only a plain `SIBLINGS = <literal>` or its ANNOTATED form `SIBLINGS: t = <literal>` is
+            # statically READABLE; every other binding form binds something this guard cannot read.
+            # (The annotated form is accepted deliberately - R763 #6 records that an earlier regex
+            # refused it wrongly, and a guard that refuses correct code gets disabled.)
+            readable = (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)) or \
+                       (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                        and node.value is not None)
+            if readable:
+                found.append(node.value)
+            else:
+                dynamic.append(type(node).__name__)
+
+        # forms that rebind or mutate without any target the walk above can see
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+            dynamic.append("import *")
+        if isinstance(node, ast.Delete) and any(_binds_siblings(t) for t in node.targets):
+            dynamic.append("del")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "SIBLINGS" \
+                and node.func.attr in ("pop", "append", "remove", "clear", "extend", "insert", "__setitem__"):
+            dynamic.append(f"SIBLINGS.{node.func.attr}()")
+        # `globals()["SIBLINGS"] = x` puts the name in the assignment's SUBSCRIPT, not in the call, so
+        # it has to be matched on the target. Matching it anywhere in the node was my previous version
+        # and it produced three FALSE refusals on innocent READS - `a, b = SIBLINGS`,
+        # `d['x'] = SIBLINGS`, `ns.m = SIBLINGS` (R767 #4). Only the target side may refuse.
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if not isinstance(t, ast.Name) and "SIBLINGS" in ast.dump(t):
+                    dynamic.append("indirect assignment target")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in ("exec", "eval"):
+            dynamic.append(node.func.id)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "setattr" and len(node.args) >= 2:
+            dynamic.append("setattr")
+
     if dynamic:
         raise SystemExit(f"source guard: {path} binds SIBLINGS in a way no static read can follow "
                          f"({', '.join(sorted(set(dynamic)))}) - refusing to run")
@@ -157,7 +199,13 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
                          f"runtime, so a later shrinking assignment would leave modules unguarded while "
                          f"the first still looked right - refusing to run")
     value = found[0]
-    if not isinstance(value, (ast.Tuple, ast.List)) or not all(
+    # A TUPLE, not a list (R767 #4). A list literal is mutable, so a later `.pop()` shrinks the set
+    # the runtime binds while this static read still sees six names. The mutation calls are refused
+    # above as well; requiring an immutable literal removes the shape rather than chasing its methods.
+    if isinstance(value, ast.List):
+        raise SystemExit(f"source guard: {path}'s SIBLINGS is a LIST literal. A list can be shrunk in "
+                         f"place after this guard reads it - declare it as a tuple.")
+    if not isinstance(value, ast.Tuple) or not all(
             isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts):
         raise SystemExit(f"source guard: {path}'s SIBLINGS is not a literal tuple of strings, so the "
                          f"driver cannot read what the child guards - refusing to run")
