@@ -181,10 +181,39 @@ what remains by roughly five percentage points.
 
 The gap that does remain is the **dividend factor**, which the split-mode repair deliberately leaves
 in place pending the price-basis convention decision described above. Tested rather than asserted: for
-50 of 67 tickers the residual step matches, to within 5 %, the dividend factor `D` that the fleet
-measurement recorded independently. Four tickers do not fit that explanation — FTNT, GME, CMG and
-CHPT, all with `D` at essentially 1.0 — and their residual is market movement across the seam weekend,
-which the control shows is of the same size.
+**50 of 67** tickers the residual step matches, to within 5 %, the dividend factor `D` that the fleet
+measurement recorded independently.
+
+**The other 17 are named here rather than summarised, and they are 17, not four.** An earlier version
+of this paragraph said "four do not fit", which left 13 tickers unaccounted for and produced a 50 + 4
+that collided with the unrelated "54 of 67" in the table above (R765 #4). The full list, with each
+ticker's residual step and its recorded `D`:
+
+| | step | `D` | step / `D` | inside the no-seam control band? |
+|---|---|---|---|---|
+| FTNT | 0.8685 | 1.0001 | 0.868 | **no** |
+| GME | 0.8893 | 1.0004 | 0.889 | yes |
+| CMG | 0.9180 | 1.0000 | 0.918 | yes |
+| OTLY | 0.9239 | 1.0000 | 0.924 | yes |
+| CPRT | 0.9264 | 1.0000 | 0.926 | yes |
+| LRCX | 0.8883 | 0.9553 | 0.930 | yes |
+| NVDA | 0.9299 | 0.9983 | 0.932 | yes |
+| SHOP | 0.9341 | 1.0001 | 0.934 | yes |
+| SPCE | 0.9401 | 0.9994 | 0.941 | yes |
+| COO | 0.9439 | 0.9997 | 0.944 | yes |
+| SOXX | 0.9159 | 0.9659 | 0.948 | yes |
+| NOW | 0.9491 | 1.0002 | 0.949 | yes |
+| SMH | 0.9265 | 0.9755 | 0.950 | yes |
+| ODFL | 0.9294 | 0.9785 | 0.950 | yes |
+| IHE | 0.9753 | 0.9277 | 1.051 | yes |
+| PXJ | 0.9690 | 0.9004 | 1.076 | yes |
+| CHPT | 1.0920 | 0.9998 | 1.092 | **no** |
+
+**15 of the 17 sit inside the 10th-to-90th percentile of the no-seam control** (0.8808 .. 1.0032),
+so their residual is not distinguishable from ordinary market movement across that weekend — which is
+the same explanation the four originally named were given, now applied to all of the ones it fits.
+Only **FTNT** and **CHPT** fall outside both the dividend band and the control band, and neither is
+explained here.
 
 Two supporting checks the same hour. Bar for bar, NVDA's and AVGO's pre-seam prices are at exactly `K`
 times the anchor on 1,872,208 of 1,872,208 and 1,186,232 of 1,186,232 bars, with volumes at exactly

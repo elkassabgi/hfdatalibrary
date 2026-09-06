@@ -45,9 +45,17 @@ import argparse, datetime as dt, os, re, subprocess, sys
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RELEASE = ("To release the batch after the restore: append ONE line to the log in its own format - "
-           "<UTC stamp>\\t<TICKER>\\t<code>\\t0s\\t<note> - with code 0 if the restore succeeded (e.g. "
-           "`2026-09-05T13:00:00Z\\tXYZ\\t0\\t0s\\trestored by hand from <snap dir>`); any other code keeps the refusal.")
+# CONDITION-NEUTRAL ON PURPOSE (R765 #6). This string is appended LAST to STOP_TEXT[4], so whatever
+# it says has the final word. It used to say "with code 0 if the restore succeeded", which flatly
+# contradicts the branch immediately above it for the case where no snapshot exists and there is
+# nothing to restore from - and the contradiction was the last thing the operator read. It now names
+# the condition that is true in BOTH cases: you established that served state is correct.
+RELEASE = ("To release the batch: append ONE line to the log in its own format - "
+           "<UTC stamp>\\t<TICKER>\\t<code>\\t0s\\t<note> - with code 0 ONLY if you have ESTABLISHED "
+           "THAT SERVED STATE IS CORRECT, by whichever route applies above (a restore that succeeded, "
+           "or your own comparison against the store when there was nothing to restore). Say which in "
+           "the note, e.g. `2026-09-05T13:00:00Z\\tXYZ\\t0\\t0s\\trestored by hand from <snap dir>` or "
+           "`...\\t0\\t0s\\tno snapshot; served == store, verified by hand`. Any other code keeps the refusal.")
 
 STOP_TEXT = {
     1: ("STOPPING: the last ticker was written and then RESTORED from its snapshot (a failure between the first "
