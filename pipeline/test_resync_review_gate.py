@@ -512,6 +512,52 @@ def test_a_REORDERED_tuple_is_accepted(tmp_path):
     assert _guard_verdict(tmp_path, "SIBLINGS = " + repr(tuple(reversed(_REAL)))) is True
 
 
+LIVE_PASSED = r"D:\research\hfdatalibrary\.claude\skills\adversarial-review\PASSED.md"
+
+
+def test_the_live_PASSED_file_holds_ZERO_example_tokens():
+    """R767 #5: this is the invariant the whole PASSED.md/SKILL.md split rests on, and until now
+    nothing asserted it.
+
+    The gate reads exactly one file and its revoke scan reads every line of that file, fences
+    included, so a withdrawal cannot be hidden by quoting it. The price is that ANY example token
+    written into PASSED.md is read as a real attempt. The design holds only while that file carries
+    none. R767 also observed that `.claude/` is gitignored (`.gitignore:56`), so no commit, test or
+    CI run can see this file - which is precisely why the check must be machine-local and must SKIP
+    rather than fail when the file is absent."""
+    if not os.path.exists(LIVE_PASSED):
+        pytest.skip("live PASSED.md not on this machine (it is gitignored, so CI never sees it)")
+    text = open(LIVE_PASSED, encoding="utf-8-sig", errors="replace").read()
+    for tok in ("APPROVE-APPLY", "REVOKE-APPLY"):
+        n = text.count(tok)
+        assert n == 0, (
+            f"PASSED.md contains {n} occurrence(s) of {tok}. The gate reads this file and treats a "
+            f"{tok} line as a real attempt, so an EXAMPLE here refuses every run. THE FIX IS TO "
+            f"DELETE THE LINE - never to narrow the matcher, which is what R763 #2 and R765 #1 both "
+            f"did and both re-opened the revoke path. The syntax belongs in the skill's SKILL.md, "
+            f"which this tool never opens.")
+
+
+def test_the_live_PASSED_file_refuses_for_the_RIGHT_reason():
+    """Machine-local companion to the above (R767 #5). It must refuse because there is no approval,
+    not because its own text tripped the revoke scan."""
+    if not os.path.exists(LIVE_PASSED):
+        pytest.skip("live PASSED.md not on this machine")
+    import io as _io
+    buf = _io.StringIO()
+    real, rv._say = rv._say, lambda s: buf.write(s + "\n")
+    try:
+        verdict = rv.reviewed_ok(ID, LIVE_PASSED)
+    finally:
+        rv._say = real
+    out = buf.getvalue()
+    assert verdict is False, "the live PASSED.md authorised a run it should not have"
+    assert "REVOKE" not in out.upper(), (
+        "the live PASSED.md is refusing because of its own text, not because an approval is absent. "
+        "That is a self-inflicted denial of service - delete the offending line:\n" + out)
+    assert "carries no approval line" in out, out
+
+
 def test_a_bom_does_not_hide_the_first_line(passed):
     """A UTF-8 BOM made line 1 unmatchable; harmless for an approval, but it would also swallow a
     revocation written there."""

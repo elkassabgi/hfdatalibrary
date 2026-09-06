@@ -184,7 +184,18 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 #
 # The root fix is that the gate reads ONE file, so that file carries no example tokens: the syntax is
 # documented in the skill's SKILL.md, which this tool never opens, and PASSED.md holds only a pointer.
-# Nothing legitimate in PASSED.md can now contain this token except a real revocation.
+#
+# WHAT THAT COSTS, stated rather than hidden (R767 #5/#6). The design's invariant is "PASSED.md
+# contains this token only as a real attempt", and it is NOT enforceable by CI: `.claude/` is
+# gitignored (`.gitignore:56`), so PASSED.md and SKILL.md are untracked and no commit, test run or CI
+# job can see them. `test_the_live_PASSED_file_holds_ZERO_example_tokens` checks it where the file
+# actually lives and SKIPS elsewhere, which is the honest best available.
+#
+# So a stale revocation, a revocation naming ANOTHER tool, this token quoted in a PASS row, or the
+# tool's own refusal transcript pasted back in will each refuse EVERY run. That is a denial of
+# service - but a loud, diagnosable one: the tool names the file and the line number it objected to.
+# THE FIX IS ALWAYS TO DELETE THE LINE, NEVER TO NARROW THIS MATCHER. Narrowing it is what R763 #2
+# and R765 #1 both did, and both silently re-opened the revoke path - eleven shapes the second time.
 REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
 # PASSED.md is a MARKDOWN file that now documents this very syntax, so the tokens appear in it as
 # EXAMPLES. Fenced blocks and inline-code spans are therefore stripped before anything is matched.
