@@ -368,9 +368,14 @@ def _standin(body: str) -> str:
         "def h(n):\n"
         "    with open(os.path.join(HERE, n + '.py'), 'rb') as f:\n"
         "        return hashlib.sha256(f.read()).hexdigest()[:12]\n"
-        "def sibs(drop=(), **over):\n"
-        "    return ', '.join(f'{n} ' + over.get(n, 'not-imported' if n == 'seam_rebase' else h(n))\n"
-        "                     for n in SIBLINGS if n not in drop)\n"
+        "def _v(n, over):\n"
+        "    return over.get(n, 'not-imported' if n == 'seam_rebase' else h(n))\n"
+        "def sibs(drop=(), dup=(), extra='', **over):\n"
+        "    parts = [f'{n} ' + _v(n, over) for n in SIBLINGS if n not in drop]\n"
+        "    parts += [f'{n} ' + _v(n, over) for n in dup]\n"
+        "    if extra:\n"
+        "        parts.append(extra)\n"
+        "    return ', '.join(parts)\n"
         "own = hashlib.sha256(open(os.path.abspath(__file__),'rb').read()).hexdigest()\n"
         "snap = sys.argv[sys.argv.index('--snapshot-dir') + 1]\n"
         + body)
@@ -497,6 +502,69 @@ _SCENARIOS.update({
                       "print('  nothing to rebase in --mode split (P_int=1)', flush=True)\n"
                       "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
                       "sys.exit(0)\n", 4),
+    # ---- R787 #1: three more clauses whose removal takes a logged breach from 4 to 0 with all 175
+    # tests green. The first is the one that matters most.
+    #
+    # (g) THE FINAL CHILD-HASH vs DRIVER-HASH COMPARE — the comparison the whole sibling mechanism
+    # exists for, and it had never been exercised. Every earlier drift scenario drifts the TRAILER
+    # only, so the reading-vs-reading loop answers first and this `if` is never reached. A sibling
+    # replaced BEFORE the child imported it reports the SAME drifted hash in header and trailer:
+    # the readings agree, the merge is consistent, nothing upstream objects, and only the final
+    # comparison against the driver's own start-time reading can see it.
+    "sib_consistent_drift": (_HDR
+                             + "print('  imported module sha256: ' + sibs(aggregate='9'*12), flush=True)\n"
+                             + _WROTE
+                             + "print('  imported module sha256 at exit: ' + sibs(aggregate='9'*12), flush=True)\n"
+                             "sys.exit(0)\n", 4),
+    # (h) the write-path RECORD/HEADER/CHILD PID TIE. The record line carries a pid that is not the
+    # child's, i.e. another actor wrote it (R741 #5's "another actor's EXIT 1 RESTORED after t0 was
+    # believed"). Everything else about the run is clean.
+    "rec_foreign_pid": (_HDR
+                        + "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                        + "os.makedirs(snap, exist_ok=True)\n"
+                        "open(os.path.join(snap,'_RESULT.txt'),'a').write('x\\tpid=999999\\tEXIT 0 DONE rebased (split)\\n')\n"
+                        "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+                        "print('  DONE: rebased (split)', flush=True)\n"
+                        + "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                        "sys.exit(0)\n", 4),
+    # (i) the write-path RECORD FRESHNESS STAMP. `rec_stamp >= stamp` is why the other scenarios use
+    # a literal 'x' — it sorts above any ISO timestamp. A stamp from 2020 is a record from BEFORE
+    # this run started, i.e. a leftover being read as this run's outcome.
+    # ---- R787 #4 / R770 REQUIRED #2 AT LAST. Rather than close the clauses a reviewer named, I ran
+    # the sweep the requirement always asked for: neutralise EVERY clause, run EVERY scenario, and
+    # a clause is caught only if a LOGGED code moves. First run: 8 of 15, with a no-op control
+    # correctly detected by nothing. These five close the gaps it found by name — which is the whole
+    # point of a sweep, that it does not depend on anyone noticing the right clause.
+    "sib_no_line_but_header": (_HDR + _WROTE
+                               + "sys.exit(0)\n", 4),          # header fine, NO sibling line at all
+    "sib_dupe": (_HDR
+                 + "print('  imported module sha256: ' + sibs(dup=('aggregate',)), flush=True)\n"
+                 + _WROTE
+                 + "print('  imported module sha256 at exit: ' + sibs(dup=('aggregate',)), flush=True)\n"
+                 "sys.exit(0)\n", 4),
+    "sib_unknown": (_HDR
+                    + "print('  imported module sha256: ' + sibs(extra='notamodule abc123def456'), flush=True)\n"
+                    + _WROTE
+                    + "print('  imported module sha256 at exit: ' + sibs(extra='notamodule abc123def456'), flush=True)\n"
+                    "sys.exit(0)\n", 4),
+    "sib_bad_value": (_HDR
+                      + "print('  imported module sha256: ' + sibs(aggregate='zz'), flush=True)\n"
+                      + _WROTE
+                      + "print('  imported module sha256 at exit: ' + sibs(aggregate='zz'), flush=True)\n"
+                      "sys.exit(0)\n", 4),
+    "sib_all_not_imported": (_HDR
+                             + "print('  imported module sha256: ' + sibs(**{n: 'not-imported' for n in SIBLINGS}), flush=True)\n"
+                             + _WROTE
+                             + "print('  imported module sha256 at exit: ' + sibs(**{n: 'not-imported' for n in SIBLINGS}), flush=True)\n"
+                             "sys.exit(0)\n", 4),
+    "rec_stale_stamp": (_HDR
+                        + "print('  imported module sha256: ' + sibs(), flush=True)\n"
+                        + "os.makedirs(snap, exist_ok=True)\n"
+                        "open(os.path.join(snap,'_RESULT.txt'),'a').write(f'2020-01-01T00:00:00Z\\tpid={os.getpid()}\\tEXIT 0 DONE rebased (split)\\n')\n"
+                        "print(f'  snapshot: 4 objects -> {snap} (size + MD5/ETag verified)', flush=True)\n"
+                        "print('  DONE: rebased (split)', flush=True)\n"
+                        + "print('  imported module sha256 at exit: ' + sibs(), flush=True)\n"
+                        "sys.exit(0)\n", 4),
 })
 
 
@@ -608,6 +676,20 @@ _W = repr(_REAL[:4])          # the shrunk value, for the walrus-disguise cases 
      _FULL + "\nimport sys\nsys.modules[__name__].__dict__.update(SIBLINGS=" + _W + ")"),
     ("sys.modules __dict__[...] =",
      _FULL + "\nimport sys\nsys.modules[__name__].__dict__['SIBLINGS'] = " + _W),
+    # R787 #2 - three module-scope shrinks a54a632 refused and my R779 #4 fix let back in. BOTH
+    # causes were that fix: `_declares_global`'s walk never broke on ClassDef, and the zero-argument
+    # restriction let `vars(<the module>)` through while the `__dict__` clause saw no `__dict__`.
+    ("global in a CLASS BODY",
+     _FULL + "\nclass C:\n    global SIBLINGS\n    SIBLINGS = " + _W),
+    ("global in a class body inside a function",
+     _FULL + "\ndef f():\n    class C:\n        global SIBLINGS\n        SIBLINGS = " + _W + "\nf()"),
+    ("vars(sys.modules[__name__]).update",
+     _FULL + "\nimport sys\nvars(sys.modules[__name__]).update(SIBLINGS=" + _W + ")"),
+    ("vars(sys.modules[__name__])[...] =",
+     _FULL + "\nimport sys\nvars(sys.modules[__name__])['SIBLINGS'] = " + _W),
+    # a computed key on the module namespace - R767 #4's split string, third costume
+    ("globals()[split key] =",
+     _FULL + "\n_k = 'SIB' 'LINGS'\nglobals()[_k] = " + _W),
 ])
 def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
     """R765 #3 then R767 #4: the guard walked `tree.body` only, so a shrink inside ANY module-level
@@ -636,6 +718,13 @@ def test_a_shrunk_SIBLINGS_is_refused_however_it_is_bound(tmp_path, shape, src):
                              "vars(_o).update(x=1)"),
     ("a comprehension FOR target is genuinely comp-local",
      _FULL + "\n_x = [SIBLINGS for SIBLINGS in (1, 2)]"),
+    # R787 #5: `vars(_o).update()` was accepted while the IDENTICAL `_o.__dict__.update()` was
+    # refused — the same operation on the same object judged two ways. Both are ordinary objects
+    # and both are accepted now; only THIS module's namespace is refused.
+    ("obj.__dict__.update",  _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
+                             "_o.__dict__.update(x=1)"),
+    ("obj.__dict__[...] =",  _FULL + "\nimport types\n_o = types.SimpleNamespace()\n"
+                             "_o.__dict__['x'] = 1"),
 ])
 def test_innocent_READS_of_SIBLINGS_are_not_refused(tmp_path, shape, src):
     """The other half of R767 #4, and the half that matters for whether the guard survives contact
@@ -807,6 +896,37 @@ def test_the_end_anchor_cannot_be_FORGED_by_a_docstring():
                and isinstance(n.targets[0], _a.Name) and n.targets[0].id == "rc"]
     assert "rc = 99" in rebinds, (
         f"the forged docstring truncated the region: the pin would not see the revert. got {rebinds}")
+
+
+@pytest.mark.parametrize("forge", [
+    "detail = ', '.join(())",
+    "detail = ''.join(())",
+    "detail = os.sep.join(())",
+    "detail = sep.join(())",
+])
+def test_the_end_anchor_cannot_be_FORGED_by_an_ordinary_join(forge):
+    """R787 #3 — the RED case that was missing, and its absence is measurable: widening
+    `_is_detail_write` back to "any Attribute called `join`" leaves all 175 tests green. The
+    docstring forge was closed and this one, an ORDINARY LINE, was not: it collapsed the region
+    from 2 statements to 1 while `found_end` stayed True, so the fail-closed assertion never
+    fired and a revert after the block went unseen."""
+    src = ("import os\n"
+           "def f(drift, raw_rc):\n"
+           "    rc = 1\n"
+           "    if drift:\n"
+           "        rc = recode_on_drift(rc)\n"
+           f"    {forge}\n"
+           "    rc = 99\n"
+           "    detail = os.path.join('a', 'b')\n"
+           "    return rc, detail\n")
+    region, found_end = _drift_region(src)
+    assert found_end, f"{forge} became the anchor instead of the real os.path.join write"
+    import ast as _a
+    rebinds = [_a.unparse(n) for stmt in region for n in _a.walk(stmt)
+               if isinstance(n, _a.Assign) and len(n.targets) == 1
+               and isinstance(n.targets[0], _a.Name) and n.targets[0].id == "rc"]
+    assert "rc = 99" in rebinds, (
+        f"{forge} truncated the region: the pin would not see the revert. got {rebinds}")
 
 
 def test_the_call_site_uses_that_function_and_nothing_else_touches_rc():

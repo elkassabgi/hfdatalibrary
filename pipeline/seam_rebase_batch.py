@@ -154,7 +154,14 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
                 p = node
                 while getattr(p, "_guard_parent", None) is not None:
                     p = p._guard_parent
-                    if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    # ClassDef MUST break too (R787 #2). Without it, `global SIBLINGS` written in a
+                    # CLASS BODY walked straight past the ClassDef this call was asked about, never
+                    # matched `fn`, and was dismissed as a local — so `class C: global SIBLINGS;
+                    # SIBLINGS = (...)` at module level rebound 4 of 6 modules with the guard
+                    # silent. My own R779 #4 narrowing introduced it: the walk was added to ignore a
+                    # NESTED function's `global`, and a class body is not a nested function.
+                    if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                                      ast.ClassDef)):
                         break
                 if p is fn:
                     return True
@@ -251,28 +258,37 @@ def _assert_guarded_matches_tool(path: str | None = None) -> None:
         # `.update({"SIBL"+"INGS": v})`) is R767 #4's split-string escape in another costume, so any
         # MUTATING call on globals()/vars() is refused. Reads - `globals().get(...)`, `vars(obj)` -
         # are untouched, because refusing a read is the false refusal that gets a guard deleted.
+        # WHAT MAKES A MUTATING CALL DANGEROUS IS THAT ITS RECEIVER IS *THIS MODULE'S* NAMESPACE
+        # (R787 #2 and #5). Two rounds of narrowing left this inconsistent and holed:
+        #   * `vars(obj).update(...)` accepted while `obj.__dict__.update(...)` refused — the same
+        #     operation on the same object, judged two ways;
+        #   * `vars(sys.modules[__name__]).update(SIBLINGS=...)` accepted by BOTH, because my R779
+        #     zero-argument restriction let an argument through and the `__dict__` clause saw no
+        #     `__dict__`. The runtime bound 4 of 6.
+        # One rule now: the receiver is the module namespace when it is a bare `globals()`/`vars()`,
+        # or when it names `sys.modules` or `__name__` however it is spelled. Ordinary objects —
+        # `vars(_o)` and `_o.__dict__` alike — are left alone, because refusing a maintainer's own
+        # object is the false refusal that gets a guard deleted (R767 rule 5).
+        MUTATORS = ("update", "__setitem__", "setdefault", "pop", "clear")
+
+        def _is_module_namespace(expr) -> bool:
+            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) \
+                    and expr.func.id in ("globals", "vars"):
+                if not expr.args and not expr.keywords:
+                    return True                       # globals() / vars() == this module
+                return any(s in ast.dump(a) for a in expr.args
+                           for s in ("sys.modules", "__name__", "'modules'"))
+            if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
+                return any(s in ast.dump(expr.value) for s in ("sys.modules", "__name__"))
+            return False
+
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Call) \
-                and isinstance(node.func.value.func, ast.Name) \
-                and node.func.value.func.id in ("globals", "vars") \
-                and not node.func.value.args and not node.func.value.keywords \
-                and node.func.attr in ("update", "__setitem__", "setdefault", "pop", "clear"):
-            # R779 #4: `vars(obj).update(...)` on an UNRELATED object is not a namespace write, and
-            # refusing it was a fresh false refusal. Only the zero-argument forms name THIS module.
-            dynamic.append(f"{node.func.value.func.id}().{node.func.attr}()")
-        # `sys.modules[__name__].__dict__.update(SIBLINGS=...)` reaches the same dict by a third
-        # route, with no `globals()` call for the clause above to match (R779 #2, and R770's own
-        # REQUIRED #5 named it). Any mutating call on a `__dict__` attribute is refused.
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Attribute) \
-                and node.func.value.attr == "__dict__" \
-                and node.func.attr in ("update", "__setitem__", "setdefault", "pop", "clear"):
-            dynamic.append(f"__dict__.{node.func.attr}()")
+                and node.func.attr in MUTATORS and _is_module_namespace(node.func.value):
+            dynamic.append(f"a mutating call on this module's namespace (.{node.func.attr}())")
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) \
-                        and t.value.attr == "__dict__":
-                    dynamic.append("__dict__[...] = ...")
+                if isinstance(t, ast.Subscript) and _is_module_namespace(t.value):
+                    dynamic.append("this module's namespace[...] = ...")
         # and the subscript form, whether or not the key is a readable literal
         if isinstance(node, ast.Assign):
             for t in node.targets:
