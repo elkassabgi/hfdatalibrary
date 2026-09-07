@@ -85,6 +85,31 @@ def test_an_approval_for_another_review_id_says_so(gate, capsys):
     assert "AR-001" in out and "not" in out, out
 
 
+def test_a_QUOTED_token_for_another_id_is_not_reported_as_present(gate, capsys):
+    """R868 #6. `other_id` was read off the RAW line, so a token the parser had itself discarded
+    inside a fence was announced as "line 2 carries an approval for review id 'AR-999'". A
+    diagnostic that states a falsehood is worse than none, because a human acts on it."""
+    assert gate("```\n" + GOOD.replace(ID, "AR-999") + "\n```") is False
+    assert "AR-999" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("line,expect", [
+    ("  " + GOOD, "indented"),
+    (">> " + GOOD, "indented"),
+    (GOOD.replace(SHA12, "0" * 12), "hash"),
+    (GOOD.replace("resync_variables.py", "pipeline/resync_variables.py"), "column 0"),
+])
+def test_a_near_miss_is_named_rather_than_reported_as_absent(gate, capsys, line, expect):
+    """R868 #5. The strict pattern is anchored at column 0 with an exact hash, so an indented
+    token - including the one produced by pasting the tool's own `>> ` transcript - a stale sha,
+    and a path-qualified filename all printed the identical "carries no approval line". That is
+    the message R866 already failed this gate for."""
+    assert gate(line) is False
+    out = capsys.readouterr().out
+    assert "nearly the token" in out, out
+    assert expect in out, out
+
+
 def test_the_diagnostic_does_not_appear_when_the_token_is_simply_absent(gate, capsys):
     assert gate("| AR-040 | resync_variables.py | PASS |") is False
     out = capsys.readouterr().out
@@ -136,11 +161,74 @@ def test_no_token_shaped_revocation_is_silently_ignored(gate, line):
     assert gate(GOOD + "\n" + line) is False, line
 
 
+@pytest.mark.parametrize("shape", [
+    "<!NOTE\n<script>\n{r}",
+    "<!NOTE\n<pre>\n{r}",
+    "<!NOTE\n<details>\n{r}",
+    "<?php\n<pre> ?>\n{r}",
+    "<![CDATA[\n<pre> ]]>\n{r}",
+])
+def test_a_raw_block_closer_cannot_swallow_the_tag_that_quotes_what_follows(gate, shape):
+    """R868 #1, the catastrophic direction: these five REFUSED before the raw-block handler was
+    added and AUTHORISED after it. A declaration runs to its first `>`, so `<!NOTE` on one line and
+    `<script>` on the next made the closer consume the whole `<script>` TEXT - the tag never
+    entered the stack, and the token below it was read as live. The two families are read
+    independently now and their quoted regions union."""
+    assert gate(shape.format(r=GOOD)) is False, shape
+
+
+@pytest.mark.parametrize("shape", [
+    "<?note see <![CDATA[x]]>\n{r}",      # earliest opener `<?` is UNCLOSED; CDATA after it closes
+    "<![CDATA[x]]> then <!NOTE\n{r}",     # first-in-tuple closes, a LATER opener is left unclosed
+    "<![CDATA[a]]> and <?php\n{r}",
+])
+def test_more_than_one_raw_block_on_a_line_is_read_in_full(gate, shape):
+    """R868 #2. The scan took the first type in TUPLE order and stopped after ONE block per line,
+    so a block that closed on the line could hide an unclosed opener beside it - either an earlier
+    one it jumped over, or a later one it never looked for - and the next line's token authorised."""
+    assert gate(shape.format(r=GOOD)) is False, shape
+
+
+def test_a_line_whose_raw_blocks_all_close_does_not_quote_what_follows(gate):
+    """The other direction. `<!DECL see <?php x ?>` is ONE declaration that ends at the first `>`
+    - which is the `>` of `?>` - so nothing is left open and the next line is live. A rule that
+    refuses here would be quoting on suspicion, and that is how R858 bricked the gate."""
+    assert gate("<!DECL see <?php x ?>\n" + GOOD) is True
+    assert gate("<![CDATA[a]]> <?php b ?> <!DECL c>\n" + GOOD) is True
+
+
+@pytest.mark.parametrize("line", [
+    ID + " is REVOKED - superseded by AR-044, do not use",
+    "The " + ID + " approval is withdrawn.",
+    "Treat " + ID + " as rescinded.",
+])
+def test_plain_English_withdrawing_THIS_id_refuses(gate, line):
+    """Revocation fails OPEN. A sentence that withdraws the very id being claimed has to stop the
+    run even though it is not the token - we cannot honour "somebody tried to withdraw this" by
+    ignoring it."""
+    assert gate(GOOD + "\n" + line) is False, line
+
+
+@pytest.mark.parametrize("line", [
+    "AR-025 was withdrawn as unsafe; see the row above.",
+    "AR-026 supersedes it and AR-025 is no longer valid.",
+    "The ecb expansion was WITHDRAWN (36c3634a5) after the review.",
+])
+def test_plain_English_about_a_DIFFERENT_id_still_authorises(gate, line):
+    """The control, and the reason the rule is scoped to the claimed id. Measured on the live
+    PASSED.md: THREE lines (69, 70, 71) carry a revocation verb beside some OTHER AR-id. Refusing
+    on any id would brick the gate against its own file on every run - R858 exactly."""
+    assert gate(GOOD + "\n" + line) is True, line
+
+
 @pytest.mark.parametrize("prose", [
     "I am not withdrawing this approval.",
     "The applying reviewer revoked nothing.",
     "Re-apply the patch before reading this row.",
     "This supersedes nothing; the earlier verdict stands.",
+    "we cancel apply and restore.",
+    "The cancel-apply path is exit 1.",
+    "Do not revoke apply here without reading the note.",
 ])
 def test_innocent_prose_does_not_brick_the_gate(gate, prose):
     """The mirror of the test above, and the more dangerous direction. A mention pattern wide

@@ -859,18 +859,38 @@ def main() -> int:
         print(f"unmeasurable (exit 3) - the disclose list: {' '.join(unmeasurable)}")
     if deferred:
         print(f"deferred by the daily window (exit 7) - run again outside it: {' '.join(deferred)}")
-    # A RUN THAT DEFERRED EVERYTHING IS NOT A RUN THAT SUCCEEDED (R866 #4). `daily_run_state()`
-    # answers "unknown" on any `gh` failure - an expired token, no network, a rate limit - and
-    # resync_variables.py then exits 7 without reading anything. The exit-7 path costs 2.45 s
-    # measured, so a whole 1,324-ticker list sweeps in about 54 minutes and printed "batch done"
-    # with exit 0. An unattended caller would have read that as the resync being finished.
-    outcome = "stopped" if stopped else ("deferred" if deferred and n == len(deferred) else "done")
-    print(f"batch {outcome}: {n} processed this run; log {a.log}; details in {detail_dir}/seam_detail_*.txt")
-    if outcome == "deferred":
-        print(f"  EVERY ticker attempted this run was deferred by the daily window ({n} of {n}). Nothing was "
-              f"measured and nothing was written. If `gh` cannot answer, daily_run_state() returns 'unknown' "
-              f"and every ticker defers - check that first, then run again outside the window.")
-    return 1 if stopped or (deferred and n == len(deferred)) else 0
+    # A RUN THAT ACHIEVED NOTHING IS NOT A RUN THAT SUCCEEDED (R866 #4, generalised by R868 #4).
+    # The first version of this special-cased exit 7 alone - the deferral - and that was fixing the
+    # INSTANCE, not the class. Every whole-batch no-op has the same shape and the same danger:
+    #   * exit 7 for all: `daily_run_state()` answers "unknown" on any `gh` failure and every
+    #     ticker defers without reading anything (2.45 s each, so 1,324 sweep in ~54 min);
+    #   * exit 5 for all: a STALE --reviewed id - which EVERY edit to the tool creates, because the
+    #     approval is bound to its hash - refuses each ticker before any write (3.86 s each, so
+    #     the same list reports success in ~85 min);
+    #   * exit 6 for all: prices verified, serving incomplete on every one.
+    # In each case the driver printed "batch done" and returned 0, which an unattended caller
+    # reads as the work being finished. So the outcome is derived from what was ACHIEVED.
+    achieved = n - (len(deferred) + len(aborted) + len(incomplete) + len(refused) + len(unmeasurable))
+    if stopped:
+        outcome = "stopped"
+    elif n and achieved == 0:
+        outcome = "achieved nothing"
+    else:
+        outcome = "done"
+    print(f"batch {outcome}: {n} processed this run, {achieved} completed; log {a.log}; "
+          f"details in {detail_dir}/seam_detail_*.txt")
+    if outcome == "achieved nothing":
+        _why = {"deferred by the daily window (exit 7)": deferred,
+                "aborted before any write (exit 5)": aborted,
+                "serving incomplete (exit 6)": incomplete,
+                "refused (exit 2)": refused,
+                "unmeasurable (exit 3)": unmeasurable}
+        _named = "; ".join(f"{len(v)} {k}" for k, v in _why.items() if v)
+        print(f"  NOT ONE of the {n} ticker(s) attempted this run completed: {_named}. Nothing was written. "
+              f"A whole-batch no-op is almost always ONE cause, not {n} coincidences - a stale --reviewed id "
+              f"(every edit to the tool invalidates the approval bound to its hash), a `gh` that cannot answer "
+              f"so daily_run_state() reads 'unknown', or an expired credential. Find that cause before re-running.")
+    return 1 if stopped or (n and achieved == 0) else 0
 
 
 if __name__ == "__main__":

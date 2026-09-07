@@ -208,9 +208,40 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # CANCEL in place of REVOKE were all silently ignored, in the one direction the design says must not
 # be. Only TOKEN-SHAPED spellings, though: matching free English ("I am not withdrawing this
 # approval") would refuse on prose and brick the gate against a legitimate approval, which is R858's
-# failure with the sign flipped. Plain English does not revoke anything and PASSED.md says so.
-REVOKE_MENTION_RE = _re.compile(
-    r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0,3}APPLY\b", _re.I)
+# failure with the sign flipped. Plain English does not revoke anything.
+#
+# AND THE LINE MUST ALSO NAME THIS TOOL (R868 #3). Allowing whitespace as the separator made the
+# pattern match ordinary prose ABOUT the tool - "we cancel apply and restore." and "The
+# cancel-apply path is exit 1." both refused every run, bricking the gate in exactly the way the
+# comment above claims to avoid. A real revocation always names the file it withdraws; a sentence
+# that happens to put a revoke verb beside the word "apply" does not.
+_REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0,3}APPLY\b"
+# CASE IS THE DISCRIMINATOR, and this is the second attempt at it. Requiring the tool NAME on the
+# same line (the first attempt) broke two genuine refusals the suite already pinned: a placeholder
+# example `REVOKE-APPLY <tool>.py <sha12> <review id>`, which names no tool at all, and a
+# revocation WRAPPED over two lines, whose first line is the bare token. Both are revocations and
+# both must stop the run. What separates them from prose is that the token is WRITTEN IN CAPS -
+# "we cancel apply and restore." and "The cancel-apply path is exit 1." are sentences, not tokens.
+REVOKE_MENTION_RE = _re.compile(_REVOKE_SHAPE)                      # deliberately NOT re.I
+REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # lower case, but then it must
+TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # name the tool to count
+# PLAIN ENGLISH ABOUT *THIS* REVIEW ID, and only that (R868, the reviewer's remaining case:
+# "AR-043 is REVOKED - superseded by AR-044, do not use"). Revocation must fail OPEN, so a
+# sentence that withdraws the very id being claimed has to stop the run. It is scoped to the
+# claimed id on purpose: measured on the live PASSED.md, THREE lines carry a revocation verb
+# beside SOME AR-id (69, 70, 71 - AR-025/AR-026 "withdrawn"/"superseded"), so refusing on any
+# id would brick the gate against its own file on every run, which is R858 exactly.
+PROSE_REVOKE_RE = _re.compile(
+    r"\b(?:revok\w*|withdraw\w*|rescind\w*|unapprov\w*|supersed\w*|do not use|no longer valid)\b", _re.I)
+# A LOOSE reading of the approval line, for the REFUSAL MESSAGE ONLY - never for authorisation
+# (R868 #5). The strict pattern is anchored at column 0 with an exact hash, so an indented token,
+# a stale sha, or `pipeline/resync_variables.py` all produced the same "carries no approval line",
+# which is the message R866 already failed this gate for. This one matches what an operator
+# actually types so the refusal can name the wrong field.
+# Group 1 captures the WHOLE prefix, `>> ` included: pasting the tool's own refusal transcript is
+# the commonest near miss there is, and reporting it as "not indented" would be useless.
+LOOSE_APPROVE_RE = _re.compile(
+    r"^(\s*(?:>>\s*)?)APPROVE[\s\-_]?APPLY\s+(?:\S*[/\\])?resync[_\-]?variables\.py\s+(\S+)\s+(\S+)", _re.I)
 # PASSED.md is a MARKDOWN file that now documents this very syntax, so the tokens appear in it as
 # EXAMPLES. Fenced blocks and inline-code spans are therefore stripped before anything is matched.
 # This is structural, not another inference: an example lives in a fence or in backticks, a decision
@@ -314,6 +345,7 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
             raw_block = None                     # (line, description, close-regex) for <? <! <![CDATA[
             swallowed: list = []                 # (line, why) - would have authorised, was quoted
             other_id: list = []                  # (line, id) - a valid token for a different review
+            near_miss: list = []                 # (line, why) - looks like the token, is not it
             front_matter = False                 # YAML front matter: --- on line 1 to the next ---
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
@@ -321,8 +353,26 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 # line, before any blanking, so every skip below can say what it cost.
                 _raw_m = want.match(ln)
                 looks_like = bool(_raw_m) and _raw_m.group(1) == rid
-                if _raw_m and _raw_m.group(1) != rid:
-                    other_id.append((n, _raw_m.group(1)))
+                # NEAR-MISSES, for the refusal message only (R868 #5). What an operator types and
+                # what the strict pattern accepts differ in three ways that all printed the same
+                # "carries no approval line": a leading indent (including the tool's own ">> "
+                # transcript), a stale sha after any edit to this file, and a path-qualified
+                # `pipeline/resync_variables.py`.
+                _loose = LOOSE_APPROVE_RE.match(ln)
+                if _loose and not _raw_m:
+                    _why = []
+                    if _loose.group(1):
+                        _why.append(f"it is indented by {_loose.group(1)!r} - the token must sit at "
+                                    f"column 0 (the '>> ' this tool prints is NOT part of it)")
+                    if _loose.group(2) != sha12:
+                        _why.append(f"its hash is {_loose.group(2)!r}, and this file's is {sha12!r} "
+                                    f"(the tool was edited after the review, so it needs reviewing again)")
+                    if _loose.group(3) != rid:
+                        _why.append(f"its review id is {_loose.group(3)!r}, not {rid!r}")
+                    if not _why:
+                        _why.append("it does not match the required form exactly - compare it "
+                                    "character by character with the line printed below")
+                    near_miss.append((n, "; ".join(_why)))
                 fm = FENCE_RE.match(ln)
                 fence_marker = False
                 if fm:
@@ -356,7 +406,10 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                         _say(f"  --reviewed {rid}: {passed_file}:{n} carries a REVOKE-APPLY line for "
                              f"it - refused")
                         return False
-                if not revoke.search(ln) and REVOKE_MENTION_RE.search(ln):
+                if not revoke.search(ln) and (
+                        REVOKE_MENTION_RE.search(ln)
+                        or (REVOKE_MENTION_CI_RE.search(ln) and TOOL_MENTION_RE.search(ln))
+                        or (PROSE_REVOKE_RE.search(ln) and _re.search(r"\b" + _re.escape(rid) + r"\b", ln))):
                     unparsed_revokes.append((n, ln.strip()[:90]))
 
                 # ...and only now, for the APPROVE path, drop quotation.
@@ -395,30 +448,6 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                     approve_ln = approve_ln[:o.start()]
                     in_html = True
                     html_open_at = n
-                # RAW-HTML BLOCK TYPES 3, 4 and 5 (R866 #5). CommonMark opens a raw-HTML block on
-                # `<?`, on `<!` followed by a letter, and on `<![CDATA[`, closing on `?>`, `>` and
-                # `]]>`. None of those is a TAG, so the tag stack below never saw them and a token
-                # quoted inside one AUTHORISED. Same family as the comment above, one type number
-                # over - which is the argument R858 #3 made and this half missed.
-                if raw_block is not None:
-                    c = raw_block[2].search(approve_ln)
-                    if c:
-                        approve_ln = " " * c.end() + approve_ln[c.end():]
-                        raw_block = None
-                    else:
-                        if looks_like:
-                            swallowed.append((n, f"{raw_block[1]} opened at line {raw_block[0]}"))
-                        continue
-                for _open_re, _close_re, _what in _RAW_BLOCK_TYPES:
-                    o2 = _open_re.search(approve_ln)
-                    if o2:
-                        c2 = _close_re.search(approve_ln, o2.end())
-                        if c2:
-                            approve_ln = approve_ln[:o2.start()] + " " * (c2.end() - o2.start()) + approve_ln[c2.end():]
-                        else:
-                            approve_ln = approve_ln[:o2.start()]
-                            raw_block = (n, _what, _close_re)
-                        break
                 # INLINE CODE FIRST, THEN TAGS (R858 #1, and this was the blocker). Live
                 # PASSED.md line 65 is a real PASS row whose prose contains `` `<code>` `` -
                 # inside inline code. Scanning for tags BEFORE blanking it opened a block that
@@ -430,6 +459,19 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 # written as `APPROVE-APPLY ...` still cannot pass.
                 approve_ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), approve_ln)
 
+                # THE TAG SCAN READS THIS LINE **BEFORE** ANY RAW-BLOCK CONSUMPTION (R868 #1).
+                # A declaration block runs to its first `>`, so `<!NOTE` on one line and
+                # `<script>` on the next made the closer swallow the whole `<script>` TEXT - the
+                # tag never entered html_stack, and a column-0 token after it AUTHORISED where the
+                # reviewed bytes had refused it. Five shapes moved False -> True, which is the
+                # catastrophic direction and the third run of the R856 #1 / R763 #2 / R765 #1
+                # pattern: a fix for one quoting family blinding the scan for another.
+                #
+                # So the two families are read INDEPENDENTLY and their regions UNION. Where
+                # CommonMark and safety disagree about which construct owns a span, this gate
+                # takes safety: quoting more can only refuse an approval (which is loud and
+                # fixable), while quoting less authorises one (which is not).
+                #
                 # RAW-HTML BLOCKS as a STACK OF TAG NAMES, not a depth counter: a closer ends its
                 # OWN tag or nothing, so a stray </code> cannot close a <pre> and prose naming
                 # </details> inside a <pre> cannot end it. An unclosed block keeps the rest of the
@@ -449,6 +491,43 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                             pass
                 if not html_stack:
                     block_open_at = None
+
+                # RAW-HTML BLOCK TYPES 3, 4 and 5 (R866 #5), read AFTER the tag scan above so it
+                # can only ADD quoting, never remove it: `<?...?>`, `<!DECLARATION>` and
+                # `<![CDATA[...]]>` are not TAGS, so the stack cannot see them and a token quoted
+                # inside one AUTHORISED.
+                if raw_block is not None:
+                    c = raw_block[2].search(approve_ln)
+                    if c:
+                        approve_ln = " " * c.end() + approve_ln[c.end():]
+                        raw_block = None
+                    else:
+                        if looks_like:
+                            swallowed.append((n, f"{raw_block[1]} opened at line {raw_block[0]}"))
+                        continue
+                # EARLIEST OPENER, AND KEEP GOING (R868 #2). This used to take the first type in
+                # TUPLE order and handle at most ONE block per line, so `<?note see <![CDATA[x]]>`
+                # - where the later type opens first - left an unclosed opener untracked and the
+                # next token authorised. Five siblings did the same.
+                while raw_block is None:
+                    _best = None
+                    for _open_re, _close_re, _what in _RAW_BLOCK_TYPES:
+                        _o2 = _open_re.search(approve_ln)
+                        if _o2 and (_best is None or _o2.start() < _best[0].start()):
+                            _best = (_o2, _close_re, _what)
+                    if _best is None:
+                        break
+                    _o2, _close_re, _what = _best
+                    _c2 = _close_re.search(approve_ln, _o2.end())
+                    if _c2:
+                        approve_ln = (approve_ln[:_o2.start()] + " " * (_c2.end() - _o2.start())
+                                      + approve_ln[_c2.end():])
+                    else:
+                        approve_ln = approve_ln[:_o2.start()]
+                        raw_block = (n, _what, _close_re)
+                if raw_block is not None and raw_block[0] == n and looks_like:
+                    swallowed.append((n, f"{raw_block[1]} opened at line {n}"))
+
                 if html_stack or _was_open or _opens or _closes:
                     if looks_like:
                         _where = (f"a raw-HTML <{block_open_at[1]}> block opened at line {block_open_at[0]}"
@@ -457,6 +536,12 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                     continue
                 ln = approve_ln
                 m = want.match(ln)
+                # AFTER the quoting, not before (R868 #6): taken from the raw line, this reported
+                # "line 95 carries an approval for review id 'AR-999'" about a token the parser
+                # had itself discarded inside a fence or a comment - a diagnostic that states a
+                # falsehood is worse than no diagnostic, because a human acts on it.
+                if m and m.group(1) != rid:
+                    other_id.append((n, m.group(1)))
                 # NO inline-code case is reported here, and that is a measured claim rather than an
                 # omission: an inline-code span must OPEN with a backtick, so a span covering a
                 # column-0 token would have to put that backtick at column 0 - and then the token is
@@ -505,7 +590,9 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
         _say(f"      ... and {len(swallowed) - 5} more")
     for _n, _id in other_id[:3]:
         _say(f"      line {_n} carries an approval for review id {_id!r}, not {rid!r}")
-    if not swallowed:
+    for _n, _why in near_miss[:5]:
+        _say(f"      line {_n} is nearly the token but {_why}")
+    if not swallowed and not near_miss:
         # An unclosed region quotes everything after it, INCLUDING an approval appended at the end,
         # which is the documented procedure. That is R858's exact signature and it is silent.
         if fence_char is not None:

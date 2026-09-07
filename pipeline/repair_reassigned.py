@@ -86,10 +86,12 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
      daily run that hole sits INSIDE a live series rather than at its end. The tool prints a
      bar-count delta and cannot say this - so it is said here, before anyone runs it;
   3. runs the basis gate; prints the plan and the bar-count delta. metadata.json's counters are
-     INCREMENT-ONLY and no run updates them downwards, so after all seven repairs the site's status
-     page - which fetches that file live - would over-state bars_raw by 53,356 and under-state
-     bars_clean by 7,618 (measured by the reviewer, R865 #5). Record the delta and correct the file
-     by hand, or the page reports a total nothing served ever had;
+     INCREMENT-ONLY and no run updates them, so after all seven repairs the site's status page -
+     which fetches that file live - would over-state bars_raw by 53,356 and under-state bars_clean
+     by 7,753. (R865 #5 said 7,618; summing the seven printed deltas from seven_dryruns_v34.log
+     gives raw -53,356 and clean +7,753 - the clean side GROWS, because PARA's rebuilt clean adds
+     58,123 bars the foreign-basis re-clean had dropped.) Record the delta and correct the file by
+     hand, or the page reports a total nothing served ever had;
   4. with --apply and no Daily Data Update in flight: content-checked snapshot of all 22 served
      objects (seam_rebase.snapshot; a directory that already holds a manifest exits 5), uploads
      1-minute parquet + CSV x2, 14 timeframe objects, variables/quality (force_full) - merge_ticker's
@@ -565,7 +567,10 @@ def _cmp(d, source, ours, anc, expected=1.0, exact=True):
         ok = abs(ratio - 1) <= CLOSE_TOL and ours[1] == anc[1]
     else:
         r_adj = ratio / expected
-        if expected == 1.0:
+        # tolerance, not equality (R867 #3): a factor that is 1.0 to within floating point must
+        # take the EXACT branch, so a declared near-1 factor cannot buy the band. main() refuses
+        # such a declaration outright; this is the second door.
+        if abs(expected - 1.0) < 1e-6:
             vol_ok = ours[1] == anc[1]
         else:
             # Under an own split the served history's volume basis is LOSSY: VRM's pre-2024-02
@@ -623,10 +628,30 @@ def main() -> int:
     for s in a.anchor:
         d, c, v = s.split(":")
         anchors.append((dt.date.fromisoformat(d), float(c), int(v)))
+    if a.basis_samples < 1:
+        # R867 #4: --basis-samples 0 removed every interior window check and still exited 0 -
+        # VRM's whole 2022-03-07..2024-11-28 span was then checked by nothing. VERIFY (e) already
+        # floors the same value at max(1, ...); the gate did not.
+        print(f"  --basis-samples {a.basis_samples} would check no window session at all - refused"); return 5
     own_splits = []
     for s in a.own_split:
         d, f = s.split(":")
-        own_splits.append((dt.date.fromisoformat(d), float(f)))
+        f = float(f)
+        # R867 #3: DECLARING AN OWN SPLIT RELAXES THE GATE, so a factor that is not a split must be
+        # refused. `expected != 1.0` switches the session-volume test from EXACT to a 0.60-1.05
+        # band, and `--own-split 2030-01-01:1.0001` - a no-op declaration - made PARA pass 8/8
+        # while admitting 429,693-751,963 shares against 716,155 prints on 2022-03-07. The factor
+        # is uncheckable from here: there is no split table (splits are DETECTED, not looked up),
+        # and Yahoo answers for whoever holds the symbol NOW, which for these seven is the wrong
+        # company. So the only defence is the shape of the number. The floor is 3:2, the smallest
+        # ratio that both occurs as a real split in this universe and moves price out of the
+        # detector's no-fire band (PR #11's _FRACTIONAL_SPLITS makes the same cut for the same
+        # reason); VRM's declared 80 clears it by a wide margin.
+        if not (f >= 1.5 or 0 < f <= 1 / 1.5):
+            print(f"  --own-split {s}: {f:g} is not a split ratio - a real one is at least 3:2 in one "
+                  f"direction or the other. Declaring it would replace the EXACT session-volume test "
+                  f"with a 0.60-1.05 band and check nothing; refused, aborted before any write"); return 5
+        own_splits.append((dt.date.fromisoformat(d), f))
     if own_splits:
         print(f"  declared own split(s) of the original instrument: {[(str(d), f) for d, f in own_splits]}")
     client = get_client()
@@ -661,6 +686,16 @@ def main() -> int:
             print(f"  REFUSED: --cut {cut} is not the handover date recorded for {t} in symbol_map.REASSIGNED. "
                   f"That table is the reviewed record of when each symbol changed companies; if it is wrong, "
                   f"correct it there with its evidence first. --cut-gap-min cannot relax this; nothing written")
+        elif failed == ["CUT-4"]:
+            # R867 #6: CUT-0 got a cause-specific branch and CUT-4 did not, so a WRONG
+            # --rebuild-from-cs symbol - the cut being right - was reported as "not at a handover
+            # boundary ... before overriding --cut-gap-min", which points at the one input that
+            # cannot help. It also made the --until gate's own "check --rebuild-from-cs" message
+            # unreachable for every cs ticker, because this refusal fires first.
+            print(f"  REFUSED: the last kept session {last_keep} is not anchored by the class-share pass. "
+                  f"--cut {cut} may well be right; check --rebuild-from-cs {a.rebuild_from_cs!r} instead - "
+                  f"if that symbol did not print on {last_keep}, the anchor came from the main pass, which "
+                  f"after a handover is the NEW company. Nothing written")
         else:
             print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream ({', '.join(failed)}). "
                   f"A cut inside a contiguous run keeps the NEW owner's sessions, and every gate below this one "
@@ -1001,11 +1036,11 @@ def main() -> int:
         try:
             n_back = seam_rebase.restore(client, snap_dir)
         except BaseException as ex2:                         # noqa: BLE001
-            seam_rebase._record(snap_dir, f"EXIT 4 RESTORE FAILED after {n} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
-            seam_rebase._say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) and the RESTORE FAILED "
+            seam_rebase._record(snap_dir, f"EXIT 4 RESTORE FAILED after {n_price + n_vars} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
+            seam_rebase._say(f"  FAILED after the snapshot with {n_price + n_vars} object(s) uploaded ({why}) and the RESTORE FAILED "
                              f"({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
-        seam_rebase._record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n} upload(s); cause {why}")
-        seam_rebase._say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) - restored {n_back} objects; "
+        seam_rebase._record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n_price + n_vars} upload(s); cause {why}")
+        seam_rebase._say(f"  FAILED after the snapshot with {n_price + n_vars} object(s) uploaded ({why}) - restored {n_back} objects; "
                          f"served state is the pre-repair state"); return 1
     # A VARIABLES PROBLEM IS ANY OF: the sync raised twice, it computed nothing, fewer than four
     # objects were written, or the four did not read back correctly (R865 #2). All four route to
@@ -1039,8 +1074,15 @@ def main() -> int:
         seam_rebase._record(snap_dir, f"EXIT 6 prices verified, variables/quality NOT: {why_v}; STALE {stale}")
         seam_rebase._say(f"  PRICES VERIFIED but variables/quality are not: {why_v}. STALE OBJECTS: {stale}. Not restoring; run "
                          f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
+    # EVERY typed input that changed what was checked or written goes in the record (R867 #3):
+    # --own-split's own help says "Cite the source in the run record", and it was the one input
+    # that could relax the gate while being absent from it.
     seam_rebase._record(snap_dir, f"EXIT 0 DONE repaired cut={cut} until={a.until} unscale={a.unscale} "
-                                  f"kept_from={a.kept_from} cut_gap_min={a.cut_gap_min} rebuilt={len(rebuilt):,}")
+                                  f"kept_from={a.kept_from} cut_gap_min={a.cut_gap_min} "
+                                  f"own_split={a.own_split} anchors={a.anchor} "
+                                  f"basis_samples={a.basis_samples} rebuild_from_cs={a.rebuild_from_cs} "
+                                  f"verify_against={a.verify_against} allow_queued={a.allow_queued} "
+                                  f"rebuilt={len(rebuilt):,}")
     seam_rebase._say(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
     return 0
 
