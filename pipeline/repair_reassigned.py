@@ -6,9 +6,14 @@ class-share extractions. Version 3 after adversarial reviews R732, R736 and R740
 EXIT CODES (one meaning each; every outcome after the snapshot is recorded in <snap_dir>/_RESULT.txt
 BEFORE anything is printed, every print on those paths survives a dead console, and the entry point
 maps any escape to 5 before the first upload and 4 after it - the seam tool's contract, R735/R738):
-0 done and verified | 1 written then RESTORED | 2 refused before any write | 3 written, UNVERIFIABLE
-(read-back or market fetch failed), data live | 4 restore FAILED or an escape after writes | 5 aborted
-before any write | 6 prices verified, variables/quality sync failed (stale objects named).
+0 done and verified - AND a dry run, which writes nothing (R864: the table did not say so) | 1 written
+then RESTORED | 2 refused before any write | 3 written, UNVERIFIABLE (read-back or market fetch
+failed), DATA LIVE | 4 restore FAILED or an escape after writes | 5 aborted before any write |
+6 prices verified, variables/quality sync failed (stale objects named).
+EXIT 3 HERE IS THE OPPOSITE OF seam_rebase.py's 3. There it returns before the written flag is set:
+"unmeasurable, nothing written, carry on". Here it means the 22 objects are live and unverified: STOP.
+seam_rebase_batch.py's --tool choices exclude this tool, and its _terminal_ok = {"0","2"} would file
+this 3 as a gate REFUSAL rather than an alarm - do not add it there without changing that (R855 #3).
 The served contract is seven columns (datetime, Open, High, Low, Close, Volume, source) on both
 1-minute files: both frames are projected onto them before the gate and asserted, because the
 2026-07-13 clean snapshots carry four legacy flag columns (R740).
@@ -68,8 +73,18 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
      prints), or replaces the kept half from --kept-from; applies --unscale;
   2. GOLD only, --rebuild-from-cs B --until 2026-03-27: rebuilds Barrick's bars for DATE..until
      from trades_cs_<ymd>.csv (the backfill's class-share pass; 2026-03-27 holds 10,363 B prints),
-     remaps B -> GOLD, appends them to raw, and cleans them exactly as merge_ticker does an
-     incremental day (CONTEXT_BARS of the existing clean tail through clean_bars);
+     remaps B -> GOLD, appends them to raw, and cleans them with CONTEXT_BARS of the existing
+     clean tail through clean_bars. THAT IS A BATCH CLEAN, NOT merge_ticker's incremental one, and
+     this docstring used to claim they were the same (R864). Measured over the 80 rebuilt sessions:
+     one clean_bars call keeps 29,990 bars, a per-day incremental clean keeps 29,804 - 186 more
+     bars on 55 of the 80 sessions (0.62 %), a strict superset, because
+     clean_pipeline.step8_brownlees_gallo is a 50-bar CENTRED window with no day boundary. The
+     batch result is the better one; it is simply not what the daily path would have produced.
+     AND IT DOES NOT FILL THE SERIES: 191 GOLD sessions are removed and 80 rebuilt, so
+     2026-03-30..2026-09-04 (111 sessions) becomes a HOLE. E:/iex_hist_backfill ends 20260327 and
+     daily_update.parse_day deletes its CSV, so no retained print set can fill it; after the next
+     daily run that hole sits INSIDE a live series rather than at its end. The tool prints a
+     bar-count delta and cannot say this - so it is said here, before anyone runs it;
   3. runs the basis gate; prints the plan and the bar-count delta (metadata.json's counters are
      increment-only and will not reflect it - record the delta);
   4. with --apply and no Daily Data Update in flight: content-checked snapshot of all 22 served
@@ -81,7 +96,11 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
   python repair_reassigned.py PARA --cut 2026-08-07 --unscale 6 --anchor 2025-08-06:11.07:1408409 --anchor 2022-03-04:34.07:12816002
   python repair_reassigned.py IPW  --cut 2021-05-12 --kept-from F:/hf_r2_snapshot_splits_20260905/IPW_20260522 --anchor 2017-07-24:17.80:5471
   python repair_reassigned.py SKK  --cut 2024-10-08 --kept-from F:/hf_r2_snapshot_splits_20260905/SKK_20260406 --anchor 2015-01-08:33.55:4056
-  python repair_reassigned.py STI  --cut 2024-02-05        (VRM --cut 2025-02-20, USLV --cut 2026-05-27)
+  python repair_reassigned.py VRM  --cut 2025-02-20 --own-split 2024-02-14:80
+  python repair_reassigned.py STI  --cut 2024-02-05        (USLV --cut 2026-05-27)
+VRM's --own-split is NOT optional and this block used to list VRM without it: the basis gate then
+refuses (exit 2) on three window sessions at x80.00000, which is Vroom's own 1-for-80 reverse split
+showing against the raw prints under the current-basis convention. Correct behaviour, wrong example.
 Run from inside pipeline/ of a MAIN-based tree (sibling imports; r2_client stamps parquet metadata).
 Sequencing (R732 item 1): nothing is applied before PR #12's symbol map is on main - the next daily
 run would otherwise re-append the new owners and, on today's prices, rescale STI (1/9) and USLV (1/4).
@@ -152,7 +171,10 @@ def _print_anchor(day: dt.date, symbol: str, cs_symbol: str | None = None):
             # per-minute volumes keyed like the served file: naive New York wall time
             minutes = {pd.Timestamp(b.minute_start).tz_convert("America/New_York").tz_localize(None): int(b.volume)
                        for b in bars}
-            return float(bars[-1].close), int(sum(b.volume for b in bars)), len(bars), minutes
+            # element 4 is WHICH pass answered: cut_gate's CUT-4 needs it, and for a cs ticker the
+            # difference between the two is the difference between two companies (R864)
+            return (float(bars[-1].close), int(sum(b.volume for b in bars)), len(bars), minutes,
+                    "cs" if (sym == cs_symbol and sym != symbol) else "main")
     return None
 
 
@@ -167,9 +189,14 @@ def _session_stats(df: pd.DataFrame, day: dt.date):
 
 def _minute_volume_match(ours: dict, theirs: dict, factor: float):
     """Under an own split the served minute volumes are round(print / factor) - rounded per MINUTE, so a
-    session SUM is systematically below prints/factor (VRM 2024-01-02: 99 vs 9,746/80 = 121.8). The
-    honest test is per minute: |served - print/factor| <= 1 on >= 95 % of the common minutes, with the
-    common minutes covering >= 90 % of the print minutes. Returns (fraction_ok, coverage)."""
+    session SUM is systematically below prints/factor (VRM 2024-01-02: 99 vs 9,746/80 = 121.8).
+
+    Returns (fraction_ok, coverage) where fraction_ok is |served - print/factor| <= 1 over the common
+    minutes. READ THE CALLER BEFORE QUOTING THIS: _cmp applies `0.60 <= session-sum ratio <= 1.05 and
+    coverage >= 0.90`, and PRINTS fraction_ok without gating on it. This docstring used to call
+    ">= 95 % of the common minutes" the honest test, which no version of the code has ever applied
+    (both were written in the same commit, 0aaf04b) - and VRM's own passing sessions measure 74 %,
+    73 % and 85 %, so as a gate it would refuse a repair the other evidence says is correct (R864)."""
     # a print minute whose volume / factor rounds to 0 is legitimately absent from the served file
     # (the rescale wrote 0 and the merge keeps no zero-volume raw bar): coverage is measured over the
     # minutes that survive the rounding, and the per-minute test over the common ones.
@@ -194,6 +221,121 @@ def _sessions(a: dt.date, b: dt.date):
         if d.weekday() < 5:
             yield d
         d += dt.timedelta(days=1)
+
+
+_BARS_CACHE: dict = {}
+
+
+def _main_pass_symbols(day: dt.date):
+    """The symbols the backfill's MAIN pass retained for `day`, or None when that session has no
+    bar file (outside the retained window). bars_<ymd>.parquet is the main pass restricted to the
+    dataset universe (1,112 symbols on 2025-12-01), so membership answers "did this SYMBOL print
+    that session" - a property of the print stream, INDEPENDENT of any --cut we type."""
+    ymd = day.strftime("%Y%m%d")
+    if ymd not in _BARS_CACHE:
+        p = os.path.join(CS_ROOT, ymd, f"bars_{ymd}.parquet")
+        _BARS_CACHE[ymd] = None if not os.path.exists(p) else set(pd.read_parquet(p, columns=["ticker"])["ticker"])
+    return _BARS_CACHE[ymd]
+
+
+def _weekdays_between(a: dt.date, b: dt.date) -> int:
+    """Weekdays STRICTLY between a and b (0 for adjacent sessions)."""
+    return sum(1 for _ in _sessions(a + dt.timedelta(days=1), b - dt.timedelta(days=1)))
+
+
+def cut_gate(ticker: str, cut: dt.date, last_kept: dt.date, first_dropped, cs_symbol, gap_min: int):
+    """IS --cut THE HANDOVER DATE? Nothing else in this tool asks (review R864).
+
+    The basis gate compares our bars with the retained prints FOR THE SYMBOL - and after a
+    handover those prints are the NEW company's, so it proves "our bars equal the prints under
+    this ticker", which is trivially true for the contaminating company. Measured: GOLD with
+    --cut 2025-12-15, nine sessions late, keeps nine Gold.com sessions inside the Barrick series
+    and passes every gate including the exact-volume prints/last row, exit 0. The single typed
+    input that decides which sessions die was unchecked.
+
+    What CAN be checked without knowing the issuer: a handover is a DISCONTINUITY, and a cut in
+    the middle of a contiguous run is not. Four tests, each printed with its measurement and each
+    OK / FAIL / n/a-with-a-reason - a silent skip is R503's class.
+
+      CUT-1  served discontinuity: weekdays between the last kept and the first dropped SESSION.
+             Measured at the seven declared cuts, from the served raw/daily files: SKK 2,542,
+             USLV 1,539, STI 1,085, IPW 991, PARA 261, VRM 58 - and GOLD 0, because Barrick's
+             last session (2025-12-01) and Gold.com's first (2025-12-02) are adjacent. GOLD is
+             carried by CUT-2. (VRM's 58 weekdays are the 53 sessions of CUT-2 plus holidays.)
+      CUT-2  print silence: silent window sessions between the last session the symbol printed
+             before the cut and the cut. GOLD 142 (2025-05-08 -> 2025-12-02, the ONLY
+             discontinuity in its 877 window print days), VRM 53. Not testable when the cut lies
+             outside the retained window: prints stop existing after 2026-03-27 because the
+             backfill ends, and that silence means nothing.
+      CUT-3  the first DROPPED session must be one the symbol actually printed in the main pass -
+             the new owner was trading under it that day. This is what refuses a cut that is too
+             EARLY on a symbol whose original had already remapped away (GOLD --cut 2025-11-20:
+             2025-11-20 is not in GOLD's print series, Barrick was printing as B).
+      CUT-4  cs tickers only: the last kept session's anchor must come from the CLASS-SHARE pass.
+             On 2025-12-01 the main pass has no GOLD prints and the cs pass has B's; on
+             2025-12-12 the main pass answers, which is the proof that the cut is late.
+
+    Passing needs CUT-1 or CUT-2, and neither CUT-3 nor CUT-4 may FAIL. The gap floor is 20
+    sessions: the widest INNOCENT silence measured across the seven print series is 8 (SKK
+    2026-01-26 -> 2026-02-06; IPW 2023-02-23 -> 2023-03-08) and the narrowest true handover is
+    VRM's 53. Instrument: a full sweep of all 1,019 window bar files, 0 unreadable, 42.2 s.
+
+    KNOWN LIMIT, stated rather than hidden: a long trading halt is also a discontinuity, so this
+    gate places the cut at A boundary, not necessarily at THE handover. Returns (rows, ok)."""
+    rows = []
+    if first_dropped is None:
+        return [("CUT-0", "the cut drops no served session - there is nothing to repair", "FAIL")], False
+
+    gap1 = _weekdays_between(last_kept, first_dropped)
+    ok1 = gap1 >= gap_min
+    rows.append(("CUT-1", f"served discontinuity: last kept {last_kept} -> first dropped {first_dropped} "
+                          f"= {gap1} weekday(s) between (floor {gap_min})", "OK" if ok1 else "FAIL"))
+
+    ok2, why2 = False, None
+    if not (WINDOW[0] <= cut <= WINDOW[1]):
+        why2 = (f"the cut {cut} lies outside the retained print window {WINDOW[0]}..{WINDOW[1]}; a silence "
+                f"after it is the backfill ending, not the market")
+    else:
+        silent, prev = 0, None
+        d = cut - dt.timedelta(days=1)
+        while d >= WINDOW[0]:
+            u = _main_pass_symbols(d)
+            if u is not None:
+                if ticker in u:
+                    prev = d
+                    break
+                silent += 1
+            d -= dt.timedelta(days=1)
+        if prev is None:
+            why2 = f"the symbol printed on no session between {WINDOW[0]} and the cut"
+        else:
+            ok2 = silent >= gap_min
+            rows.append(("CUT-2", f"print silence: last printed {prev}, then {silent} silent session(s) "
+                                  f"to the cut {cut} (floor {gap_min})", "OK" if ok2 else "FAIL"))
+    if why2:
+        rows.append(("CUT-2", f"print silence not testable - {why2}", "n/a"))
+
+    ok3 = None
+    p3 = _main_pass_symbols(first_dropped) if WINDOW[0] <= first_dropped <= WINDOW[1] else None
+    if p3 is None:
+        rows.append(("CUT-3", f"the first dropped session {first_dropped} has no main-pass bar file "
+                              f"(outside {WINDOW[0]}..{WINDOW[1]}) - the new owner's first print is UNCHECKED", "n/a"))
+    else:
+        ok3 = ticker in p3
+        rows.append(("CUT-3", f"the first dropped session {first_dropped} is {'' if ok3 else 'NOT '}"
+                              f"a session the symbol printed in the main pass", "OK" if ok3 else "FAIL"))
+
+    ok4 = None
+    if cs_symbol:
+        anc = _print_anchor(last_kept, ticker, cs_symbol)
+        src = anc[4] if anc else None
+        ok4 = src == "cs"
+        rows.append(("CUT-4", f"the last kept session {last_kept} is anchored by the "
+                              f"{src or 'NO'} pass (a cs ticker's last original session must not print "
+                              f"under its own symbol)", "OK" if ok4 else "FAIL"))
+
+    ok = (ok1 or ok2) and ok3 is not False and ok4 is not False
+    return rows, ok
 
 
 def _yahoo_close(symbol: str, start: dt.date, end: dt.date) -> pd.Series:
@@ -376,13 +518,17 @@ def _cmp(d, source, ours, anc, expected=1.0, exact=True):
 
 
 def _print_gate(rows, title):
-    print(f"  {title}")
+    # _say, not print: this runs inside the guarded try for VERIFY (d), and a console that dies
+    # after a correct 22-object upload would otherwise raise OSError -> restore -> exit 1, undoing
+    # a correct repair and burning the snapshot directory (R735's rule, applied to the SUCCESS
+    # path by R864).
+    seam_rebase._say(f"  {title}")
     for d, src, oc, ac, r, ov, av, ok in rows:
         rs = f"x{r:.5f}" if r is not None and math.isfinite(r) else "n/a"
         note = ""
         if ok and r is not None and math.isfinite(r) and src.startswith("prints") and r < 0.9995:
             note = "  (dividend-adjusted window session)"
-        print(f"    {str(d):10} {src:14} close ours {oc} vs {ac} ({rs})  volume ours {ov} vs {av} -> {'OK' if ok else 'FAIL'}{note}")
+        seam_rebase._say(f"    {str(d):10} {src:14} close ours {oc} vs {ac} ({rs})  volume ours {ov} vs {av} -> {'OK' if ok else 'FAIL'}{note}")
 
 
 def main() -> int:
@@ -395,6 +541,8 @@ def main() -> int:
     ap.add_argument("--unscale", type=float, default=None, help="undo a later owner's split applied to the kept half: price x F (4 dp), volume / F exact (PARA: 6)")
     ap.add_argument("--kept-from", default=None, help="take the kept half (bars before the cut) from this pre-repair snapshot dir (IPW, SKK)")
     ap.add_argument("--anchor", action="append", default=[], help="DATE:CLOSE:VOLUME the kept half must show (session last close, session volume); repeatable")
+    ap.add_argument("--cut-gap-min", type=int, default=20, help="cut gate: sessions of discontinuity required at the cut "
+                    "(default 20; widest innocent silence measured 8, narrowest true handover 53)")
     ap.add_argument("--basis-samples", type=int, default=4, help="window sessions checked against the retained prints (default 4; pre-window: 3 vs the 2026-07-13 snapshot)")
     ap.add_argument("--own-split", action="append", default=[], help="DATE:FACTOR - a split of the ORIGINAL instrument inside the kept half (VRM 1-for-80 in Feb 2024: 2024-02-14:80); window sessions before DATE are expected at FACTOR x the raw prints. Cite the source in the run record.")
     ap.add_argument("--apply", action="store_true")
@@ -429,6 +577,22 @@ def main() -> int:
     last_keep = rd[rd < cut].max()
     print(f"{t}: served raw {len(raw):,} bars, clean {len(clean):,}; cut {cut}: dropping raw {n_raw_drop:,} / clean {n_clean_drop:,} bars "
           f"({first_drop}..{rd.max()}); last kept session {last_keep}")
+    if pd.isna(last_keep):
+        print(f"  REFUSED: the cut {cut} keeps no served session - it would empty the series; aborted before any write"); return 2
+
+    # THE CUT GATE (R864) - the only check on --cut itself, the single typed input that decides
+    # which sessions die. It runs FIRST: it costs a handful of parquet reads, and every gate below
+    # it compares our bars with prints keyed on the SYMBOL, which after a handover are the new
+    # company's. Nine sessions of Gold.com passed all of those.
+    cut_rows, cut_ok = cut_gate(t, cut, last_keep, first_drop, a.rebuild_from_cs, a.cut_gap_min)
+    print(f"  cut gate ({len(cut_rows)} check(s)) -> {'OK' if cut_ok else 'FAIL'}")
+    for _name, _detail, _verdict in cut_rows:
+        print(f"    {_name}  {_detail} -> {_verdict}")
+    if not cut_ok:
+        print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream. A cut inside a "
+              f"contiguous run keeps the NEW owner's sessions, and every gate below this one would pass on "
+              f"them (they are that company's own prints). Check the date against the symbol's print series "
+              f"before overriding --cut-gap-min; nothing written"); return 2
     if a.kept_from:
         try:
             raw_keep = _load_snapshot_bars(a.kept_from, "raw", t)
@@ -589,12 +753,20 @@ def main() -> int:
                     upload_parquet(client, aggs[tf], version, t, tf); n += 1
             for attempt in (1, 2):
                 try:
-                    sync_ticker_variables(client, version, t, df, force_full=True); n += 2; break
+                    # R864: the return value was discarded, and variables_sync returns
+                    # {"new_rows": 0} WITHOUT uploading when compute_recent_days is empty - so
+                    # `n += 2` credited two objects that were never written. force_full makes the
+                    # empty path rare, not impossible; VERIFY (h) reads all four back regardless.
+                    stats = sync_ticker_variables(client, version, t, df, force_full=True)
+                    if not stats.get("new_rows"):
+                        raise RuntimeError(f"sync_ticker_variables computed no rows for {version}/{t} "
+                                           f"({stats}) - it uploaded NOTHING and the two objects are stale")
+                    n += 2; break
                 except Exception as ex:                      # noqa: BLE001
                     if attempt == 2:
                         sync_failed.append(f"{version}: {str(ex)[:120]}")
                         stale += [f"{version}/variables/{t}.parquet", f"{version}/quality/{t}.parquet"]
-        print(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
+        seam_rebase._say(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
 
         # VERIFY from the served side - inside the try (R732 item 5); an R2 READ failure here is
         # Unverifiable (exit 3, nothing restored - R736), a missing object or a logic error restores.
@@ -644,17 +816,70 @@ def main() -> int:
                 exp_c, exp_v, exp_n = float(bars[-1]["Close"]), int(sum(b["Volume"] for b in bars)), len(bars)
                 ok_row = abs(srv[0] / exp_c - 1) <= CLOSE_TOL and srv[1] == exp_v and srv[2] == exp_n
                 e_rows.append((d, (exp_c, exp_v, exp_n), (srv[0], srv[1], srv[2]), ok_row)); ok_e = ok_e and ok_row
-        print(f"  VERIFY (a) served daily bars dated >= {cut} that are not rebuilt: raw {len(stray_r)} {stray_r[:4]} clean {len(stray_c)} -> {'OK' if ok_a else 'MISMATCH'}")
-        print(f"  VERIFY (b) rebuilt sessions vs Yahoo {a.verify_against}: {matched}/{total} within 1 % -> "
+        # (f) FULL-FRAME pre-window equality on the SERVED files (R864). The oracle existed and was
+        #     applied to the in-memory frames only; the served claim rested on (d)'s sample - R736's
+        #     finding (a 3-session sample missed 58,582 bars) reproduced on the served side. The
+        #     frames are already downloaded, so this costs no network at all.
+        f_rows, ok_f = [], True
+        for version, frame in (("raw", raw_srv), ("clean", clean_srv)):
+            eq = pre_window_equality(frame, version, t, cut)
+            if eq is None:
+                f_rows.append((version, "no 2026-07-13 snapshot file - no oracle for that half", False)); ok_f = False; continue
+            n_f, n_s, n_b, mism, only_f, only_s = eq
+            r_ok = mism == 0 and only_f == 0 and only_s == 0 and n_f == n_s == n_b
+            f_rows.append((version, f"ours {n_f:,} / snapshot {n_s:,} / common {n_b:,}; mismatched {mism:,}; "
+                                    f"only-ours {only_f:,}; only-snapshot {only_s:,}", r_ok))
+            ok_f = ok_f and r_ok
+        # (g) EVERY served CLEAN bar must equal the served RAW bar at the same minute (R864: no served
+        #     clean price was checked anywhere - (c) compared datetimes and lengths, (d) ran on raw
+        #     only, and with --unscale the clean is REBUILT). Measured on the served IPW, GOLD, PARA
+        #     and VRM: the cleaner only DROPS bars - 0 clean minutes absent from raw and 0 value
+        #     mismatches over 4,756,002 clean bars - so this is a complete oracle, not a sample.
+        vcols = ["Open", "High", "Low", "Close", "Volume"]
+        mg = clean_srv[["datetime"] + vcols].merge(raw_srv[["datetime"] + vcols], on="datetime",
+                                                   how="left", suffixes=("_c", "_r"), indicator=True)
+        g_missing = int((mg["_merge"] != "both").sum())
+        gb = mg[mg["_merge"] == "both"]
+        g_mism = sum(int((~np.isclose(gb[c + "_c"].astype(float), gb[c + "_r"].astype(float), rtol=0, atol=1e-9)).sum())
+                     for c in vcols)
+        ok_g = g_missing == 0 and g_mism == 0
+        # (h) THE FOUR variables/quality OBJECTS, READ BACK (R864: `sync_ticker_variables(...); n += 2`
+        #     discarded the return value, VERIFY read none of them, and "uploaded 22 objects" was a
+        #     claim about 4 of them, not a measurement).
+        h_rows, ok_h = [], True
+        for version in ("raw", "clean"):
+            for kind in ("variables", "quality"):
+                try:
+                    v = _served_read(client, version, t, kind)
+                except RuntimeError as ex:                   # missing or empty after the upload
+                    h_rows.append((f"{version}/{kind}", str(ex)[:100], False)); ok_h = False; continue
+                td = pd.to_datetime(v["trade_date"]).dt.date
+                last_td = max(td)
+                foreign = sorted(d for d in set(td) if d >= cut and d not in rebuilt_days)
+                r_ok = last_td == expected_last and not foreign
+                h_rows.append((f"{version}/{kind}", f"{len(v):,} rows, last trade_date {last_td} (expected "
+                                                    f"{expected_last}), {len(foreign)} date(s) >= the cut that are "
+                                                    f"not rebuilt {foreign[:3]}", r_ok))
+                ok_h = ok_h and r_ok
+        ok_n = (n == n_snap)
+        seam_rebase._say(f"  VERIFY (a) served daily bars dated >= {cut} that are not rebuilt: raw {len(stray_r)} {stray_r[:4]} clean {len(stray_c)} -> {'OK' if ok_a else 'MISMATCH'}")
+        seam_rebase._say(f"  VERIFY (b) rebuilt sessions vs Yahoo {a.verify_against}: {matched}/{total} within 1 % -> "
               f"{'OK' if ok_b else ('n/a' if not (a.verify_against and rebuilt_days) else ('UNVERIFIABLE' if unverifiable else 'MISMATCH'))}")
-        print(f"  VERIFY (c) served clean ⊆ raw, raw ends {raw_srv['datetime'].max().date()} (expected {expected_last}), "
+        seam_rebase._say(f"  VERIFY (c) served clean ⊆ raw, raw ends {raw_srv['datetime'].max().date()} (expected {expected_last}), "
               f"bar counts raw {len(raw_srv):,}/{len(new_raw):,} clean {len(clean_srv):,}/{len(new_clean):,} -> {'OK' if ok_c else 'MISMATCH'}")
         _print_gate(srv_rows, f"VERIFY (d) basis gate on the SERVED 1-minute file -> {'OK' if ok_d else 'MISMATCH'}")
         if e_rows:
-            print(f"  VERIFY (e) served rebuilt sessions vs the class-share prints ({len(e_rows)} sampled) -> {'OK' if ok_e else 'MISMATCH'}")
+            seam_rebase._say(f"  VERIFY (e) served rebuilt sessions vs the class-share prints ({len(e_rows)} sampled) -> {'OK' if ok_e else 'MISMATCH'}")
             for d, exp, got, okr in e_rows:
-                print(f"    {d} prints (close, volume, bars) {exp} vs served {got} -> {'OK' if okr else 'FAIL'}")
-        verified = bool(ok_a and ok_c and ok_d and ok_e and (ok_b or unverifiable))
+                seam_rebase._say(f"    {d} prints (close, volume, bars) {exp} vs served {got} -> {'OK' if okr else 'FAIL'}")
+        for version, detail, r_ok in f_rows:
+            seam_rebase._say(f"  VERIFY (f) SERVED {version} pre-window vs the 2026-07-13 snapshot, whole half: {detail} -> {'OK' if r_ok else 'MISMATCH'}")
+        seam_rebase._say(f"  VERIFY (g) every served clean bar equals the served raw bar at the same minute: {len(clean_srv):,} clean bars, "
+              f"{g_missing:,} not in raw, {g_mism:,} value mismatch(es) over {len(vcols)} columns -> {'OK' if ok_g else 'MISMATCH'}")
+        for what, detail, r_ok in h_rows:
+            seam_rebase._say(f"  VERIFY (h) served {what}: {detail} -> {'OK' if r_ok else 'MISMATCH'}")
+        seam_rebase._say(f"  VERIFY (i) objects written {n} vs objects snapshotted {n_snap} -> {'OK' if ok_n else 'MISMATCH'}")
+        verified = bool(ok_a and ok_c and ok_d and ok_e and ok_f and ok_g and ok_h and ok_n and (ok_b or unverifiable))
     except Unverifiable as ex:
         # keep an earlier Yahoo failure text beside the read-back failure (AR-037 item v)
         unverifiable = (unverifiable + " | " if unverifiable else "") + str(ex); verified = None

@@ -381,6 +381,18 @@ def snapshot(client, ticker: str, out_dir: str) -> int:
     return len(keys)
 
 
+def _content_type(key: str) -> str:
+    """What the pipeline's own writers set, so a restore does not silently retype the object.
+    Measured by HEAD on the served objects 2026-09-07: raw/IPW.parquet and raw/weekly/IPW.parquet
+    application/octet-stream, csv/raw/IPW.csv text/csv - which is r2_client.upload_csv's explicit
+    content_type and upload_from_buffer's default for everything else."""
+    if key.endswith(".csv"):
+        return "text/csv"
+    if key.endswith(".json"):
+        return "application/json"
+    return "application/octet-stream"
+
+
 def restore(client, snap_dir: str) -> int:
     """Put the snapshot back, and VERIFY FROM R2 that it went back.
 
@@ -401,7 +413,17 @@ def restore(client, snap_dir: str) -> int:
         src = os.path.join(snap_dir, k.replace("/", "__"))
         if os.path.getsize(src) != int(size):
             raise SystemExit(f"restore: {src} is {os.path.getsize(src)} bytes, manifest says {size} - not restoring")
-        client.upload_file(src, BUCKET, k); n += 1
+        # PUT, NOT upload_file (R864). boto3's upload_file switches to MULTIPART above 8 MB, and a
+        # multipart ETag is not an MD5 of the content - so the read-back below fell through to
+        # "size verified, ETag is multipart" for exactly the objects most worth checking (4 of the
+        # 22 for five of the seven reassigned tickers; the largest, csv/raw/GOLD.csv, is 161.54 MB),
+        # and the NEXT snapshot() of that object skipped its MD5 check too, permanently. Every tool
+        # that writes a served object uses put_object (r2_client.upload_from_buffer), and all 154
+        # served objects of those seven tickers carry single-part ETags today, so putting the bytes
+        # back single-part reproduces the served state exactly - ETag included, and verifiably.
+        with open(src, "rb") as fh:
+            client.put_object(Bucket=BUCKET, Key=k, Body=fh, ContentType=_content_type(k))
+        n += 1
         # READ BACK FROM R2, not from the local copy we just sent.
         try:
             h = client.head_object(Bucket=BUCKET, Key=k)
