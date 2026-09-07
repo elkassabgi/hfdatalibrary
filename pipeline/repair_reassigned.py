@@ -96,6 +96,18 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
      objects (seam_rebase.snapshot; a directory that already holds a manifest exits 5), uploads
      1-minute parquet + CSV x2, 14 timeframe objects, variables/quality (force_full) - merge_ticker's
      sequence - then VERIFY from the served side (the exit-code contract is at the top of this docstring).
+     TWO APPLY-ONLY FLAGS, both undocumented until R872 #4:
+       * --snapshot-dir DIR overrides where that snapshot is kept (default
+         F:/hf_r2_snapshot_reassigned_<utc-ymd>/<TICKER>). A directory already holding a
+         _MANIFEST.txt is refused by snapshot()'s R731 guard, so two runs must not share one.
+       * --allow-queued proceeds when the Daily Data Update workflow is QUEUED. in_progress and
+         unknown are never overridable. It used to pass through in total silence - a queued run and
+         an idle run printed the same lines and recorded the same `allow_queued=True` - so the run
+         now prints the state and marks `(FIRED: state was queued)` in _RESULT.txt when the
+         override actually suppressed a refusal.
+     --verify-against also gets a PRE-FLIGHT Yahoo fetch here, before the snapshot: VERIFY (b) is
+     mandatory but runs with the objects already live, so an unreachable oracle now exits 5 with
+     nothing written instead of 3 with the data live and unverifiable.
 
   python repair_reassigned.py GOLD --cut 2025-12-02 --rebuild-from-cs B --until 2026-03-27 --verify-against B
   python repair_reassigned.py PARA --cut 2026-08-07 --unscale 6 --anchor 2025-08-06:11.07:1408409 --anchor 2022-03-04:34.07:12816002
@@ -536,6 +548,19 @@ def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_
            and os.path.exists(os.path.join(CS_ROOT, d.strftime("%Y%m%d"), f"trades_{d.strftime('%Y%m%d')}.csv"))]
     pre = [d for d in kept_days if d < WINDOW[0]]
     rows = []
+    # THE PRINT STORE IS AN INPUT TOO, AND AN UNREACHABLE ONE USED TO PRINT "-> OK" (R872 #1).
+    # `win` is filtered by os.path.exists under CS_ROOT, so a detached E: empties the pool,
+    # _pick([], k) returns nothing, and the gate passes having compared NOTHING - measured VRM
+    # exit 0 with "basis gate (3 check(s)) -> OK" over 0 of its 688 kept window sessions, PARA 0
+    # of 858. VERIFY (d) calls this same function, so --apply would "verify" the served side over
+    # the same empty set. A blanket refusal would be wrong: four of the seven legitimately have no
+    # kept window session, and 41 window weekdays are market holidays with no trades file. The
+    # condition is the ASYMMETRY - window sessions exist and NOT ONE of them has a trades file.
+    # R867 #4 floored --basis-samples, which is the typing; this floors the rows it produces.
+    in_window = [d for d in kept_days if WINDOW[0] <= d <= WINDOW[1]]
+    if in_window and not win:
+        rows.append((None, f"prints/NO trades_*.csv under {CS_ROOT} for any of {len(in_window)} "
+                           f"kept window session(s)", None, None, None, None, None, False))
     sample = _pick(win, k_window)
     if last_kept in win and last_kept not in sample:
         sample.append(last_kept)
@@ -626,8 +651,17 @@ def main() -> int:
     ap.add_argument("--basis-samples", type=int, default=4, help="window sessions checked against the retained prints (default 4; pre-window: 3 vs the 2026-07-13 snapshot)")
     ap.add_argument("--own-split", action="append", default=[], help="DATE:FACTOR - a split of the ORIGINAL instrument inside the kept half (VRM 1-for-80 in Feb 2024: 2024-02-14:80); window sessions before DATE are expected at FACTOR x the raw prints. Cite the source in the run record.")
     ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--snapshot-dir", default=None)
-    ap.add_argument("--allow-queued", action="store_true")
+    # BOTH OF THESE WERE UNDOCUMENTED (R872 #4) - one add_argument line each, no help, absent from
+    # the docstring, and one of them silently relaxes the only gate protecting the write window.
+    ap.add_argument("--snapshot-dir", default=None,
+                    help="where --apply keeps the pre-write snapshot (default F:/hf_r2_snapshot_reassigned_<utc-ymd>/<TICKER>). "
+                         "A directory that already holds a _MANIFEST.txt is REFUSED by snapshot()'s R731 guard, so a "
+                         "collision cannot silently overwrite a kept snapshot - do not point two runs at one directory.")
+    ap.add_argument("--allow-queued", action="store_true",
+                    help="proceed when the Daily Data Update workflow is QUEUED (not in_progress, not unknown - those "
+                         "are never overridable). The workflow can then start mid-repair and overwrite the write. Use "
+                         "only when the queue is known to be waiting on an unrelated job; the run prints and records "
+                         "that the override fired.")
     a = ap.parse_args()
     t = a.ticker.upper()
     cut = dt.date.fromisoformat(a.cut)
@@ -729,6 +763,13 @@ def main() -> int:
         # Name the check that refused. A generic message that pointed at --cut-gap-min was printed
         # for a CUT-0 failure too, which is an override that cannot help and should not be tried.
         failed = [r[0] for r in cut_rows if r[2] == "FAIL"]
+        # CUT-1 AND CUT-2 ARE ALTERNATIVES, so a failing one is NOT a cause when the other passed
+        # (R869's second recommendation, carried out under R872 #2). GOLD's CUT-1 is 0 weekdays on
+        # EVERY run, the correct one included - the gate passes on CUT-2's 142 silent sessions - so
+        # naming it in the refusal sent the reader at a check that was never the obstacle.
+        _verdict = {r[0]: r[2] for r in cut_rows}
+        _alt = {"CUT-1": "CUT-2", "CUT-2": "CUT-1"}
+        blocking = [n for n in failed if _verdict.get(_alt.get(n, ""), "") != "OK"] or failed
         if "CUT-0" in failed:
             print(f"  REFUSED: --cut {cut} is not the handover date recorded for {t} in symbol_map.REASSIGNED. "
                   f"That table is the reviewed record of when each symbol changed companies; if it is wrong, "
@@ -744,12 +785,20 @@ def main() -> int:
             # boundary ... before overriding --cut-gap-min", which points at the one input that
             # cannot help. It also made the --until gate's own "check --rebuild-from-cs" message
             # unreachable for every cs ticker, because this refusal fires first.
+            # ...AND NAME WHAT ELSE FAILED (R872 #2). `"CUT-4" in failed` shadowed CUT-3: a
+            # ["CUT-3", "CUT-4"] gate printed only the anchor sentence, so the too-early detector -
+            # the first dropped session HAVING printed in the main pass - was never mentioned. The
+            # generic branch it replaced at least printed both names.
+            _also = [n for n in blocking if n != "CUT-4"]
             print(f"  REFUSED: the last kept session {last_keep} is not anchored by the class-share pass. "
                   f"--cut {cut} may well be right; check --rebuild-from-cs {a.rebuild_from_cs!r} instead - "
                   f"if that symbol did not print on {last_keep}, the anchor came from the main pass, which "
-                  f"after a handover is the NEW company. Nothing written")
+                  f"after a handover is the NEW company. Nothing written"
+                  + (f". ALSO FAILING: {', '.join(_also)} - read those rows above as well; a failing CUT-3 "
+                     f"means the cut is too EARLY (the first dropped session did print in the main pass), "
+                     f"which the sentence above does not cover." if _also else ""))
         else:
-            print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream ({', '.join(failed)}). "
+            print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream ({', '.join(blocking)}). "
                   f"A cut inside a contiguous run keeps the NEW owner's sessions, and every gate below this one "
                   f"would pass on them (they are that company's own prints). Check the date against the symbol's "
                   f"print series before overriding --cut-gap-min; nothing written")
@@ -918,6 +967,31 @@ def main() -> int:
     st = seam_rebase.daily_run_state()
     if st == "in_progress" or (st == "queued" and not a.allow_queued) or st == "unknown":
         print(f"  REFUSED: Daily Data Update workflow is {st}; a repair inside its window is overwritten"); return 2
+    # AN OVERRIDE THAT FIRES MUST SAY SO (R872 #4). `--allow-queued` used to pass through in
+    # silence: a `queued` run and an `idle` run printed the same 18 lines, and `_RESULT.txt`
+    # recorded `allow_queued=True` either way, so the record could not tell an override that
+    # actually suppressed a refusal from one that was typed and never needed.
+    print(f"  daily run state: {st}"
+          + (" - OVERRIDDEN by --allow-queued; the workflow can start mid-repair and overwrite it"
+             if st == "queued" and a.allow_queued else ""))
+    # THE ORACLE IS A PRE-WRITE INPUT AND WAS ONLY EVER TOUCHED AFTER THE WRITE (R872 #5). VERIFY
+    # (b) is mandatory whenever --verify-against is set, but it runs with 22 objects already live,
+    # so an unreachable Yahoo - or a missing yfinance, which pipeline/requirements.txt did not
+    # declare until today - ended the run at exit 3 (DATA LIVE, unverifiable) where it can just as
+    # well end at 5 with nothing written. One probe fetch, the same call VERIFY (b) makes.
+    if a.verify_against:
+        _probe_from = WINDOW[1] - dt.timedelta(days=45)
+        try:
+            _probe = _yahoo_close(a.verify_against, _probe_from, WINDOW[1])
+        except Exception as ex:                                    # noqa: BLE001
+            print(f"  REFUSED: the VERIFY (b) oracle is unreachable BEFORE any write - Yahoo fetch for "
+                  f"{a.verify_against} raised {type(ex).__name__}: {str(ex)[:160]}. That check is mandatory "
+                  f"and otherwise runs only once the objects are live; aborted before any write"); return 5
+        if _probe is None or len(_probe) == 0:
+            print(f"  REFUSED: Yahoo returned no sessions for {a.verify_against} between {_probe_from} and "
+                  f"{WINDOW[1]} - check --verify-against; aborted before any write"); return 5
+        print(f"  VERIFY (b) oracle pre-flight: Yahoo {a.verify_against} returned {len(_probe)} session(s) "
+              f"for {_probe_from}..{WINDOW[1]}")
     snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_reassigned_{dt.datetime.now(dt.timezone.utc):%Y%m%d}", t)
     n_snap = seam_rebase.snapshot(client, t, snap_dir)          # exits 5 on any pre-write failure
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
@@ -1138,7 +1212,11 @@ def main() -> int:
                                   f"kept_from={a.kept_from} cut_gap_min={a.cut_gap_min} "
                                   f"own_split={a.own_split} anchors={a.anchor} "
                                   f"basis_samples={a.basis_samples} rebuild_from_cs={a.rebuild_from_cs} "
-                                  f"verify_against={a.verify_against} allow_queued={a.allow_queued} "
+                                  f"verify_against={a.verify_against} "
+                                  # WHAT THE OVERRIDE DID, NOT WHETHER IT WAS TYPED (R872 #4).
+                                  f"allow_queued={a.allow_queued}"
+                                  f"{'(FIRED: state was queued)' if a.allow_queued and st == 'queued' else ''} "
+                                  f"daily_run_state={st} "
                                   f"rebuilt={len(rebuilt):,}")
     seam_rebase._say(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
     return 0

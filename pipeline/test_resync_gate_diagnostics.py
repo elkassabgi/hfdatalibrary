@@ -224,13 +224,43 @@ def test_prose_about_a_revocation_never_bricks_the_gate(gate, line):
     "Revoke-Apply resync_variables.py " + SHA12 + " " + ID,
     "> REVOKE-APPLY something",
     "  WITHDRAW_APPLY resync_variables.py",
+    # R871 #1 - MID-LINE, and the anchor that used to hold this test dropped every one of them.
+    # This file writes its records in TABLE ROWS and in `<!-- -->` notes, 21 of which exist, so a
+    # withdrawal will be written mid-line far more often than at column 0. Measured against the
+    # position anchor: 14 of 24 token-shaped mentions and 7 of 11 realistic withdrawals moved
+    # REFUSE -> IGNORED, in the one direction the design says must never happen.
+    "| " + ID + " | 2026-09-07 | REVOKE-APPLY | the approval is pulled |",
+    "| " + ID + " | 2026-09-07 | REVOKE-APPLY resync_variabes.py * * |",   # one letter missing
+    "<!-- " + ID + " (2026-09-07): REVOKE-APPLY resync_variables.py " + SHA12 + " " + ID + " -->",
+    "  1. REVOKE-APPLY <tool>.py <sha12> <review id>",
+    "2026-09-07 ae: REVOKE-APPLY resync_variables.py " + SHA12 + " " + ID,
+    "the reviewer withdrew it in the row below - REVOKE-APPLY",           # hard wrap, token at EOL
+    # ...and the documented unresolvable tie: spelled and placed exactly like `> REVOKE-APPLY
+    # something` above, so it refuses. The remedy is to rephrase the line, never to narrow the
+    # matcher - R763 #2 and R765 #1 both narrowed it and both re-opened the revoke path.
+    "Withdraw-apply semantics are documented in SKILL.md.",
 ])
-def test_a_line_that_STARTS_with_a_revocation_token_refuses(gate, line):
-    """POSITION is the discriminator, not case and not the tool name. A token is written at the
-    start of a line - the same property the approval side has required since R757 #3 - while prose
-    puts its verb mid-sentence. The first two shapes are pinned by test_resync_review_gate.py and
-    an earlier tool-name rule broke both."""
+def test_a_revocation_MENTION_refuses_wherever_it_is_written(gate, line):
+    """THE OPERAND is the discriminator, not position, not case and not only the tool name. A
+    revocation is a statement about a file, a sha and a review id, so its verb is followed by one
+    of those; prose puts an ordinary word there. A token-spelled verb that opens or closes its
+    CELL counts too - that is the placeholder line and the hard-wrapped withdrawal, and a markdown
+    cell is the unit because a table row is how this file writes its records."""
     assert gate(GOOD + "\n" + line) is False, line
+
+
+@pytest.mark.parametrize("line", [
+    "Cancel apply and restore whenever the two hashes disagree.",
+    "- Cancel apply and restore on any mismatch (exit 1).",
+    "Revoke apply is not the same as restore.",
+    "> Cancel apply and restore, said the reviewer.",
+])
+def test_ordinary_English_at_the_start_of_a_line_does_not_brick_the_gate(gate, line):
+    """R871 #3, the mirror direction: the position anchor refused these five ordinary sentences,
+    which is R858's failure with the sign flipped - a gate that cannot be GRANTED. The spaced
+    spelling is what saves them: only a hyphenated or underscored verb counts as a token when it
+    carries no operand at all."""
+    assert gate(GOOD + "\n" + line) is True, line
 
 
 def test_a_parsed_revocation_for_another_id_does_not_silence_the_rest_of_its_line(gate):

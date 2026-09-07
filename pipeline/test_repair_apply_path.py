@@ -118,7 +118,15 @@ def _install(monkeypatch, scenario, n_snap):
 
     monkeypatch.setattr(R, "download_parquet", download_parquet)
     monkeypatch.setattr(R, "upload_parquet", upload_parquet)
-    monkeypatch.setattr(R, "upload_csv", lambda *a, **k: calls["uploads"].append(("csv", a[2], a[3])) or 1)
+    def upload_csv(*a, **k):
+        # R869 #4 named this scenario and R872 #3 measured that nothing covered it: the fix that
+        # counts a CSV put toward the upload tally is invisible unless a CSV put is the thing that
+        # fails. Without it the restore line reads "after 0 upload(s)" while 1 object is live.
+        if scenario == "csv_raises":
+            raise OSError("simulated R2 transport error on the first CSV put")
+        calls["uploads"].append(("csv", a[2], a[3]))
+        return 1
+    monkeypatch.setattr(R, "upload_csv", upload_csv)
     monkeypatch.setattr(R, "aggregate_all", lambda df: {tf: df.copy() for tf in R.TIMEFRAMES})
     monkeypatch.setattr(R, "sync_ticker_variables", sync)
     monkeypatch.setattr(R, "get_client", lambda: object())
@@ -339,3 +347,110 @@ def test_the_done_record_names_every_input_that_could_change_the_verdict(monkeyp
     for field in ("cut=", "until=", "unscale=", "kept_from=", "cut_gap_min=", "own_split=",
                   "anchors=", "basis_samples=", "rebuild_from_cs=", "verify_against="):
         assert field in rec, f"{field} missing from the EXIT 0 record: {rec}"
+
+
+# ---------------------------------------------------------------- R872: what the ninth review found
+
+def test_a_CSV_put_counts_toward_the_restore_tally(monkeypatch, tmp_path):
+    """R872 #3. Reverting the fix that counts CSV puts left the whole suite green, so the fix was
+    uncovered: the only way to see it is to make a CSV put be the thing that fails. Committed says
+    "after 1 upload(s)", reverted says "after 0", while one object is live either way - and the
+    upload count is what the operator reads to decide how much was written."""
+    code, calls = _run(monkeypatch, tmp_path, "csv_raises")
+    assert code == 1
+    assert calls["restores"] == 1
+    rec = calls["records"][-1]
+    assert "EXIT 1 RESTORED" in rec, rec
+    assert "after 0 upload(s)" not in rec, f"a CSV put that succeeded before the failure was not counted: {rec}"
+
+
+def test_allow_queued_says_that_it_fired(monkeypatch, tmp_path):
+    """R872 #4. The override used to pass through in silence: a `queued` run and an `idle` run
+    printed the same lines and both recorded `allow_queued=True`, so neither the console nor
+    _RESULT.txt could tell an override that suppressed a refusal from one that was never needed."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(seam_rebase, "daily_run_state", lambda: "queued")
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--allow-queued", "--snapshot-dir", str(tmp_path / "queued")])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 0
+    rec = calls["records"][-1]
+    assert "FIRED: state was queued" in rec, rec
+    assert "daily_run_state=queued" in rec, rec
+
+
+def test_queued_without_the_flag_still_refuses(monkeypatch, tmp_path):
+    """The mirror: in_progress and unknown are never overridable, and queued is only overridable
+    on purpose. A test that only proves the override works would pass on a gate that never fires."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(seam_rebase, "daily_run_state", lambda: "queued")
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "queued2")])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 2
+    assert not calls["uploads"]
+
+
+def test_an_unreachable_oracle_refuses_BEFORE_the_write(monkeypatch, tmp_path):
+    """R872 #5. VERIFY (b) is mandatory with --verify-against but runs once 22 objects are live, so
+    an unreachable Yahoo ended the run at exit 3 - DATA LIVE, unverifiable - where a pre-flight
+    fetch ends it at 5 with nothing written."""
+    calls = _install(monkeypatch, "healthy", 22)
+
+    def boom(symbol, start, end):
+        raise OSError("simulated Yahoo transport failure")
+    monkeypatch.setattr(R, "_yahoo_close", boom)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--verify-against", "B", "--snapshot-dir", str(tmp_path / "oracle")])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 5, f"an unreachable oracle must abort before any write, got {code}"
+    assert not calls["uploads"], "nothing may be written when the oracle cannot be reached"
+
+
+def test_a_CUT_3_failure_is_named_even_when_CUT_4_also_fails(monkeypatch, tmp_path, capsys):
+    """R872 #2. `"CUT-4" in failed` shadowed CUT-3, so a cut that is too EARLY - the first dropped
+    session having printed in the main pass - was reported only as an anchor problem."""
+    _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(R, "cut_gate", lambda *a, **k: (
+        [("CUT-3", "the first dropped session printed in the main pass", "FAIL"),
+         ("CUT-4", "the last kept session is not cs-anchored", "FAIL")], False))
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(),
+                                      "--rebuild-from-cs", "B", "--verify-against", "B",
+                                      "--until", "2026-03-27"])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "CUT-3" in out.split("REFUSED:")[-1], f"CUT-3 was not named in the refusal: {out}"
+
+
+def test_a_failing_CUT_1_is_not_named_when_CUT_2_carried_the_gate(monkeypatch, tmp_path, capsys):
+    """R869's second recommendation. CUT-1 and CUT-2 are alternatives; GOLD's CUT-1 is 0 weekdays
+    on every run, the correct one included, so naming it pointed the reader at a check that was
+    never the obstacle."""
+    _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(R, "cut_gate", lambda *a, **k: (
+        [("CUT-1", "0 weekdays of served discontinuity", "FAIL"),
+         ("CUT-2", "142 silent sessions", "OK"),
+         ("CUT-3", "the first dropped session printed in the main pass", "FAIL")], False))
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat()])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    out = capsys.readouterr().out
+    assert code == 2
+    tail = out.split("REFUSED:")[-1]
+    assert "CUT-3" in tail, tail
+    assert "CUT-1" not in tail, f"CUT-1 failed but CUT-2 carried the gate, so it is not a cause: {tail}"

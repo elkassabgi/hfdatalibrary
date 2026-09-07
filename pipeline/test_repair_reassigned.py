@@ -128,3 +128,37 @@ def test_last_cs_session_is_bounded_and_returns_none_for_a_symbol_that_never_pri
     monkeypatch.setattr(rr, "_bars_from_cs", _none)
     assert rr.last_cs_session("NOTASYMBOL", "GOLD", limit=5) is None
     assert len(seen) == 5, "the walk must stop at `limit`, not scan the whole window"
+
+
+# --------------------------------------------------------------- the basis gate's own inputs
+
+def _win_frame(days):
+    rows = []
+    for i, d in enumerate(days):
+        for m in range(3):
+            rows.append({"datetime": pd.Timestamp(d) + pd.Timedelta(hours=10, minutes=m),
+                         "Open": 10.0, "High": 10.0, "Low": 10.0, "Close": 10.0, "Volume": 100})
+    return pd.DataFrame(rows)
+
+
+def test_an_unreachable_print_store_fails_the_basis_gate_instead_of_passing_it(monkeypatch, tmp_path):
+    """R872 #1: the tenth unchecked input is the module constant CS_ROOT. `win` is filtered by
+    os.path.exists under it, so a detached E: emptied the pool, _pick([], k) returned nothing, and
+    the gate printed "-> OK" having compared NOTHING - measured VRM over 0 of 688 kept window
+    sessions. VERIFY (d) calls this same function, so --apply would "verify" the served side over
+    the same empty set."""
+    days = [rr.WINDOW[0] + dt.timedelta(days=k) for k in (10, 11, 12, 13)]
+    monkeypatch.setattr(rr, "CS_ROOT", str(tmp_path / "no_such_print_store"))
+    rows, ok = rr.basis_gate(_win_frame(days), "ZZ", rr.WINDOW[1], [], 4, 3)
+    assert ok is False, "an empty window pool must not pass"
+    assert any(r[1].startswith("prints/NO trades_") for r in rows), rows
+
+
+def test_a_ticker_with_no_kept_window_session_is_not_accused_of_a_missing_store(monkeypatch, tmp_path):
+    """The mirror, and why a blanket refusal would be wrong: four of the seven legitimately have no
+    kept window session at all, and 41 window weekdays are market holidays with no trades file. The
+    condition is the ASYMMETRY - window sessions exist and not one of them has a file."""
+    days = [rr.WINDOW[0] - dt.timedelta(days=k) for k in (30, 29, 28)]
+    monkeypatch.setattr(rr, "CS_ROOT", str(tmp_path / "no_such_print_store"))
+    rows, _ok = rr.basis_gate(_win_frame(days), "ZZ", rr.WINDOW[1], [], 4, 3)
+    assert not any(str(r[1]).startswith("prints/NO trades_") for r in rows), rows

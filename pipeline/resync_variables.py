@@ -216,7 +216,8 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # comment above claims to avoid. A real revocation always names the file it withdraws; a sentence
 # that happens to put a revoke verb beside the word "apply" does not.
 _REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0,3}APPLY\b"
-# POSITION IS THE DISCRIMINATOR. Third attempt at this line, and the first two are instructive:
+# THE OPERAND IS THE DISCRIMINATOR. Fourth attempt at this line, and the first three are each
+# instructive in a different direction:
 #
 #   attempt 1 - require the tool NAME on the line. Broke two genuine refusals the suite already
 #     pins: the placeholder `REVOKE-APPLY <tool>.py <sha12> <review id>`, which names no tool, and
@@ -224,15 +225,53 @@ _REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0
 #   attempt 2 - require the token in CAPS. Measured false: `A MISMATCH MUST CANCEL APPLY AND
 #     RESTORE.` refuses every run, and 12 of the live PASSED.md's 92 lines carry a run of three or
 #     more ALL-CAPS words. Prose in this register is often shouted; caps is not a token marker.
+#   attempt 3 - require the shape to START the line. Fail-OPEN, and badly (R871 #1): a withdrawal
+#     is written wherever the file writes its records, and this file writes them in TABLE ROWS and
+#     in `<!-- ... -->` notes, 21 of which already exist. Measured against the predecessor,
+#     **14 of 24 token-shaped mentions moved REFUSE -> IGNORED** and 7 of 11 realistic
+#     withdrawals - the sharpest being `| AR-045 | 2026-09-07 | REVOKE-APPLY resync_variabes.py
+#     * * |`, a real revocation of THIS tool with one letter missing, written where every record
+#     in this file is written. Live PASSED.md lines 28-30 promise the opposite in as many words:
+#     "A withdrawal is honoured WHEREVER IT APPEARS - any indentation, any surrounding text."
 #
-# What a TOKEN actually is, and prose is not, is a line that STARTS with it - the same property the
-# approval side has required at column 0 since R757 #3. `A MISMATCH MUST CANCEL APPLY...` puts its
-# verb mid-sentence; `REVOKE-APPLY <tool>.py ...` and a bare wrapped `REVOKE-APPLY` do not. A
-# leading quote/bullet/blockquote marker is allowed, because a revocation must fail OPEN and those
-# do not hide it from a reader.
-REVOKE_MENTION_RE = _re.compile(r"^[\s>*\-|`\"']{0,8}" + _REVOKE_SHAPE, _re.I)
-REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # anywhere on the line, but then
-TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # it must name the tool
+# What separates a token from prose is not where it sits but WHAT FOLLOWS IT. A revocation is a
+# statement about a file, a sha and a review id, so the verb is followed by an OPERAND: a
+# `<placeholder>`, a path or `*.py` filename, a sha, a review id, or the wildcard `*`. Prose puts
+# an ordinary word there - "cancel apply AND RESTORE", "revoke apply PERMISSION". Three ways in,
+# any one of which counts as a mention, and the shape must be present for all three:
+#   * the line NAMES this tool (attempt 1's rule, kept as one disjunct rather than the whole test);
+#   * a shape is followed immediately by an operand;
+#   * a TOKEN-SPELLED shape - hyphen or underscore, never a bare space - either starts the line or
+#     ends it. Those are the two places a token legitimately carries no operand: the placeholder
+#     line and a withdrawal hard-wrapped across two lines. Requiring the hyphen there is what
+#     stops `Cancel apply and restore whenever the hashes disagree.` from bricking the gate, which
+#     attempt 3 did to five ordinary English lines (R871 #3).
+# ONE AMBIGUITY IS UNRESOLVABLE AND THE TIE GOES TO REFUSING: `Withdraw-apply semantics are
+# documented in SKILL.md.` is spelled and placed exactly like `> REVOKE-APPLY something`, which
+# the suite pins as a refusal. Nothing structural separates them, revocation fails OPEN, so both
+# refuse - loudly, naming the line, and the remedy is the one this file has always given: delete
+# or rephrase the line, never narrow this matcher.
+_TOKEN_SPELLED = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[‐-―_\-]{1,3}APPLY\b"
+REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # every shape, anywhere on the line
+TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # ...then the line names the tool
+# An OPERAND, matched immediately after a shape. The sha branch demands a digit so that an
+# ordinary seven-letter word spelled out of a-f ("defaced") cannot pass for one.
+OPERAND_RE = _re.compile(
+    r"[ \t]*(?:<[^<>]{1,40}>"                          # <tool>.py, <sha12>, <review id>
+    r"|\*"                                             # the wildcard id
+    r"|(?:[\w.~\-]*[/\\])*[\w.\-]+\.(?:py|md)\b"       # a path or a filename
+    r"|(?=[0-9a-f]{7,40}\b)[0-9a-f]*\d[0-9a-f]*\b"     # a sha
+    r"|AR-\d+\b)", _re.I)
+# A token carrying NO operand: only where it OPENS or CLOSES its cell, and only in the hyphenated
+# spelling. THE UNIT IS THE CELL, NOT THE LINE, because a markdown table row is how this file
+# writes its records: `| AR-045 | 2026-09-07 | REVOKE-APPLY | the approval is pulled |` is a
+# withdrawal with an empty operand column, and against the line it is neither first nor last.
+BARE_TOKEN_RE = _re.compile(r"^[\s>*\-`\"']{0,8}" + _TOKEN_SPELLED
+                            + r"|" + _TOKEN_SPELLED + r"[ \t]*[`\"')\]}]*[ \t]*$", _re.I)
+
+
+def _bare_token(line: str) -> bool:
+    return any(BARE_TOKEN_RE.search(cell) for cell in line.split("|"))
 #
 # THE PLAIN-ENGLISH BRANCH IS GONE, and its removal is the fix, not a regression (R870 #1). It
 # refused any line carrying a revocation verb beside the CLAIMED id. R868's addendum justified
@@ -423,8 +462,10 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 # was fixed on the parsing half and left standing here.
                 _parsed_here = list(revoke.finditer(ln))
                 _shapes = list(REVOKE_MENTION_CI_RE.finditer(ln))
-                _looks = bool(REVOKE_MENTION_RE.search(ln)) or (
-                    bool(_shapes) and bool(TOOL_MENTION_RE.search(ln)))
+                _looks = bool(_shapes) and (
+                    bool(TOOL_MENTION_RE.search(ln))
+                    or any(OPERAND_RE.match(ln, m.end()) for m in _shapes)
+                    or _bare_token(ln))
                 # COUNT them, do not just ask whether one parsed: a line carrying a well-formed
                 # revocation for ANOTHER id used to silence every other shape beside it.
                 if _looks and len(_shapes) > len(_parsed_here):

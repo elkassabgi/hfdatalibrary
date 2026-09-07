@@ -891,18 +891,30 @@ def main() -> int:
         # the four variables/quality objects are stale. Saying nothing was written, as the last
         # line the operator reads, contradicts the SERVING INCOMPLETE warning printed just above it
         # and points at pre-write causes that cannot produce a 6.
-        _wrote = bool(incomplete) or bool(unmeasurable)
+        # ...AND EXIT 3 IS NOT A WRITE, WHICH THE FIX FOR R870 #2 GOT BACKWARDS IN THE SAME
+        # PARAGRAPH (R871 #2). `unmeasurable` can only ever hold seam_rebase.py exit 3 - the
+        # dispatch above says so and stop_text_for() halts the batch on a resync 3 - and
+        # seam_rebase.py returns 3 in exactly one place, "no market reference at Yahoo - cannot
+        # measure; disclose, do not repair", which is BEFORE snapshot() and before the first
+        # upload. So an all-exit-3 batch wrote nothing, and claiming it did while suppressing
+        # "Nothing was written." is the R870 defect with the sign flipped.
+        _wrote = bool(incomplete)
+        # The one-cause paragraph belongs to the codes that made NO WRITE, not to the absence of a
+        # write anywhere in the batch: gating it on `not _wrote` let a single exit 6 beside forty
+        # exit 5s hide the stale-`--reviewed`-id diagnosis, which is the commonest cause there is.
+        # exit 2 is excluded deliberately - a seam refusal is a per-ticker measurement verdict, and
+        # none of the three causes named below can produce one.
+        _nowrite = len(aborted) + len(deferred)
         print(f"  NOT ONE of the {n} ticker(s) attempted this run completed: {_named}."
               + ("" if _wrote else " Nothing was written.")
               + (f" {len(incomplete)} of them DID write their price objects and left variables/quality "
                  f"stale (exit 6) - read the SERVING INCOMPLETE line above; those are live."
                  if incomplete else "")
-              + (f" {len(unmeasurable)} wrote and could not be verified (exit 3) - data is live."
-                 if unmeasurable else "")
-              + (f" A whole-batch no-op is almost always ONE cause, not {n} coincidences - a stale "
-                 f"--reviewed id (every edit to the tool invalidates the approval bound to its hash), "
-                 f"a `gh` that cannot answer so daily_run_state() reads 'unknown', or an expired "
-                 f"credential. Find that cause before re-running." if not _wrote else ""))
+              + (f" The {_nowrite} that aborted or deferred are almost always ONE cause, not "
+                 f"{_nowrite} coincidences - a stale --reviewed id (every edit to the tool invalidates the "
+                 f"approval bound to its hash), a `gh` that cannot answer so daily_run_state() reads "
+                 f"'unknown', or an expired credential. Find that cause before re-running."
+                 if _nowrite else ""))
     return 1 if stopped or (n and achieved == 0) else 0
 
 
