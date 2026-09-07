@@ -71,6 +71,28 @@ STOP_TEXT = {
 }
 
 
+# EXIT 3 MEANS OPPOSITE THINGS IN THE TWO TOOLS (R855 #3). For seam_rebase.py it is a benign
+# refusal - no market reference - and the batch should carry on. For resync_variables.py it is
+# "UNVERIFIABLE, DATA LIVE ... nothing restored": all four objects were uploaded and then could
+# not be verified. Filing that under `unmeasurable` and continuing marches the run through the
+# remaining tickers while one ticker's served state is unknown. R750 finding 3 named exactly this
+# class for exit 2 and split it per tool; exit 3 was left behind.
+STOP_TEXT_RESYNC = {
+    3: ("STOPPING - THE LAST TICKER'S FOUR OBJECTS ARE WRITTEN AND UNVERIFIED. resync_variables.py "
+        "exit 3 is 'UNVERIFIABLE, DATA LIVE - nothing restored': the uploads succeeded and the "
+        "read-back comparison did not complete, so served state for that ticker is UNKNOWN and it "
+        "is NOT the pre-resync state. Do not treat this as a skip. Re-run the tool for that one "
+        "ticker to re-verify, or restore from its snapshot directory, before continuing the batch."),
+}
+
+
+def stop_text_for(rc: int, seam: bool):
+    """The stop text for this code IN THIS TOOL, or None to carry on."""
+    if not seam and rc in STOP_TEXT_RESYNC:
+        return STOP_TEXT_RESYNC[rc]
+    return STOP_TEXT.get(rc)
+
+
 def _utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -748,11 +770,13 @@ def main() -> int:
             # R755 #7: the drift stop used to REPLACE the served-state guidance, so on the very run
             # where a breach happened over a write the operator was told "restart deliberately" and
             # not how to restore - that text only arrived on the next start.
-            if rc in STOP_TEXT:
-                print(STOP_TEXT[rc], flush=True)
+            _st = stop_text_for(rc, seam)
+            if _st:
+                print(_st, flush=True)
             stopped = True; break
-        if rc in STOP_TEXT:
-            print(STOP_TEXT[rc] + "\n" + out[-2500:] + err[-800:])
+        _st = stop_text_for(rc, seam)
+        if _st:
+            print(_st + "\n" + out[-2500:] + err[-800:])
             stopped = True; break
         if rc == 6:
             incomplete.append(t)
@@ -763,6 +787,8 @@ def main() -> int:
             # resync_variables.py it is "already consistent", which is a success, not a manual item
             (refused if seam else already_ok).append(t)
         elif rc == 3:
+            # Only reachable for seam_rebase.py: stop_text_for() halts the batch on a resync 3.
+            # Kept explicit so the asymmetry is visible at the dispatch, not only at the guard.
             unmeasurable.append(t)
         elif rc == 7:
             deferred.append(t)                                   # resync_variables.py: the daily window; run again later

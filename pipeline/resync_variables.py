@@ -203,7 +203,21 @@ REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
 # is written as live text. It also closes the last of R757 #3's class - a column-0 token inside a
 # fenced block used to authorise - and it is what stops the documentation added for R760 #3 from
 # making this tool refuse every run, which it did (measured 2026-09-05T20:51Z, before this fix).
-FENCE_RE = _re.compile(r"^\s*(```|~~~)")
+# A FENCE HAS A CHARACTER, A LENGTH AND AN INDENT, and this used to be one boolean for two
+# markers (R855 #1). Because a ``` line and a ~~~ line both flipped the same flag, a ~~~ INSIDE
+# a ```-fence closed it and the token after was read as live text; four more shapes fell out of
+# the same defect, including a longer fence opened and a shorter one nested. CommonMark: an
+# opening fence is 3+ of ` or ~ indented 0-3 spaces; only a fence of the SAME character, at
+# least as long, with no info string, closes it. Modelled, not special-cased - R763 #2 and
+# R765 #1 both re-opened this path by narrowing a matcher instead of paying at the source.
+FENCE_RE = _re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+# HTML COMMENTS ARE QUOTATION TOO, and PASSED.md uses them as its reviewer-note idiom - 21 of
+# them today. A FAIL row whose footnote quoted the approval token AUTHORISED (R757 #3 named
+# this shape ten rounds ago; the fence half was fixed and this half never was). Multi-line,
+# so it needs the same open/closed state a fence does.
+HTML_OPEN_RE = _re.compile(r"<!--")
+HTML_CLOSE_RE = _re.compile(r"-->")
+HTML_ONELINE_RE = _re.compile(r"<!--.*?-->", _re.S)
 INLINE_CODE_RE = _re.compile(r"`[^`]*`")
 REVOKING_COMMENT_RE = _re.compile(
     r"(\brevok\w*|\bsupersed\w*|\bwithdraw\w*|\brescind\w*|\bcancel\w*|\bvoid\b|\bobsolete\b"
@@ -242,12 +256,26 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
         # utf-8-sig, because a BOM makes the FIRST line unmatchable and a first-line approval would
         # then be silently ignored - harmless for an approval, but it would also swallow a revocation.
         with open(passed_file, encoding="utf-8-sig", errors="replace") as fh:
-            in_fence = False
+            fence_char = None        # the marker CHARACTER of the open fence, or None
+            fence_len = 0            # and its length; a closer must be at least this long
+            in_html = False          # inside a multi-line <!-- ... -->
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
-                fence_marker = bool(FENCE_RE.match(ln))
-                if fence_marker:
-                    in_fence = not in_fence
+                fm = FENCE_RE.match(ln)
+                fence_marker = False
+                if fm:
+                    mk = fm.group("marker")
+                    ch, ln_len = mk[0], len(mk)
+                    info = fm.group("info").strip()
+                    if fence_char is None:
+                        fence_char, fence_len = ch, ln_len
+                        fence_marker = True
+                    elif ch == fence_char and ln_len >= fence_len and not info:
+                        fence_char, fence_len = None, 0
+                        fence_marker = True
+                    # else: a different marker, a shorter one, or one carrying an info string is
+                    # CONTENT inside the open fence - it does not close anything.
+                in_fence = fence_char is not None
 
                 # THE TWO PATHS SKIP DIFFERENT THINGS, AND THAT ASYMMETRY IS THE WHOLE POINT (R763 #2).
                 # My first fence fix skipped fenced and inline-code regions before ANY matching, which
@@ -268,6 +296,22 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 # ...and only now, for the APPROVE path, drop quotation.
                 if in_fence or fence_marker:
                     continue
+                # HTML comments, single- and multi-line. Blanked rather than dropped so the
+                # column-0 approve anchor still sees the right columns on a line that carries a
+                # comment beside live text.
+                approve_ln = HTML_ONELINE_RE.sub(lambda m: " " * len(m.group(0)), ln)
+                if in_html:
+                    c = HTML_CLOSE_RE.search(approve_ln)
+                    if c:
+                        approve_ln = " " * c.end() + approve_ln[c.end():]
+                        in_html = False
+                    else:
+                        continue                      # wholly inside a comment
+                o = HTML_OPEN_RE.search(approve_ln)
+                if o:
+                    approve_ln = approve_ln[:o.start()]
+                    in_html = True
+                ln = approve_ln
                 # inline code is quotation, not decision; blanking it preserves column positions for
                 # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
                 ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), ln)
@@ -347,8 +391,18 @@ def main() -> int:
         if r is None:
             _say(f"  {version}/variables: served object missing")
         else:
+            # THE COUNT AND THE CAP, and ordered by SEVERITY (R855 #2). This printed
+            # `sorted(r[1])[:10]` - ten of twenty-five, alphabetically, with nothing
+            # to say it had truncated - so the five worst columns (vr5, vr10,
+            # dollar_volume, share_volume, num_trades) were exactly the ones dropped
+            # and every list came out exactly ten long. `compare()` already returns
+            # the per-column session count in r[1]; the caller was discarding it.
+            _cols = sorted(r[1].items(), key=lambda kv: (-kv[1], kv[0]))
+            _shown = ", ".join(f"{c}({n:,})" for c, n in _cols[:10]) or "none"
+            _more = f" ... and {len(_cols) - 10} more" if len(_cols) > 10 else ""
             _say(f"  {version}/variables: {r[0]:,} of {r[2]:,} sessions differ from a fresh recompute ({r[5]}..{r[6]}); "
-                 f"only-served {r[3]}, only-fresh {r[4]}; columns identical {r[7]}; differing columns {sorted(r[1])[:10]}")
+                 f"only-served {r[3]}, only-fresh {r[4]}; columns identical {r[7]}; {len(_cols)} differing column(s), "
+                 f"worst first: {_shown}{_more}")
     stale = sum((r[0] + r[3] + r[4]) if r else 0 for r in before.values())
     consistent = stale == 0 and all(r is not None and r[7] for r in before.values())
     if not a.apply:
