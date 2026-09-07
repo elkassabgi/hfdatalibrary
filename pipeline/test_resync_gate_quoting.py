@@ -63,6 +63,19 @@ QUOTINGS = [
     ("PASSED.md footnote idiom",
      "| AR-039 | resync_variables.py | **FAIL** |\n"
      "<!-- the line that WOULD have cleared it is\n{r}\nand it was not written. -->"),
+    # --- R856: my own fence fix WIDENED the grant path, and one HTML construct is not the family.
+    # Modelling CommonMark's 0-3 space rule stopped an indented fence from opening a quotation
+    # region, so a column-0 token between two of them started authorising where it had refused.
+    # And PASSED.md holds ZERO code fences and 21 HTML comments - raw HTML IS its quoting idiom,
+    # so <pre>, <code> and <details> belong to the same family as the comment.
+    ("fence indented 4 spaces",     "    ```\n{r}\n    ```"),
+    ("fence indented 8 spaces",     "        ~~~\n{r}\n        ~~~"),
+    ("fence indented by a tab",     "\t```\n{r}\n\t```"),
+    ("pre block",                   "<pre>\n{r}\n</pre>"),
+    ("code block",                  "<code>\n{r}\n</code>"),
+    ("details/summary",             "<details><summary>why</summary>\n{r}\n</details>"),
+    ("blockquote tag",              "<blockquote>\n{r}\n</blockquote>"),
+    ("details wrapping a pre",      "<details>\n<pre>\n{r}\n</pre>\n</details>"),
 ]
 
 
@@ -121,3 +134,29 @@ def test_a_comment_beside_live_text_blanks_only_the_comment(gate):
 def test_an_unclosed_html_comment_swallows_the_rest(gate):
     """Failing closed: if a comment is opened and never closed, everything after it is quotation."""
     assert gate("<!-- note\n" + GOOD) is False
+
+
+def test_an_indented_fence_still_opens_a_quotation_region(gate):
+    """R856 #1, and it was MY regression. Modelling CommonMark's 0-3 space rule dropped the
+    indented case that `^\\s*` had been covering by accident, so a fence indented four spaces
+    stopped opening anything and the column-0 token between two of them AUTHORISED where it had
+    refused. A guard is not a renderer: anything that looks like a quoted block is quotation."""
+    for indent in ("    ", "        ", "\t", "  \t "):
+        assert gate(f"{indent}```\n{GOOD}\n{indent}```") is False, repr(indent)
+
+
+def test_the_raw_html_family_is_treated_as_one(gate):
+    """R856 #2. The comment fix modelled ONE construct in a file whose only quoting idiom is raw
+    HTML - zero code fences, 21 HTML comments."""
+    for tag in ("pre", "code", "details", "blockquote", "xmp"):
+        assert gate(f"<{tag}>\n{GOOD}\n</{tag}>") is False, tag
+
+
+def test_an_unclosed_html_block_swallows_the_rest(gate):
+    """Fail closed, like the unclosed comment and the unclosed fence."""
+    assert gate("<pre>\n" + GOOD) is False
+
+
+def test_nested_html_blocks_do_not_close_early(gate):
+    """Counted, not a boolean: </pre> must not release a still-open <details>."""
+    assert gate("<details>\n<pre>\nx\n</pre>\n" + GOOD + "\n</details>") is False

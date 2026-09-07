@@ -566,7 +566,14 @@ def main() -> int:
             if len(p) < 3:
                 continue
             last_line = p; last_line_tool = line_tool(p)          # the log's last line, whichever tool wrote it
-            if line_tool(p) == a.tool and p[2] == "0":
+            # EXIT 2 AND 7 ARE TERMINAL SUCCESSES FOR resync_variables.py (R856 #6). 2 is
+            # "already consistent - nothing to do" and 7 is "deferred by the daily window";
+            # neither leaves anything to redo. Counting only 0 made every restart re-measure
+            # every already-consistent ticker at 50-77 s each, and 1,324 of those is most of a
+            # day of work that changes nothing. For seam_rebase.py exit 2 is a REFUSAL, so it
+            # stays out - the same per-tool asymmetry as R750 #3 and R856 #3.
+            _terminal_ok = {"0"} if a.tool == "seam_rebase.py" else {"0", "2", "7"}
+            if line_tool(p) == a.tool and p[2] in _terminal_ok:
                 done.add(p[1])
     if last_line is not None and last_line[2] == "4":
         who = f" (written by {last_line_tool})" if last_line_tool != a.tool else ""

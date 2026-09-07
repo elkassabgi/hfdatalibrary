@@ -210,7 +210,13 @@ REVOKE_MENTION_RE = _re.compile(r"REVOKE-APPLY", _re.I)
 # opening fence is 3+ of ` or ~ indented 0-3 spaces; only a fence of the SAME character, at
 # least as long, with no info string, closes it. Modelled, not special-cased - R763 #2 and
 # R765 #1 both re-opened this path by narrowing a matcher instead of paying at the source.
-FENCE_RE = _re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+# INDENTATION IS UNRESTRICTED, DELIBERATELY (R856 #1). CommonMark says a fence is indented
+# 0-3 spaces and that 4+ is an indented code block instead - and modelling that faithfully
+# WIDENED this guard: a fence indented four spaces stopped opening a quotation region, so a
+# column-0 token between two of them started authorising where it had refused. A guard is not
+# a renderer. Anything that LOOKS like a quoted block is quotation, so any leading whitespace
+# opens a fence; what the previous version got wrong was the MARKER, not the indent.
+FENCE_RE = _re.compile(r"^(?P<indent>\s*)(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 # HTML COMMENTS ARE QUOTATION TOO, and PASSED.md uses them as its reviewer-note idiom - 21 of
 # them today. A FAIL row whose footnote quoted the approval token AUTHORISED (R757 #3 named
 # this shape ten rounds ago; the fence half was fixed and this half never was). Multi-line,
@@ -218,6 +224,14 @@ FENCE_RE = _re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$
 HTML_OPEN_RE = _re.compile(r"<!--")
 HTML_CLOSE_RE = _re.compile(r"-->")
 HTML_ONELINE_RE = _re.compile(r"<!--.*?-->", _re.S)
+# ONE CONSTRUCT IS NOT THE FAMILY (R856 #2). PASSED.md holds zero code fences and 21 HTML
+# comments - raw HTML IS its quoting idiom - and `<pre>`, `<code>` and `<details>` all still
+# authorised after the comment fix. Same treatment: an opening tag starts a quotation region,
+# its closing tag ends it, and an unclosed one swallows the rest of the file, which is the
+# fail-closed direction.
+HTML_BLOCK_OPEN_RE = _re.compile(r"<\s*(pre|code|details|summary|blockquote|xmp)\b", _re.I)
+HTML_BLOCK_CLOSE_RE = _re.compile(r"<\s*/\s*(pre|code|details|summary|blockquote|xmp)\s*>",
+                                  _re.I)
 INLINE_CODE_RE = _re.compile(r"`[^`]*`")
 REVOKING_COMMENT_RE = _re.compile(
     r"(\brevok\w*|\bsupersed\w*|\bwithdraw\w*|\brescind\w*|\bcancel\w*|\bvoid\b|\bobsolete\b"
@@ -259,6 +273,7 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
             fence_char = None        # the marker CHARACTER of the open fence, or None
             fence_len = 0            # and its length; a closer must be at least this long
             in_html = False          # inside a multi-line <!-- ... -->
+            html_block = 0           # depth of open <pre>/<code>/<details>/...
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
                 fm = FENCE_RE.match(ln)
@@ -311,6 +326,17 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 if o:
                     approve_ln = approve_ln[:o.start()]
                     in_html = True
+                # RAW-HTML BLOCKS, same family as the comment. Counted rather than a boolean
+                # so nesting (<details><pre>...) cannot close early, and an unclosed one
+                # keeps the rest of the file quoted - fail closed.
+                _opens = len(HTML_BLOCK_OPEN_RE.findall(approve_ln))
+                _closes = len(HTML_BLOCK_CLOSE_RE.findall(approve_ln))
+                if html_block or _opens:
+                    html_block = max(0, html_block + _opens - _closes)
+                    continue
+                if _closes:
+                    html_block = 0
+                    continue
                 ln = approve_ln
                 # inline code is quotation, not decision; blanking it preserves column positions for
                 # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
@@ -383,11 +409,29 @@ def main() -> int:
             _say(f"{t}: served {version} 1-minute file missing - aborted before any write (exit 5)"); return 5
         b["datetime"] = pd.to_datetime(b["datetime"]); bars[version] = b
     # MEASURE - the frames computed here are the ones uploaded under --apply (no second compute: R745)
-    fresh, before = {}, {}
+    fresh, before, before_q = {}, {}, {}
     for version in ("raw", "clean"):
         fresh[version] = prepare(compute_recent_days(bars[version], t, existing_dates=None, max_new=10 ** 9))
         r = compare(served_obj(client, f"{version}/variables/{t}.parquet"), fresh[version], exact=False)
         before[version] = r
+        # ALL FOUR OBJECTS THIS TOOL WRITES, NOT TWO (R856 #4). `keys_of()` is
+        # {raw,clean}/{variables,quality}, and measuring only the variables meant a ticker with a
+        # broken QUALITY object exited 2 - "already consistent, nothing to do" - and was never
+        # repaired. Four of AAPL clean's 25 differing columns ARE QUALITY_COLS. The write path
+        # already compares this object exactly (see VERIFY below); the measurement now uses the
+        # same comparison at the same tolerance it uses for variables.
+        _qc = [c for c in QUALITY_COLS if c in fresh[version].columns]
+        _rq = compare(served_obj(client, f"{version}/quality/{t}.parquet"),
+                      fresh[version][_qc], exact=False)
+        before_q[version] = (_rq, _qc)
+        if _rq is None:
+            _say(f"  {version}/quality: served object missing")
+        else:
+            _qcols = sorted(_rq[1].items(), key=lambda kv: (-kv[1], kv[0]))
+            _qshown = ", ".join(f"{c}({n:,})" for c, n in _qcols[:10]) or "none"
+            _say(f"  {version}/quality:   {_rq[0]:,} of {_rq[2]:,} sessions differ; "
+                 f"only-served {_rq[3]}, only-fresh {_rq[4]}; columns identical {_rq[7]}; "
+                 f"{len(_qcols)} differing column(s), worst first: {_qshown}")
         if r is None:
             _say(f"  {version}/variables: served object missing")
         else:
@@ -403,8 +447,15 @@ def main() -> int:
             _say(f"  {version}/variables: {r[0]:,} of {r[2]:,} sessions differ from a fresh recompute ({r[5]}..{r[6]}); "
                  f"only-served {r[3]}, only-fresh {r[4]}; columns identical {r[7]}; {len(_cols)} differing column(s), "
                  f"worst first: {_shown}{_more}")
-    stale = sum((r[0] + r[3] + r[4]) if r else 0 for r in before.values())
-    consistent = stale == 0 and all(r is not None and r[7] for r in before.values())
+    # STALE AND CONSISTENT ARE DECIDED FROM ALL FOUR OBJECTS (R856 #4). A quality object
+    # that is missing, short a column, or carrying stale sessions makes the ticker stale
+    # even when its variables agree - otherwise the tool reports "nothing to do" about
+    # two objects it is on the point of overwriting.
+    stale = (sum((r[0] + r[3] + r[4]) if r else 0 for r in before.values())
+             + sum((rq[0] + rq[3] + rq[4]) if rq else 0 for rq, _qc in before_q.values()))
+    consistent = (stale == 0
+                  and all(r is not None and r[7] for r in before.values())
+                  and all(rq is not None and rq[7] for rq, _qc in before_q.values()))
     if not a.apply:
         _say("  already consistent - nothing to do" if consistent else
              "(dry run - the measurement above is the finding; pass --apply --reviewed <id> to rewrite)")
