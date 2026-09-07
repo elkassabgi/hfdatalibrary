@@ -80,12 +80,26 @@ def test_a_symbol_with_history_and_no_split_is_no_match(monkeypatch):
 
 
 def test_an_unresolved_spelling_is_lookup_failed_not_no_match(monkeypatch):
-    """`PRN-` 404s and `FISV` no longer exists (Fiserv renamed to FI). yfinance swallows both into
-    an empty Series, and the alert then said "no recorded split event matches" about a ticker it
-    never looked up. A symbol that resolves has some price history; these do not."""
+    """`PRN-` 404s at Yahoo: yfinance swallows that into an empty Series, and the alert then said
+    "no recorded split event matches" about a ticker it never looked up. A symbol that resolves has
+    some price history; this one does not.
+
+    FISV USED TO BE THE SECOND EXAMPLE HERE AND IT WAS FALSE (review R873 #4). The claim was that
+    Fiserv's rename to FI left `FISV` dead - but `pipeline/symbol_map.py` in this same tree records
+    the opposite, that Fiserv "moved back to Nasdaq as FISV" on 2025-11-11, and a live probe on
+    2026-09-07 resolved it in 0.29 s and returned no_match. Forcing `history_rows=0` for it made
+    the fixture assert a state the world does not have - R854's class, a test that passes because
+    the fixture was written to agree with the docstring."""
     _install(monkeypatch, lambda t: _FakeTicker(splits=None, history_rows=0))
-    for spelling in ("PRN-", "FISV"):
-        assert daily_update._confirm_split_event(spelling, pd.Timestamp("2026-09-04"), 0.5)[0] == "lookup_failed"
+    assert daily_update._confirm_split_event("PRN-", pd.Timestamp("2026-09-04"), 0.5)[0] == "lookup_failed"
+
+
+def test_a_symbol_that_resolves_is_never_reported_as_a_failed_lookup(monkeypatch):
+    """The mirror of the case above, and the one FISV actually belongs in: a spelling that DOES
+    resolve and has no recorded split is a genuine no_match, not a lookup failure. Reporting it as
+    failed would make the tri-state useless in the other direction."""
+    _install(monkeypatch, lambda t: _FakeTicker(splits=None, history_rows=5))
+    assert daily_update._confirm_split_event("FISV", pd.Timestamp("2026-09-04"), 0.5)[0] == "no_match"
 
 
 def test_a_raising_lookup_is_lookup_failed(monkeypatch):
@@ -122,7 +136,10 @@ def test_a_matching_event_below_three_to_one_still_does_not_apply(monkeypatch):
     assert applied is False
     assert out.equals(existing)
     assert "ca_applied" not in stats
-    assert "MATCHES" in stats["ca_alert"] and "manual_split" in stats["ca_alert"]
+    # ONE command in the alert, not two (R873 #2): the recorded event is reported, and the only
+    # runnable rescale is the one main built from the price snap.
+    assert "CONSISTENT with the move" in stats["ca_alert"], stats["ca_alert"]
+    assert stats["ca_alert"].count("manual_split") == 1, stats["ca_alert"]
 
 
 def test_a_matching_event_on_an_inconsistent_move_still_does_not_apply(monkeypatch):
@@ -142,9 +159,14 @@ def test_a_clean_ten_to_one_still_applies_on_price_alone(monkeypatch):
     """The negative control. Removing the automation this PR added must not disable the automation
     main already has: a round ratio at or above 3:1, stable all day, is still applied - and the
     lookup is not consulted for it, so a dead network cannot stop it."""
-    def _boom(_t):
-        raise AssertionError("the >=3:1 apply path must not consult the recorded-event lookup")
-    _install(monkeypatch, _boom)
+    # COUNT THE CALLS, DO NOT RAISE (review R873 #1). The first version of this test raised
+    # `AssertionError` from the fake Ticker - and `_confirm_split_event` wraps its lookup in
+    # `except Exception`, of which AssertionError is one. The control was INERT: a mutant that
+    # inserted `_confirm_split_event(...)` straight onto the >=3:1 apply path left this file at
+    # 10 passed with the lookup measurably called. The one hunk the commit message asserts was the
+    # one hunk nothing held.
+    calls = []
+    _install(monkeypatch, lambda t: calls.append(t) or _FakeTicker(splits=None, history_rows=5))
     existing = pd.concat([_bars("2026-09-02", 100.0), _bars("2026-09-03", 100.0)], ignore_index=True)
     new = _bars("2026-09-04", 10.0)
     stats: dict = {}
@@ -152,13 +174,84 @@ def test_a_clean_ten_to_one_still_applies_on_price_alone(monkeypatch):
     assert applied is True
     assert "ca_applied" in stats
     assert float(out["Close"].iloc[0]) == pytest.approx(10.0)
+    assert calls == [], f"the >=3:1 apply path consulted the recorded-event lookup: {calls}"
 
 
 def test_the_alert_names_the_state_it_is_in():
-    day = pd.Timestamp("2026-09-04").date()
-    assert "FAILED" in daily_update._event_phrase("lookup_failed", None, "AAPL", day)
-    assert "not" in daily_update._event_phrase("lookup_failed", None, "AAPL", day)
-    assert "SKIPPED" in daily_update._event_phrase("skipped", None, "STI", day)
-    assert "No recorded split event" in daily_update._event_phrase("no_match", None, "CHPT", day)
-    m = daily_update._event_phrase("match", 0.1, "KLAC", day)
-    assert "MATCHES" in m and "manual_split KLAC 0.1 2026-09-04" in m
+    assert "FAILED" in daily_update._event_phrase("lookup_failed", None, 0.5)
+    assert "not" in daily_update._event_phrase("lookup_failed", None, 0.5)
+    assert "SKIPPED" in daily_update._event_phrase("skipped", None, 0.5)
+    assert "No recorded split event" in daily_update._event_phrase("no_match", None, 0.5)
+
+
+def test_the_match_phrase_offers_no_second_command_and_claims_no_uniqueness():
+    """R873 #2 and #3. It used to append a runnable `manual_split` built from the RECORDED ratio
+    beside the alert's own, built from the price snap - reproduced at observed x2.000 against a
+    recorded x2.5, both copy-pasteable, one wrong by 25 %, and the wrong one carrying the word
+    MATCHES. And "MATCHES" implied the recorded ratio was pinned when the +-20 % band admits up to
+    three distinct round ratios for one observation."""
+    m = daily_update._event_phrase("match", 2.5, 2.0)
+    assert "manual_split" not in m, m
+    assert "MATCHES" not in m, m
+    assert "2.5" in m and "2" in m, m
+    assert "more than one round ratio" in m, m
+
+
+# ----------------------------------------------------------------- the durable queue
+
+def _queue(monkeypatch, tmp_path):
+    p = tmp_path / "ca_alerts.jsonl"
+    monkeypatch.setattr(daily_update, "CA_ALERTS_PATH", str(p))
+    return p
+
+
+def _lines(p):
+    import json
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def test_the_durable_queue_appends_a_parseable_line(monkeypatch, tmp_path):
+    """R873 #6: all five statements of `_record_ca_event` and all four of its call sites never
+    executed under the suite, because every test passed `dry_run=True` - the flag that suppresses
+    them. 29 statements of the new code were unreachable by any test."""
+    p = _queue(monkeypatch, tmp_path)
+    daily_update._record_ca_event("ALERT", "APH", pd.Timestamp("2026-09-04"), "a message")
+    daily_update._record_ca_event("APPLIED", "KLAC", pd.Timestamp("2026-09-05"), "another")
+    rows = _lines(p)
+    assert [r["kind"] for r in rows] == ["ALERT", "APPLIED"]
+    assert rows[0]["ticker"] == "APH" and rows[0]["day"] == "2026-09-04"
+    assert rows[0]["msg"] == "a message"
+    assert rows[0]["logged"].endswith("Z")
+
+
+def test_a_broken_queue_never_breaks_the_append(monkeypatch, tmp_path):
+    """The ledger is a convenience; the day's data is not. A write failure must be printed and
+    swallowed, never raised into the merge."""
+    monkeypatch.setattr(daily_update, "CA_ALERTS_PATH", str(tmp_path / "no_such_dir" / "x.jsonl"))
+    daily_update._record_ca_event("ALERT", "APH", pd.Timestamp("2026-09-04"), "a message")
+
+
+def test_a_long_gap_alert_reaches_the_queue(monkeypatch, tmp_path):
+    """R873 #6, the second half: the `gap_days > MAX_OVERNIGHT_GAP_DAYS` branch alerted and
+    returned WITHOUT recording, while the function's own docstring claimed it persisted every
+    alert - and that branch is the one that fires on the REASSIGNED population."""
+    p = _queue(monkeypatch, tmp_path)
+    existing = _bars("2026-06-01", 100.0)
+    new = _bars("2026-09-04", 10.0)
+    stats: dict = {}
+    _out, applied = daily_update._detect_and_apply_split(existing, new, "STI", stats, dry_run=False)
+    assert applied is False
+    assert "days later" in stats["ca_alert"]
+    rows = _lines(p)
+    assert len(rows) == 1 and rows[0]["ticker"] == "STI", rows
+
+
+def test_dry_run_writes_nothing_to_the_queue(monkeypatch, tmp_path):
+    """The mirror, and the reason the coverage hole existed: dry_run suppresses every write."""
+    p = _queue(monkeypatch, tmp_path)
+    existing = _bars("2026-06-01", 100.0)
+    new = _bars("2026-09-04", 10.0)
+    daily_update._detect_and_apply_split(existing, new, "STI", {}, dry_run=True)
+    assert _lines(p) == []

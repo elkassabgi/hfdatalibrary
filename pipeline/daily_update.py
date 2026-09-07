@@ -307,16 +307,34 @@ def _snap_ca_ratio(r: float, tol: float = 0.03):
     return best
 
 
-def _event_phrase(status: str, found, ticker: str, ca_day) -> str:
+def _event_phrase(status: str, found, r_obs: float) -> str:
     """One sentence for the alert, saying what the recorded-event lookup found and nothing more.
 
     It authorises NOTHING. The decision to rescale is made on price evidence alone, above, exactly
     where main makes it; this text tells the reader what a second source says so a human can act.
     A phrase per state, because the states are not interchangeable: "the lookup failed" is not
-    evidence that no split happened, and "skipped" says the question could not honestly be asked."""
+    evidence that no split happened, and "skipped" says the question could not honestly be asked.
+
+    IT ALSO OFFERS NO COMMAND OF ITS OWN, and that is a fix, not an omission (review R873 #2). It
+    used to append a second runnable `manual_split` built from the RECORDED ratio while the alert
+    around it already carried one built from the PRICE SNAP. The two are computed differently -
+    +-3 % for the snap, +-20 % for the confirmation - so they can disagree and still both appear in
+    one sentence: reproduced at observed x2.000 with Yahoo recording x0.4, the alert offered
+    `manual_split TESTX 2 ...` and `manual_split TESTX 2.5 ...`, both copy-pasteable, one wrong by
+    25 %, and the WRONG one carried the word MATCHES. One alert, one command.
+
+    AND IT NO LONGER IMPLIES THE RECORDED RATIO IS UNIQUE (R873 #3). At the +-20 % band a single
+    clean observation admits up to THREE distinct ratios from _CA_RATIOS - 1/9 and 1/10 both admit
+    {8, 9, 10} - and 15 of the 17 adjacent pairs overlap. The band is deliberately wide (a 3x
+    leveraged ETF moves ~10 % intraday on its split day), so the honest sentence reports both
+    numbers and says what the band does and does not settle."""
     if status == "match":
-        return (f"A recorded split event within one business day MATCHES, at x{found:.6g}; if that is "
-                f"right, a human applies it: python -m pipeline.manual_split {ticker} {found:.6g} {ca_day}.")
+        return (f"A recorded split event within one business day is CONSISTENT with the move, at "
+                f"x{found:.6g} recorded against x{r_obs:.6g} observed. The check is +-20 %, which is "
+                f"wide enough that one observation can be consistent with more than one round ratio "
+                f"(measured: up to three), so this does NOT pin the ratio and no command is given for "
+                f"it - the one command in this alert is the only one to run, and only after a human "
+                f"decides which ratio is right.")
     return {
         "no_match": "No recorded split event on the day matches.",
         "lookup_failed": "The recorded-event lookup FAILED, so nothing was checked - that is not "
@@ -370,8 +388,8 @@ def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = 
         s = yf.Ticker(y).splits
         if s is None or len(s) == 0:
             # AN EMPTY SERIES IS NOT "NO SPLITS" (review R862 #2). yfinance swallows a 404 and
-            # returns an empty Series, so an unresolved dataset spelling - `PRN-`, or `FISV` after
-            # the Fiserv rename to FI - made this print "no recorded split event matches" about a
+            # returns an empty Series, so an unresolved dataset spelling - `PRN-`, measured 404ing
+            # on 2026-09-07 - made this print "no recorded split event matches" about a
             # ticker that was never looked up, and a rate-limited runner printed that sentence for
             # every alert of the night. A symbol that resolves has SOME price history; one that
             # does not, does not. That distinction is the whole point of the tri-state.
@@ -438,15 +456,32 @@ def _split_shaped(shares: float) -> bool:
     return False
 
 
+# The durable queue's path, as a module constant so a test can point it somewhere else - it had no
+# test at all (review R873 #6: all 5 statements of _record_ca_event and all 4 of its call sites
+# never executed, because every test passed dry_run=True, the flag that suppresses them).
+CA_ALERTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "ca_alerts.jsonl")
+
+
 def _record_ca_event(kind: str, ticker: str, day, msg: str) -> None:
     """Persist every corporate-action alert/application to data/ca_alerts.jsonl (committed by the
     daily workflow next to data/metadata.json). The daily email already carries them; this is the
-    durable queue, so an alert that was not actioned is still there next week."""
+    durable queue, so an alert that was not actioned is still there next week.
+
+    THIS FILE IS PUBLIC. `pages deploy .` publishes the whole checkout - probed 2026-09-07,
+    `https://hfdatalibrary.com/pipeline/daily_update.py` returns 200 - so committing this ledger
+    puts an unreviewed data-quality feed at `/data/ca_alerts.jsonl`, which returns 404 today. The
+    status page already links it, so that is the intent; it is recorded here because the PR that
+    added it did not say so anywhere (review R873 #7) and whether to publish is not mine to decide.
+
+    "Every" is now true. The `gap_days > MAX_OVERNIGHT_GAP_DAYS` branch used to alert without
+    recording - and that is the branch that fires on the REASSIGNED population, the one whose
+    alerts most need to survive the night."""
     try:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "ca_alerts.jsonl")
+        path = CA_ALERTS_PATH
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"kind": kind, "ticker": ticker, "day": str(pd.Timestamp(day).date()),
-                                "msg": msg, "logged": datetime.utcnow().isoformat(timespec="seconds") + "Z"}) + "\n")
+                                "msg": msg,
+                                "logged": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}) + "\n")
     except Exception as e:                       # never let the ledger break the append
         print(f"[split_detect] could not record CA event: {e}", flush=True)
 
@@ -491,6 +526,12 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict, dr
                              f"{first_new_day.date()} ({gap_days} days later) - an overnight ratio is meaningless "
                              f"across that gap; split detection NOT applied, review the symbol")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        # ...AND RECORD IT (review R873 #6). This branch alerted without ever reaching the durable
+        # queue, while _record_ca_event's docstring claimed it persisted "every" alert. It is the
+        # branch that fires on a reassigned symbol, a resumed listing or an outage - exactly the
+        # alerts that must still be there next week if nobody reads the email tonight.
+        if not dry_run:
+            _record_ca_event("ALERT", ticker, first_new_day, stats["ca_alert"])
         return existing_raw, False
     prev_close = float(
         existing_raw.loc[existing_raw["datetime"].dt.normalize() == prev_last_day, "Close"].median())
@@ -521,7 +562,7 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict, dr
         stats["ca_alert"] = (f"{ticker}: overnight x{r:.3f} vs {prev_last_day.date()} "
                              f"(open x{r_open:.3f}, late x{r_late:.3f}) is split-sized but "
                              f"inconsistent/non-round — NOT applied, review. "
-                             f"{_event_phrase(status, found, ticker, ca_day)}")
+                             f"{_event_phrase(status, found, r)}")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
         if not dry_run:
             _record_ca_event("ALERT", ticker, today, stats["ca_alert"])
@@ -538,7 +579,7 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict, dr
             # was applied), so those bars would be rescaled a second time. The date is the first
             # session already on the new basis, i.e. the bars being appended right now.
             f"If confirmed a real split, run: python -m pipeline.manual_split {ticker} "
-            f"{snapped:.6g} {ca_day}. {_event_phrase(status, found, ticker, ca_day)}")
+            f"{snapped:.6g} {ca_day}. {_event_phrase(status, found, r)}")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
         if not dry_run:
             _record_ca_event("ALERT", ticker, today, stats["ca_alert"])
