@@ -280,8 +280,11 @@ def cut_gate(ticker: str, cut: dt.date, last_kept: dt.date, first_dropped, cs_sy
     2026-01-26 -> 2026-02-06; IPW 2023-02-23 -> 2023-03-08) and the narrowest true handover is
     VRM's 53. Instrument: a full sweep of all 1,019 window bar files, 0 unreadable, 42.2 s.
 
-    KNOWN LIMIT, stated rather than hidden: a long trading halt is also a discontinuity, so this
-    gate places the cut at A boundary, not necessarily at THE handover. Returns (rows, ok)."""
+    KNOWN LIMITS, stated rather than hidden. A long trading halt is also a discontinuity, so this
+    gate places the cut at A boundary, not necessarily at THE handover. And CUT-3 refuses a correct
+    cut if the new owner did not print on its very first served session (a halt, a missing file):
+    that is a false REFUSAL, which is the safe direction, and the printed row says which day and
+    why. Returns (rows, ok)."""
     rows = []
     if first_dropped is None:
         return [("CUT-0", "the cut drops no served session - there is nothing to repair", "FAIL")], False
