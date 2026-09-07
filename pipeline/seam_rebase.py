@@ -382,14 +382,51 @@ def snapshot(client, ticker: str, out_dir: str) -> int:
 
 
 def restore(client, snap_dir: str) -> int:
+    """Put the snapshot back, and VERIFY FROM R2 that it went back.
+
+    This used to check the LOCAL file's size against the manifest, upload, and let the caller
+    print "RESTORED ... served state is the pre-resync state" - a claim about R2 built from a
+    local stat and an upload that returned without raising. The ETag `snapshot4` stored in the
+    manifest was never used and not one byte was read back (R855 #4, R856 #5). CLAUDE.md:
+    DECIDE LOCALLY, VERIFY REMOTELY; R60/R107/R116.
+
+    HEAD is Class B and there are four objects, so the verification costs nothing worth counting.
+    A multipart ETag carries a "-N" suffix and is not an MD5 of the content, so those are compared
+    on size alone and the reason is printed rather than silently skipped.
+    """
     n = 0
+    bad = []
     for line in open(os.path.join(snap_dir, "_MANIFEST.txt"), encoding="utf-8"):
         size, etag, k = line.rstrip("\n").split("\t")
         src = os.path.join(snap_dir, k.replace("/", "__"))
         if os.path.getsize(src) != int(size):
             raise SystemExit(f"restore: {src} is {os.path.getsize(src)} bytes, manifest says {size} - not restoring")
         client.upload_file(src, BUCKET, k); n += 1
-        _say(f"  restored {k}")                                  # a dead console must not abort a restore (R735)
+        # READ BACK FROM R2, not from the local copy we just sent.
+        try:
+            h = client.head_object(Bucket=BUCKET, Key=k)
+        except Exception as ex:                                   # noqa: BLE001
+            bad.append(f"{k}: head_object failed ({type(ex).__name__})")
+            _say(f"  restored {k} - BUT COULD NOT VERIFY ({type(ex).__name__})")
+            continue
+        got_size = h.get("ContentLength")
+        got_etag = (h.get("ETag") or "").strip('"')
+        want_etag = etag.strip('"')
+        if got_size != int(size):
+            bad.append(f"{k}: R2 says {got_size} bytes, manifest says {size}")
+        elif "-" in got_etag or "-" in want_etag:
+            _say(f"  restored {k} - size verified; ETag is multipart, not an MD5, so not compared")
+        elif got_etag != want_etag:
+            bad.append(f"{k}: R2 ETag {got_etag} != manifest {want_etag}")
+        else:
+            _say(f"  restored {k} - verified from R2 (size and ETag)")  # a dead console must not abort a restore (R735)
+    if bad:
+        # LOUD AND FATAL. The caller's next sentence is "served state is the pre-resync state",
+        # and if that is not true it is the most dangerous sentence this tool can print.
+        for b in bad:
+            _say(f"  RESTORE VERIFY FAILED: {b}")
+        raise SystemExit(f"restore: {len(bad)} of {n} object(s) did not read back as the snapshot "
+                         f"- served state is NOT known to be the pre-resync state")
     return n
 
 
