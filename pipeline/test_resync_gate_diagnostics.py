@@ -235,16 +235,34 @@ def test_prose_about_a_revocation_never_bricks_the_gate(gate, line):
     "  1. REVOKE-APPLY <tool>.py <sha12> <review id>",
     "2026-09-07 ae: REVOKE-APPLY resync_variables.py " + SHA12 + " " + ID,
     "the reviewer withdrew it in the row below - REVOKE-APPLY",           # hard wrap, token at EOL
-    # ...and the documented unresolvable ties: token-spelled prose that no rule can separate from
-    # a token-spelled withdrawal. The remedy is to rephrase the line, never to narrow the matcher
-    # - R763 #2 and R765 #1 both narrowed it and both re-opened the revoke path.
-    "Withdraw-apply semantics are documented in SKILL.md.",
-    "The cancel-apply path is exit 1.",
     # R876 #1's own corpus: the idioms this file actually uses, all of which the cell rule missed
     "<!-- 2026-09-07: this tool's approval is REVOKE-APPLY -->",
     "| AR-046 | 2026-09-07 | resync gate | the approval is REVOKE-APPLY as of today |",
     "2026-09-07: REVOKE-APPLY, per the reviewer.",
     "the reviewer said REVOKE-APPLY: see the row below.",
+    # R878: a capitalised shape that ENDS its cell, with or without punctuation, and the
+    # separator spellings an earlier class ignored
+    "the reviewer asks you to REVOKE APPLY.",
+    "| AR-047 | 2026-09-07 | REVOKE APPLY |",
+    "REVOKEAPPLY",
+    "REVOKE⁃APPLY",
+    "REVOKE﹣APPLY",
+    "REVOKE APPLY resync_variables.py",
+    "REVOKE−APPLY",
+    "REVOKE­APPLY",
+    "REVOKE－APPLY",
+    # wrap artefacts: the same written token broken across a line
+    "REVOKE- APPLY",
+    "REVOKE -APPLY",
+    # ...and the OPERAND branch, exercised with SPACE-spelled shapes so nothing else can
+    # catch them: a backticked operand, a Windows path, a URL, AR046, #046, a .txt file
+    "REVOKE APPLY resync_variables.py",
+    "REVOKE APPLY `resync_variables.py`",
+    "REVOKE APPLY D:/temp/claude/hf_wt_main/pipeline/resync_variables.py",
+    "REVOKE APPLY https://github.com/elkassabgi/hfdatalibrary/pull/8",
+    "REVOKE APPLY AR046",
+    "REVOKE APPLY #046",
+    "REVOKE APPLY notes.txt",
 ])
 def test_a_revocation_MENTION_refuses_wherever_it_is_written(gate, line):
     """THE OPERAND is the discriminator, not position, not case and not only the tool name. A
@@ -295,12 +313,18 @@ def test_a_parsed_revocation_for_another_id_does_not_silence_the_rest_of_its_lin
     "Re-apply the patch before reading this row.",
     "This supersedes nothing; the earlier verdict stands.",
     "we cancel apply and restore.",
-    # `The cancel-apply path is exit 1.` MOVED to the refusing list (R876 #1). It was pinned here
-    # by R868 #3 and it is now a refusal, deliberately: a genuine withdrawal written as
-    # `| AR-046 | ... | the approval is REVOKE-APPLY as of today |` has the identical structure -
-    # token-spelled, mid-line, followed by an ordinary word - so no rule can grant one and refuse
-    # the other. Revocation fails OPEN, and the measured price of granting was 22 real
-    # withdrawals ignored. Its six space-spelled neighbours below are untouched.
+    # BACK WHERE R868 #3 PUT IT. The previous round moved this to the refusing list on the
+    # argument that no rule could separate it from `| AR-046 | ... is REVOKE-APPLY as of today |`.
+    # That was false by one token: CASE separates them, and dropping `_re.I` from the spelling
+    # test costs only a mixed-case mention carrying neither the tool name nor an operand - a class
+    # with zero members in any corpus anyone has built (R878 #3).
+    "The cancel-apply path is exit 1.",
+    "Withdraw-apply semantics are documented in SKILL.md.",
+    # ...and the eight the case-insensitive cell-end rule bricked on a one-character boundary
+    # (R878 #2): it granted `we cancel apply.` and refused `we cancel apply`.
+    "we cancel apply",
+    '"we cancel apply"',
+    "(we cancel apply)",
     "Do not revoke apply here without reading the note.",
 ])
 def test_innocent_prose_does_not_brick_the_gate(gate, prose):

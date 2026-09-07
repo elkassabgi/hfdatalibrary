@@ -928,7 +928,10 @@ def main() -> int:
     # reads identically whether its 3 window rows were drawn from 688 candidates or from 3. The
     # denominator is the whole difference between a measurement and a coincidence (R704's own rule,
     # "a clean verdict is worthless without its denominator").
-    _win_n = sum(1 for r in gate_rows if str(r[1]).startswith("prints"))
+    # COUNT COMPARISONS, NOT ROWS (R878 #6). The R872 #1 refusal row is also a "prints" row, so a
+    # detached store printed "1 drawn from a pool of 737" having compared NOTHING - a false
+    # numerator on the one shape the denominator was added for. A real comparison has a date.
+    _win_n = sum(1 for r in gate_rows if str(r[1]).startswith("prints") and r[0] is not None)
     _win_pool = len({d for d in new_raw["datetime"].dt.date
                      if d < cut and WINDOW[0] <= d <= WINDOW[1]})
     _print_gate(gate_rows, f"basis gate ({len(gate_rows)} check(s), {_win_n} drawn from a pool of "
@@ -1159,7 +1162,15 @@ def main() -> int:
               f"{'OK' if ok_b else ('n/a' if not (a.verify_against and rebuilt_days) else ('UNVERIFIABLE' if unverifiable else 'MISMATCH'))}")
         seam_rebase._say(f"  VERIFY (c) served clean ⊆ raw, raw ends {raw_srv['datetime'].max().date()} (expected {expected_last}), "
               f"bar counts raw {len(raw_srv):,}/{len(new_raw):,} clean {len(clean_srv):,}/{len(new_clean):,} -> {'OK' if ok_c else 'MISMATCH'}")
-        _print_gate(srv_rows, f"VERIFY (d) basis gate on the SERVED 1-minute file -> {'OK' if ok_d else 'MISMATCH'}")
+        # THE DENOMINATOR BELONGS HERE MOST OF ALL (R878 #6): this is the gate on the APPLY path,
+        # run against what is already live, and it printed no pool at all while the dry-run gate
+        # printed one.
+        _srv_n = sum(1 for r in srv_rows if str(r[1]).startswith("prints") and r[0] is not None)
+        _srv_pool = len({d for d in raw_srv["datetime"].dt.date
+                         if d < cut and WINDOW[0] <= d <= WINDOW[1]})
+        _print_gate(srv_rows, f"VERIFY (d) basis gate on the SERVED 1-minute file "
+                              f"({_srv_n} drawn from a pool of {_srv_pool} kept window session(s)) "
+                              f"-> {'OK' if ok_d else 'MISMATCH'}")
         if e_rows:
             seam_rebase._say(f"  VERIFY (e) served rebuilt sessions vs the class-share prints ({len(e_rows)} sampled) -> {'OK' if ok_e else 'MISMATCH'}")
             for d, exp, got, okr in e_rows:

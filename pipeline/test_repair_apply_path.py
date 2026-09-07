@@ -136,6 +136,14 @@ def _install(monkeypatch, scenario, n_snap):
     monkeypatch.setattr(seam_rebase, "snapshot", lambda c, t, d: (os.makedirs(d, exist_ok=True), n_snap)[1])
     monkeypatch.setattr(seam_rebase, "restore", restore)
     monkeypatch.setattr(seam_rebase, "daily_run_state", lambda: "idle")
+    # THE PRINT STORE, STUBBED FOR EVERY APPLY-PATH TEST (R878 #4). `CS_ROOT` is
+    # `E:/iex_hist_backfill`; with it absent a `--rebuild-from-cs` run refuses at "rebuild
+    # produced no bars" BEFORE the Yahoo pre-flight, so the two oracle tests passed with the
+    # pre-flight DELETED - green on the wrong mechanism, which is worse than red.
+    monkeypatch.setattr(R, "last_cs_session", lambda sym, tkr, limit=15: dt.date(2026, 3, 27))
+    monkeypatch.setattr(R, "_bars_from_cs", lambda d, sym, tkr: [
+        {"datetime": pd.Timestamp(d) + pd.Timedelta(hours=10, minutes=m), "Open": 10.0,
+         "High": 10.0, "Low": 10.0, "Close": 10.0, "Volume": 100} for m in range(5)])
     monkeypatch.setattr(seam_rebase, "_record", lambda d, text: calls["records"].append(text))
     monkeypatch.setitem(seam_rebase._STATE, "wrote", False)
     return calls
@@ -444,6 +452,65 @@ def test_the_oracle_preflight_does_not_fire_when_VERIFY_b_would_check_nothing(mo
     assert code == 0, f"a repair whose VERIFY (b) is a no-op must not abort, got {code}"
     assert called == [], called
     assert calls["uploads"]
+
+
+def test_the_CUT_3_sentence_is_withheld_when_CUT_3_did_not_fail(monkeypatch, tmp_path, capsys):
+    """R878 #5 - reverting the R876 #3 conditional left the suite green, so the fix for a message
+    that explained a failure which had not happened was itself uncovered."""
+    _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(R, "cut_gate", lambda *a, **k: (
+        [("CUT-1", "0 weekdays", "FAIL"),
+         ("CUT-2", "n/a - no print store", "n/a"),
+         ("CUT-3", "the first dropped session printed in the main pass", "OK"),
+         ("CUT-4", "the last kept session is not cs-anchored", "FAIL")], False))
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat()])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    tail = capsys.readouterr().out.split("REFUSED:")[-1]
+    assert code == 2
+    assert "ALSO FAILING" in tail, tail
+    assert "too EARLY" not in tail, f"CUT-3 is OK here; the message must not explain it: {tail}"
+
+
+def test_the_basis_gate_prints_its_denominator(monkeypatch, tmp_path, capsys):
+    """R878 #5 - the pool denominator (R876 #4) had no failing revert either. It is the difference
+    between "3 checks -> OK" over a pool of 688 and the same line over a pool of 3."""
+    _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat()])
+    try:
+        R._guarded_main()
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+    assert "drawn from a pool of" in out, out
+    assert "kept window session(s)" in out, out
+
+
+def test_the_oracle_preflight_probes_the_rebuild_range_not_a_constant(monkeypatch, tmp_path, capsys):
+    """R878 #5 - only half of R876 #2's fix was covered. The range must be the rebuild's own
+    `cut..until`; a constant 45 days before the window end asked Yahoo about a period the run may
+    never touch."""
+    _install(monkeypatch, "healthy", 22)
+    seen = []
+
+    def probe(symbol, start, end):
+        seen.append((start, end))
+        import pandas as _pd
+        return _pd.Series([1.0], index=[dt.date(2026, 3, 2)])
+    monkeypatch.setattr(R, "_yahoo_close", probe)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--verify-against", "B", "--rebuild-from-cs", "B",
+                                      "--until", "2026-03-27",
+                                      "--snapshot-dir", str(tmp_path / "range")])
+    try:
+        R._guarded_main()
+    except SystemExit:
+        pass
+    assert seen, "the pre-flight did not run"
+    assert seen[0] == (CUT, dt.date(2026, 3, 27)), seen
+    assert "2026-02-10" not in capsys.readouterr().out, "the old constant range is still in use"
 
 
 def test_the_daily_run_state_is_printed_on_every_apply(monkeypatch, tmp_path, capsys):

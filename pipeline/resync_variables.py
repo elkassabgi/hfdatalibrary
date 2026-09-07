@@ -215,7 +215,7 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # cancel-apply path is exit 1." both refused every run, bricking the gate in exactly the way the
 # comment above claims to avoid. A real revocation always names the file it withdraws; a sentence
 # that happens to put a revoke verb beside the word "apply" does not.
-_REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―−­－_\-]{0,3}APPLY\b"
+_REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―−­－⁃﹣_\-]{0,3}APPLY\b"
 # THE OPERAND IS THE DISCRIMINATOR. Fourth attempt at this line, and the first three are each
 # instructive in a different direction:
 #
@@ -259,13 +259,23 @@ _REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―−­�
 # `The cancel-apply path is exit 1.` now refuses. That is R868 #3's case, and R868 failed this
 # gate for refusing it - but the two rounds are in direct conflict and only one can be satisfied,
 # because `| AR-046 | ... | the approval is REVOKE-APPLY as of today |` is a genuine withdrawal
-# with the SAME structure: token-spelled, mid-line, followed by an ordinary word. Nothing
-# separates them, so the tie goes the way the design says it must - revocation fails OPEN, and
-# the price is one rephraseable sentence against 22 more real withdrawals caught. Exactly one of
-# the seven pinned innocent lines moves; the other six are space-spelled and still grant.
-# The remedy for a bricked line is the one this file has always given: rephrase it ("the
-# cancel/restore path is exit 1"), never narrow this matcher.
-_TOKEN_SPELLED = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[‐-―−­－_\-]{1,3}APPLY\b"
+# with the SAME structure: token-spelled, mid-line, followed by an ordinary word.
+#
+# I SAID NO RULE COULD SEPARATE THEM AND THAT WAS FALSE BY ONE TOKEN (R878 #3). Drop `_re.I`
+# from the spelling test and CASE separates them: `The cancel-apply path is exit 1.` and
+# `Withdraw-apply semantics are documented in SKILL.md.` are prose in ordinary case, while a
+# written token is `REVOKE-APPLY`. Measured: the three pinned gate files go 348 passed + 2
+# failed with case-sensitivity absent and 350 with it, and the 2 are the pins on those very
+# sentences; every other corpus is identical. Its honest cost is a MIXED-CASE mention that
+# neither names the tool nor carries an operand - a class with zero members in any corpus
+# anyone has built. So both sentences go back to the innocent list where R868 #3 put them, and
+# the brick I took in the previous round is given back.
+#
+# CAPS IS NOT A GENERAL TOKEN MARKER - R870 #4 measured that and it still holds. It is used here
+# ONLY where there is no operand and no tool name to go on, which is the one place the alternative
+# is to guess. `A MISMATCH MUST CANCEL APPLY AND RESTORE.` stays innocent because its shape is
+# mid-sentence, not at the end of its cell.
+_TOKEN_SPELLED = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)(?:APPLY\b|[ \t\u00a0]{0,2}[‐-―−­－⁃﹣ _\-][ \t\u00a0]{0,2}APPLY\b)"
 REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # every shape, anywhere on the line
 TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # ...then the line names the tool
 # An OPERAND, matched immediately after a shape. It only has to carry the SPACE-spelled forms
@@ -281,22 +291,39 @@ OPERAND_RE = _re.compile(
     r"|(?:[A-Za-z]:)?(?:[\w.~\-]*[/\\])*[\w.\-]+\.\w{1,5}\b"   # a path or filename, any extension
     r"|(?=[0-9a-f]{7,40}\b)[0-9a-f]*\d[0-9a-f]*\b"     # a sha
     r"|#?AR[\-_]?\d+\b|#\d+\b)", _re.I)
-# THE SPELLING, ANYWHERE ON THE LINE. A hyphen or underscore where the space would be is what
-# makes `REVOKE-APPLY` a token rather than two English words, and it stays a token wherever it is
-# written - in a table cell, inside an HTML comment, after a colon, before a full stop.
-TOKEN_SPELLED_RE = _re.compile(_TOKEN_SPELLED, _re.I)
-# ...AND A SHAPE THAT ENDS ITS CELL WITH NOTHING AFTER IT, whatever its spelling. A bare
-# `REVOKE APPLY` at column 0, at the end of a hard-wrapped line, or alone in a table cell is a
-# token even space-spelled: prose does not stop at the verb. Measured (R876 #1): those were the
-# last three space-spelled fail-open shapes, and every pinned innocent sentence carries words
-# AFTER the verb - "cancel apply AND RESTORE", "revoke apply PERMISSION", "cancel apply and
-# restore." - so none of them is touched. Trailing quotes and brackets do not count as content;
-# trailing PUNCTUATION deliberately does, which is what keeps `we cancel apply.` innocent.
-CELL_END_RE = _re.compile(_REVOKE_SHAPE + r"[ \t`\"')\]}]*$", _re.I)
+# THE SPELLING, ANYWHERE ON THE LINE, AND IN CAPITALS. A hyphen, underscore or nothing at all
+# where the space would be is what makes `REVOKE-APPLY` a token rather than two English words, and
+# it stays a token wherever it is written - in a table cell, inside an HTML comment, after a
+# colon, before a full stop. NO `_re.I`: that single flag is what separates a written token from
+# `The cancel-apply path is exit 1.`, and R878 #3 measured it (350 passed with, 348 + the 2 pins
+# on those sentences without). `{0,3}` not `{1,3}`, so `REVOKEAPPLY` - a shape the detector below
+# accepts - can be token-spelled at all; the separator class carries U+2010..U+2015, U+2212,
+# U+00AD, U+FF0D, U+2043, U+FE63 and U+00A0, every one of which was silently ignored by an
+# earlier version, and pointedly NOT U+0020, which would make every capitalised sentence a token.
+TOKEN_SPELLED_RE = _re.compile(_TOKEN_SPELLED)
+# ...AND A SHAPE IN CAPITALS THAT ENDS ITS CELL, whatever its separator. A bare `REVOKE APPLY` at
+# column 0, at the end of a hard-wrapped line, or alone in a table cell is a token even
+# space-spelled: prose does not stop at the verb. CAPITALS, and only here: R870 #4 measured that
+# caps is not a general token marker, and this is the one place with neither an operand nor a
+# tool name to go on. `A MISMATCH MUST CANCEL APPLY AND RESTORE.` is untouched because its shape
+# is mid-sentence, not at the end of its cell.
+#
+# TRAILING PUNCTUATION IS ALLOWED NOW, and case is what replaced it as the discriminator
+# (R878 #2). The previous version was case-INSENSITIVE and refused on a one-character boundary:
+# `we cancel apply.` granted while `we cancel apply` refused, `"we cancel apply"` and
+# `(we cancel apply)` refused - eight ordinary sentences the commit before had granted, none of
+# them pinned by anything, bought for two shapes nothing pinned either.
+# GENERALISED FROM "ends its cell" TO "is not followed by a WORD" (R878 #1). Ending a cell was
+# one instance of the real property: prose continues into another word, a written token does not.
+# `THE GUARD MUST REVOKE APPLY PERMISSION...` runs on into PERMISSION; `... REVOKE APPLY: see the
+# row below.`, `<!-- ... REVOKE APPLY -->`, `| AR-047 | REVOKE APPLY |` and a bare token at the
+# end of a hard wrap do not. One negative lookahead replaces the cell split, because the end of a
+# cell is just one more non-alphanumeric character.
+CELL_END_RE = _re.compile(_REVOKE_SHAPE + r"(?![ \t]*[A-Za-z0-9])")
 
 
 def _cell_end(line: str) -> bool:
-    return any(CELL_END_RE.search(cell) for cell in line.split("|"))
+    return bool(CELL_END_RE.search(line))
 #
 # THE PLAIN-ENGLISH BRANCH IS GONE, and its removal is the fix, not a regression (R870 #1). It
 # refused any line carrying a revocation verb beside the CLAIMED id. R868's addendum justified
