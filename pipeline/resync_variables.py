@@ -229,9 +229,12 @@ HTML_ONELINE_RE = _re.compile(r"<!--.*?-->", _re.S)
 # authorised after the comment fix. Same treatment: an opening tag starts a quotation region,
 # its closing tag ends it, and an unclosed one swallows the rest of the file, which is the
 # fail-closed direction.
-HTML_BLOCK_OPEN_RE = _re.compile(r"<\s*(pre|code|details|summary|blockquote|xmp)\b", _re.I)
-HTML_BLOCK_CLOSE_RE = _re.compile(r"<\s*/\s*(pre|code|details|summary|blockquote|xmp)\s*>",
-                                  _re.I)
+# `textarea` and `script` are the other two CommonMark type-1 raw-HTML blocks (R858 #3).
+# `script` matters most: its content is not rendered at all, so a token inside one is
+# INVISIBLE to a reader rather than merely quoted.
+_HTML_TAGS = "pre|code|details|summary|blockquote|xmp|textarea|script"
+HTML_BLOCK_OPEN_RE = _re.compile(r"<\s*(" + _HTML_TAGS + r")\b", _re.I)
+HTML_BLOCK_CLOSE_RE = _re.compile(r"<\s*/\s*(" + _HTML_TAGS + r")\s*>", _re.I)
 INLINE_CODE_RE = _re.compile(r"`[^`]*`")
 REVOKING_COMMENT_RE = _re.compile(
     r"(\brevok\w*|\bsupersed\w*|\bwithdraw\w*|\brescind\w*|\bcancel\w*|\bvoid\b|\bobsolete\b"
@@ -273,7 +276,9 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
             fence_char = None        # the marker CHARACTER of the open fence, or None
             fence_len = 0            # and its length; a closer must be at least this long
             in_html = False          # inside a multi-line <!-- ... -->
-            html_block = 0           # depth of open <pre>/<code>/<details>/...
+            html_stack = []          # OPEN raw-HTML tags, by name (R858 #1). A COUNTER
+                                     # let a stray </code> close a <pre>, and let prose
+                                     # naming </details> inside a <pre> end it.
             for n, ln in enumerate(fh, 1):
                 ln = ln.rstrip("\n")
                 fm = FENCE_RE.match(ln)
@@ -299,13 +304,15 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 # stood - eight new shapes, worse than the defect it fixed. Approval must fail CLOSED,
                 # so it ignores quoted text. Revocation must fail OPEN, so it reads EVERY line, fenced
                 # or not, exactly as PASSED.md promises.
-                r = revoke.search(ln)
-                if r:
+                # EVERY match on the line, not the first (R858 #4). `search` read one, so
+                # `REVOKE-APPLY ... AR-001 and REVOKE-APPLY ... AR-999` withdrew AR-001 and
+                # silently AUTHORISED AR-999. Revocation fails OPEN: it must see all of them.
+                for r in revoke.finditer(ln):
                     if r.group(1) in (rid, "*"):
                         _say(f"  --reviewed {rid}: {passed_file}:{n} carries a REVOKE-APPLY line for "
                              f"it - refused")
                         return False
-                elif REVOKE_MENTION_RE.search(ln):
+                if not revoke.search(ln) and REVOKE_MENTION_RE.search(ln):
                     unparsed_revokes.append((n, ln.strip()[:90]))
 
                 # ...and only now, for the APPROVE path, drop quotation.
@@ -326,21 +333,35 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 if o:
                     approve_ln = approve_ln[:o.start()]
                     in_html = True
-                # RAW-HTML BLOCKS, same family as the comment. Counted rather than a boolean
-                # so nesting (<details><pre>...) cannot close early, and an unclosed one
-                # keeps the rest of the file quoted - fail closed.
-                _opens = len(HTML_BLOCK_OPEN_RE.findall(approve_ln))
-                _closes = len(HTML_BLOCK_CLOSE_RE.findall(approve_ln))
-                if html_block or _opens:
-                    html_block = max(0, html_block + _opens - _closes)
-                    continue
-                if _closes:
-                    html_block = 0
+                # INLINE CODE FIRST, THEN TAGS (R858 #1, and this was the blocker). Live
+                # PASSED.md line 65 is a real PASS row whose prose contains `` `<code>` `` -
+                # inside inline code. Scanning for tags BEFORE blanking it opened a block that
+                # never closed, skipped 29 of 93 lines, and made a genuine approval appended at
+                # the end of the file - the documented procedure - invisible. It failed closed,
+                # so nothing served was at risk; the tool simply could not be authorised at all.
+                #
+                # Blanking preserves column positions for the column-0 approve anchor, so a token
+                # written as `APPROVE-APPLY ...` still cannot pass.
+                approve_ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), approve_ln)
+
+                # RAW-HTML BLOCKS as a STACK OF TAG NAMES, not a depth counter: a closer ends its
+                # OWN tag or nothing, so a stray </code> cannot close a <pre> and prose naming
+                # </details> inside a <pre> cannot end it. An unclosed block keeps the rest of the
+                # file quoted - fail closed.
+                _opens = [m.group(1).lower() for m in HTML_BLOCK_OPEN_RE.finditer(approve_ln)]
+                _closes = [m.group(1).lower() for m in HTML_BLOCK_CLOSE_RE.finditer(approve_ln)]
+                _was_open = bool(html_stack)
+                for _tag in _opens:
+                    html_stack.append(_tag)
+                for _tag in _closes:
+                    if _tag in html_stack:
+                        # unwind to and including the matching tag: </details> closes a <pre>
+                        # opened inside it, which is what a renderer does.
+                        while html_stack and html_stack.pop() != _tag:
+                            pass
+                if html_stack or _was_open or _opens or _closes:
                     continue
                 ln = approve_ln
-                # inline code is quotation, not decision; blanking it preserves column positions for
-                # the column-0 approve anchor, so a token written as `APPROVE-APPLY ...` cannot pass
-                ln = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), ln)
                 m = want.match(ln)
                 if m and m.group(1) == rid:
                     comment = (m.group(2) or "")

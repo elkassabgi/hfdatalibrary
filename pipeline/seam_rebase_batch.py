@@ -580,7 +580,15 @@ def main() -> int:
             # every already-consistent ticker at 50-77 s each, and 1,324 of those is most of a
             # day of work that changes nothing. For seam_rebase.py exit 2 is a REFUSAL, so it
             # stays out - the same per-tool asymmetry as R750 #3 and R856 #3.
-            _terminal_ok = {"0"} if a.tool == "seam_rebase.py" else {"0", "2", "7"}
+            # EXIT 7 IS NOT TERMINAL (R858 #2). It returns BEFORE get_client(), having written
+            # and read nothing - "deferred by the daily window", not "done". Counting it retired
+            # tickers for ever: a 45-minute window across a 22-33 h run would silently drop
+            # ~700-900 of 1,324 and then report a clean finish.
+            #
+            # Exit 2 stays, and stays flagged: the log line records the tool NAME, never its
+            # sha, so an "already consistent" written by the 2-of-4-object MEASURE is honoured by
+            # the 4-of-4 bytes. Fix that by putting the sha in the log line, not by trusting it.
+            _terminal_ok = {"0"} if a.tool == "seam_rebase.py" else {"0", "2"}
             if line_tool(p) == a.tool and p[2] in _terminal_ok:
                 done.add(p[1])
     if last_line is not None and last_line[2] == "4":
