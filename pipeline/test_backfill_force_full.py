@@ -67,8 +67,13 @@ def _run(monkeypatch, harness, existing_raw, existing_clean, new_bars, ca_rescal
         return existing_raw if version == "raw" else existing_clean
 
     monkeypatch.setattr(daily_update, "download_parquet", fake_download, raising=False)
+    # SIGNATURE-TOLERANT, because a stub that pins the exact arity breaks the moment a sibling PR
+    # adds a parameter. PR #11 gives _detect_and_apply_split a `dry_run=` keyword and merge_ticker
+    # passes it; with the old 4-positional lambda the MERGED tree of PRs #8+#10+#11+#14 failed all
+    # five tests in this file with "got an unexpected keyword argument 'dry_run'" while each PR
+    # passed alone. Found by test-merging the four before anyone merged them for real.
     monkeypatch.setattr(daily_update, "_detect_and_apply_split",
-                        lambda er, nb, t, stats: (er, ca_rescaled), raising=False)
+                        lambda er, nb, t, stats, *a, **k: (er, ca_rescaled), raising=False)
     # dry_run=True returns at daily_update.py:380, before step 6 - the call site under test is on the
     # real path, so the uploads are stubbed out instead (see the harness fixture).
     return daily_update.merge_ticker(client=object(), ticker="TEST", new_bars=new_bars, dry_run=False)
