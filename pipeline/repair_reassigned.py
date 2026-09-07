@@ -85,8 +85,11 @@ WHAT IT DOES for TICKER --cut DATE (the new owner's first session):
      daily_update.parse_day deletes its CSV, so no retained print set can fill it; after the next
      daily run that hole sits INSIDE a live series rather than at its end. The tool prints a
      bar-count delta and cannot say this - so it is said here, before anyone runs it;
-  3. runs the basis gate; prints the plan and the bar-count delta (metadata.json's counters are
-     increment-only and will not reflect it - record the delta);
+  3. runs the basis gate; prints the plan and the bar-count delta. metadata.json's counters are
+     INCREMENT-ONLY and no run updates them downwards, so after all seven repairs the site's status
+     page - which fetches that file live - would over-state bars_raw by 53,356 and under-state
+     bars_clean by 7,618 (measured by the reviewer, R865 #5). Record the delta and correct the file
+     by hand, or the page reports a total nothing served ever had;
   4. with --apply and no Daily Data Update in flight: content-checked snapshot of all 22 served
      objects (seam_rebase.snapshot; a directory that already holds a manifest exits 5), uploads
      1-minute parquet + CSV x2, 14 timeframe objects, variables/quality (force_full) - merge_ticker's
@@ -125,6 +128,7 @@ from tops_parser import parse_trades_csv                                        
 from build_bars import build_bars                                                     # noqa: E402
 import daily_update                                                                   # noqa: E402
 import seam_rebase                                                                    # noqa: E402
+import symbol_map                                                                     # noqa: E402
 
 CS_ROOT = "E:/iex_hist_backfill"
 SNAP_0713 = "F:/hf_r2_snapshot_20260713"
@@ -287,7 +291,26 @@ def cut_gate(ticker: str, cut: dt.date, last_kept: dt.date, first_dropped, cs_sy
     why. Returns (rows, ok)."""
     rows = []
     if first_dropped is None:
-        return [("CUT-0", "the cut drops no served session - there is nothing to repair", "FAIL")], False
+        return [("CUT-*", "the cut drops no served session - there is nothing to repair", "FAIL")], False
+
+    # CUT-0. THE HANDOVER DATE IS ALREADY WRITTEN DOWN, and this tool was not reading it (R865 #4).
+    # symbol_map.REASSIGNED carries, per symbol, the first session the NEW owner printed under it -
+    # measured 2026-09-05 as the first served session whose close follows the new owner's Yahoo
+    # series on >= 60 % of the next 20 sessions - and it equals the declared --cut for all seven.
+    # That is one equality against a reviewed table, so it goes first and it is HARD. The four
+    # measured checks below stay: they are what validates the table rather than trusting it, and
+    # they are the only thing that would catch the table itself being wrong.
+    rec = symbol_map.REASSIGNED.get(ticker)
+    if rec is None:
+        rows.append(("CUT-0", f"{ticker} is not in symbol_map.REASSIGNED - this tool repairs reassigned "
+                              f"symbols and nothing else; if the reassignment is real, record it there first", "FAIL"))
+        return rows, False
+    want = dt.date.fromisoformat(rec[0]) if rec[0] else None
+    ok0 = want is not None and cut == want
+    rows.append(("CUT-0", f"symbol_map.REASSIGNED records {ticker}'s handover as {want}, --cut is {cut}",
+                 "OK" if ok0 else "FAIL"))
+    if not ok0:
+        return rows, False
 
     gap1 = _weekdays_between(last_kept, first_dropped)
     ok1 = gap1 >= gap_min
@@ -341,6 +364,30 @@ def cut_gate(ticker: str, cut: dt.date, last_kept: dt.date, first_dropped, cs_sy
     return rows, ok
 
 
+def last_cs_session(cs_symbol: str, ticker: str, limit: int = 15):
+    """The last session in the retained window on which the CLASS-SHARE symbol printed.
+
+    `--until` is the SECOND typed input that decides which sessions die, and nothing checked it
+    (R865 #3). Measured: `GOLD --cut 2025-12-02 --rebuild-from-cs B --until 2026-01-30` exits 0 with
+    the cut gate OK, the basis gate 7/7 OK and both pre-window equalities 0/0/0 - while rebuilding
+    41 sessions instead of 80 and discarding 15,189 raw bars over 39 RECOVERABLE Barrick sessions.
+    Every downstream check is blind to it by construction: `expected_last = max(rebuilt_days)` makes
+    (c) tautological, (a) excludes the rebuilt days, and (b)/(e) only ever see what was rebuilt.
+
+    Walks back from the window end, so a correct `--until` costs one file. Bounded at `limit`
+    class-share sessions: a symbol that printed on none of them is a wrong --rebuild-from-cs, and
+    the rebuild would refuse anyway - this just says so earlier and for the right reason."""
+    d, tried = WINDOW[1], 0
+    while d >= WINDOW[0] and tried < limit:
+        ymd = d.strftime("%Y%m%d")
+        if os.path.exists(os.path.join(CS_ROOT, ymd, f"trades_cs_{ymd}.csv")):
+            tried += 1
+            if _bars_from_cs(d, cs_symbol, ticker):
+                return d
+        d -= dt.timedelta(days=1)
+    return None
+
+
 def _yahoo_close(symbol: str, start: dt.date, end: dt.date) -> pd.Series:
     import yfinance as yf
     h = yf.Ticker(symbol).history(start=start.isoformat(), end=(end + dt.timedelta(days=1)).isoformat(), auto_adjust=False)
@@ -392,8 +439,19 @@ def _served_read(client, version: str, ticker: str, tf: str | None = None) -> pd
     if df is None or df.empty:
         # a 404 right after a successful put is an inconsistency, not a read problem: the caller restores
         raise RuntimeError(f"served {version}/{ticker}{('/' + tf) if tf else ''} missing or empty after the upload")
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    return df
+    # THE DATE COLUMN IS NOT ALWAYS "datetime" (R865 #1). The bars and timeframe objects are keyed on
+    # `datetime`; the variables and quality objects are keyed on `trade_date` (measured: 8,983 rows of
+    # trade_date + 25 variables in raw/variables/GOLD.parquet). A bare df["datetime"] raised KeyError,
+    # which is neither Unverifiable nor RuntimeError, so it fell through VERIFY (h)'s handler to the
+    # guarded try's `except BaseException` - RESTORE, exit 1 - making EVERY --apply run end by rolling
+    # back its own 22 correct objects. It reached the commit because no test in pipeline/ imported this
+    # module and a dry run returns 200 lines earlier; there is a test now.
+    for col in ("datetime", "trade_date"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col])
+            return df
+    raise RuntimeError(f"served {version}/{ticker}{('/' + tf) if tf else ''} has neither a 'datetime' nor a "
+                       f"'trade_date' column - columns {list(df.columns)[:8]}")
 
 
 def pre_window_equality(frame: pd.DataFrame, version: str, ticker: str, cut: dt.date):
@@ -451,10 +509,14 @@ def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_
       * A FOREIGN action (PARA 1/6, IPW 72x, SKK 10x) is uniform across the whole kept half, so it
         shows on the pre-window sessions against the 2026-07-13 snapshot and on the last kept
         session against its anchor - both of which must be EXACT.
-    Rule per row: pre-window and explicit anchors and the LAST kept session: close within 0.05 %,
-    volume exact. Window sessions: expected = product of declared own-split factors dated after the
-    session; ratio/expected must lie in DIV_BAND with volume exact (expected 1) or within 10 % of
-    anchor/expected (an own split rounds per-minute volumes). Returns (rows, ok); each row:
+    Rule per row, AS IMPLEMENTED - the previous wording said "within 10 %", which no version of the
+    code has applied (R864 #9): pre-window and explicit anchors and the LAST kept session: close
+    within 0.05 %, volume EXACT. Window sessions: expected = product of declared own-split factors
+    dated after the session; ratio/expected must lie in DIV_BAND, and volume must be EXACT when
+    expected is 1, otherwise the session-sum ratio must lie in [0.60, 1.05] with the common minutes
+    covering >= 90 % of the print minutes. The per-minute agreement fraction that
+    _minute_volume_match returns is PRINTED AND NOT GATED ON - read that function's docstring for
+    why, and do not quote its 95 % as a test. Returns (rows, ok); each row:
     (day, source, our_close, anchor_close, ratio, our_vol, anchor_vol, ok)."""
     kept_days = sorted(d for d in set(frame["datetime"].dt.date) if d < cut)
     last_kept = kept_days[-1] if kept_days else None
@@ -592,10 +654,37 @@ def main() -> int:
     for _name, _detail, _verdict in cut_rows:
         print(f"    {_name}  {_detail} -> {_verdict}")
     if not cut_ok:
-        print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream. A cut inside a "
-              f"contiguous run keeps the NEW owner's sessions, and every gate below this one would pass on "
-              f"them (they are that company's own prints). Check the date against the symbol's print series "
-              f"before overriding --cut-gap-min; nothing written"); return 2
+        # Name the check that refused. A generic message that pointed at --cut-gap-min was printed
+        # for a CUT-0 failure too, which is an override that cannot help and should not be tried.
+        failed = [r[0] for r in cut_rows if r[2] == "FAIL"]
+        if "CUT-0" in failed:
+            print(f"  REFUSED: --cut {cut} is not the handover date recorded for {t} in symbol_map.REASSIGNED. "
+                  f"That table is the reviewed record of when each symbol changed companies; if it is wrong, "
+                  f"correct it there with its evidence first. --cut-gap-min cannot relax this; nothing written")
+        else:
+            print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream ({', '.join(failed)}). "
+                  f"A cut inside a contiguous run keeps the NEW owner's sessions, and every gate below this one "
+                  f"would pass on them (they are that company's own prints). Check the date against the symbol's "
+                  f"print series before overriding --cut-gap-min; nothing written")
+        return 2
+
+    # THE --until GATE (R865 #3). Same class as the cut gate: a typed date that decides which
+    # sessions exist, checked by nothing downstream.
+    if a.rebuild_from_cs:
+        last_cs = last_cs_session(a.rebuild_from_cs, t)
+        if last_cs is None:
+            print(f"  REFUSED: IEX '{a.rebuild_from_cs}' printed on none of the last 15 class-share sessions "
+                  f"of the retained window - check --rebuild-from-cs; nothing written"); return 2
+        if until < last_cs:
+            short = sum(1 for _ in _sessions(until + dt.timedelta(days=1), last_cs))
+            print(f"  REFUSED: --until {until} stops {short} weekday(s) short of {last_cs}, the last session in the "
+                  f"retained window on which '{a.rebuild_from_cs}' printed. Those sessions are RECOVERABLE and this "
+                  f"would delete them instead: the rebuilt range defines expected_last, so VERIFY (a)(b)(c)(e) all "
+                  f"measure the short range against itself and pass. Pass --until {last_cs}; nothing written"); return 2
+        if until > WINDOW[1]:
+            print(f"  REFUSED: --until {until} is past the retained window's end {WINDOW[1]}; there are no prints to "
+                  f"rebuild from after it, so the sessions between would be dropped, not rebuilt; nothing written"); return 2
+        print(f"  --until gate: {until} == the last retained class-share session for '{a.rebuild_from_cs}' -> OK")
     if a.kept_from:
         try:
             raw_keep = _load_snapshot_bars(a.kept_from, "raw", t)
@@ -697,8 +786,11 @@ def main() -> int:
     _print_gate(gate_rows, f"basis gate ({len(gate_rows)} check(s)) -> {'OK' if gate_ok else 'FAIL'}")
     if not gate_ok:
         print(f"  REFUSED: the kept half is not on the original instrument's basis (or an anchor is unreachable) - "
-              f"nothing written. A later owner's corporate action was applied to it (R732: PARA 1/6, IPW 72x, SKK 10x); "
-              f"pass --unscale F or --kept-from SNAPDIR and re-run"); return 2
+              f"nothing written. USUALLY that means a later owner's corporate action was applied to it (R732: "
+              f"PARA 1/6, IPW 72x, SKK 10x), and the answer is --unscale F or --kept-from SNAPDIR. BUT READ THE "
+              f"ROWS FIRST (R856 #3): a wrong --rebuild-from-cs symbol and an unreadable anchor file fail here "
+              f"too, and 'fixing' either of those with --unscale would rescale a correct history. A row whose "
+              f"ratio is near 1 is not a corporate action"); return 2
     # clean must sit on the same basis as raw on the anchor sessions (with --unscale the clean is
     # REBUILT - pre-window from the 2026-07-13 clean, window re-cleaned - so this is the check that
     # the rebuilt clean and the unscaled raw agree; without --unscale both halves are the served ones).
@@ -743,17 +835,22 @@ def main() -> int:
     n_snap = seam_rebase.snapshot(client, t, snap_dir)          # exits 5 on any pre-write failure
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
 
-    n = 0; sync_failed = []
+    # PRICE OBJECTS AND VARIABLE OBJECTS ARE COUNTED APART (R865 #2). One count, ANDed into
+    # `verified`, made exit 6 unreachable: a failed variables sync leaves n = 20 != 22, so the run
+    # took the `not verified` branch and RESTORED - reporting "written then restored" for a repair
+    # whose 18 price objects were correct and verified. Exit 6 exists precisely for that state.
+    n_price = 0; n_vars = 0; sync_failed = []
     seam_rebase._STATE["wrote"] = True                       # from here an escape is exit 4, never 5 (R738/R740)
     stale = []
     unverifiable = None
+    ok_vars = None          # set inside the try; None means VERIFY never reached the variables half
     try:
         for version, df in (("raw", new_raw), ("clean", new_clean)):
-            upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n += 2
+            upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n_price += 2
             aggs = aggregate_all(df)
             for tf in TIMEFRAMES:
                 if tf in aggs and not aggs[tf].empty:
-                    upload_parquet(client, aggs[tf], version, t, tf); n += 1
+                    upload_parquet(client, aggs[tf], version, t, tf); n_price += 1
             for attempt in (1, 2):
                 try:
                     # R864: the return value was discarded, and variables_sync returns
@@ -764,12 +861,14 @@ def main() -> int:
                     if not stats.get("new_rows"):
                         raise RuntimeError(f"sync_ticker_variables computed no rows for {version}/{t} "
                                            f"({stats}) - it uploaded NOTHING and the two objects are stale")
-                    n += 2; break
+                    n_vars += 2; break
                 except Exception as ex:                      # noqa: BLE001
                     if attempt == 2:
                         sync_failed.append(f"{version}: {str(ex)[:120]}")
                         stale += [f"{version}/variables/{t}.parquet", f"{version}/quality/{t}.parquet"]
-        seam_rebase._say(f"  uploaded {n} objects" + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
+        n = n_price + n_vars
+        seam_rebase._say(f"  uploaded {n} objects ({n_price} price, {n_vars} variables/quality)"
+                         + (f"; variables sync FAILED for {sync_failed}" if sync_failed else ""))
 
         # VERIFY from the served side - inside the try (R732 item 5); an R2 READ failure here is
         # Unverifiable (exit 3, nothing restored - R736), a missing object or a logic error restores.
@@ -864,7 +963,12 @@ def main() -> int:
                                                     f"{expected_last}), {len(foreign)} date(s) >= the cut that are "
                                                     f"not rebuilt {foreign[:3]}", r_ok))
                 ok_h = ok_h and r_ok
-        ok_n = (n == n_snap)
+        # The PRICE half must be complete or the repair is not verified and must be rolled back; the
+        # variables half routes to exit 6 instead, which is the whole reason that code exists.
+        ok_n = (n_price == n_snap - 4)
+        ok_vars = ok_h and n_vars == 4 and not sync_failed
+        if not ok_vars and not stale:
+            stale = [f"{v}/{k}/{t}.parquet" for v in ("raw", "clean") for k in ("variables", "quality")]
         seam_rebase._say(f"  VERIFY (a) served daily bars dated >= {cut} that are not rebuilt: raw {len(stray_r)} {stray_r[:4]} clean {len(stray_c)} -> {'OK' if ok_a else 'MISMATCH'}")
         seam_rebase._say(f"  VERIFY (b) rebuilt sessions vs Yahoo {a.verify_against}: {matched}/{total} within 1 % -> "
               f"{'OK' if ok_b else ('n/a' if not (a.verify_against and rebuilt_days) else ('UNVERIFIABLE' if unverifiable else 'MISMATCH'))}")
@@ -881,8 +985,12 @@ def main() -> int:
               f"{g_missing:,} not in raw, {g_mism:,} value mismatch(es) over {len(vcols)} columns -> {'OK' if ok_g else 'MISMATCH'}")
         for what, detail, r_ok in h_rows:
             seam_rebase._say(f"  VERIFY (h) served {what}: {detail} -> {'OK' if r_ok else 'MISMATCH'}")
-        seam_rebase._say(f"  VERIFY (i) objects written {n} vs objects snapshotted {n_snap} -> {'OK' if ok_n else 'MISMATCH'}")
-        verified = bool(ok_a and ok_c and ok_d and ok_e and ok_f and ok_g and ok_h and ok_n and (ok_b or unverifiable))
+        seam_rebase._say(f"  VERIFY (i) price objects written {n_price} vs snapshotted-minus-four {n_snap - 4} -> "
+                         f"{'OK' if ok_n else 'MISMATCH'}; variables/quality {n_vars}/4 and read back -> "
+                         f"{'OK' if ok_vars else 'FAILED, exit 6'}")
+        # `verified` is the PRICE verdict ONLY (R865 #2). ok_h and n_vars decide exit 6 below, and a
+        # variables failure must never restore 18 correct price objects.
+        verified = bool(ok_a and ok_c and ok_d and ok_e and ok_f and ok_g and ok_n and (ok_b or unverifiable))
     except Unverifiable as ex:
         # keep an earlier Yahoo failure text beside the read-back failure (AR-037 item v)
         unverifiable = (unverifiable + " | " if unverifiable else "") + str(ex); verified = None
@@ -899,12 +1007,16 @@ def main() -> int:
         seam_rebase._record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n} upload(s); cause {why}")
         seam_rebase._say(f"  FAILED after the snapshot with {n} object(s) uploaded ({why}) - restored {n_back} objects; "
                          f"served state is the pre-repair state"); return 1
+    # A VARIABLES PROBLEM IS ANY OF: the sync raised twice, it computed nothing, fewer than four
+    # objects were written, or the four did not read back correctly (R865 #2). All four route to
+    # exit 6 - "prices verified, serving incomplete" - never to a restore of correct price objects.
+    vars_bad = bool(sync_failed) or ok_vars is False
     if verified is None:
         # a served object could not be read back (an R2 error, not a 404): the writes are not known
         # wrong, nothing is restored, a human re-verifies. The stale-variables list is printed FIRST
         # so an exit 3 never hides an exit 6 (R736).
-        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (read-back failed): {unverifiable[:200]}" + (f"; STALE {stale}" if sync_failed else ""))
-        if sync_failed:
+        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (read-back failed): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
+        if vars_bad:
             seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
         seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: the served objects could not be read back for verification - {unverifiable}. "
                          f"Nothing restored; re-run the verification for {t} before calling this complete; snapshot kept at {snap_dir}"); return 3
@@ -917,16 +1029,18 @@ def main() -> int:
         seam_rebase._record(snap_dir, f"EXIT 1 NOT VERIFIED - restored {n_back} objects")
         seam_rebase._say(f"  NOT VERIFIED - restored {n_back} objects from {snap_dir}; served state is the pre-repair state"); return 1
     if unverifiable:
-        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (market fetch): {unverifiable[:200]}" + (f"; STALE {stale}" if sync_failed else ""))
-        if sync_failed:
+        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (market fetch): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
+        if vars_bad:
             seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
         seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d)(e) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
                          f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
-    if sync_failed:
-        seam_rebase._record(snap_dir, f"EXIT 6 verified, variables sync failed: {sync_failed}; STALE {stale}")
-        seam_rebase._say(f"  PRICES VERIFIED but variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}. Not restoring; run "
+    if vars_bad:
+        why_v = sync_failed or [f"the four objects did not read back correctly (n_vars={n_vars})"]
+        seam_rebase._record(snap_dir, f"EXIT 6 prices verified, variables/quality NOT: {why_v}; STALE {stale}")
+        seam_rebase._say(f"  PRICES VERIFIED but variables/quality are not: {why_v}. STALE OBJECTS: {stale}. Not restoring; run "
                          f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
-    seam_rebase._record(snap_dir, f"EXIT 0 DONE repaired cut={cut} unscale={a.unscale} kept_from={a.kept_from} rebuilt={len(rebuilt):,}")
+    seam_rebase._record(snap_dir, f"EXIT 0 DONE repaired cut={cut} until={a.until} unscale={a.unscale} "
+                                  f"kept_from={a.kept_from} cut_gap_min={a.cut_gap_min} rebuilt={len(rebuilt):,}")
     seam_rebase._say(f"  DONE: {t} repaired and verified; snapshot kept at {snap_dir}")
     return 0
 
