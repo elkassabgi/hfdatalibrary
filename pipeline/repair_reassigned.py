@@ -244,6 +244,16 @@ def _main_pass_symbols(day: dt.date):
     return _BARS_CACHE[ymd]
 
 
+def _is_split_ratio(f: float) -> bool:
+    """This tool's declared range for `--own-split`: at least 3:2 in one direction or the other.
+
+    NOT a statement about what splits exist - 5:4 and 4:3 are real, and this refuses them. The
+    floor is a policy, because what a declaration BUYS is the loss of the exact session-volume
+    test, and a 1.25 does not pay for that. Applied to every SUFFIX PRODUCT of the declared
+    factors, never to one typed factor at a time: the basis gate expects the product (R869 #2)."""
+    return f >= 1.5 or 0 < f <= 1 / 1.5
+
+
 def _weekdays_between(a: dt.date, b: dt.date) -> int:
     """Weekdays STRICTLY between a and b (0 for adjacent sessions)."""
     return sum(1 for _ in _sessions(a + dt.timedelta(days=1), b - dt.timedelta(days=1)))
@@ -624,6 +634,18 @@ def main() -> int:
     until = dt.date.fromisoformat(a.until) if a.until else None
     if bool(a.rebuild_from_cs) != bool(a.until):
         print("--rebuild-from-cs and --until go together"); return 5
+    if a.rebuild_from_cs and not a.verify_against:
+        # THE NINTH UNCHECKED INPUT (R869 #5). Without --verify-against, VERIFY (b) sets ok_b=True
+        # and is skipped, and (b) is the ONLY check on the rebuilt sessions that does not come
+        # from the print stream they were built from: (c) is tautological because expected_last is
+        # max(rebuilt_days), (a) excludes the rebuilt days by construction, and (e) compares the
+        # served bars against the same frame and a re-parse of the same prints. So omitting one
+        # optional flag silently removes the only independent oracle for GOLD's 30,947 new bars,
+        # and the run still exits 0. A rebuild without it is not verifiable; refuse it.
+        print("  --rebuild-from-cs without --verify-against would rebuild sessions that NOTHING "
+              "independent checks: VERIFY (b) is skipped, and every other check on the rebuilt "
+              "range is derived from the prints it was built from. Pass --verify-against <symbol> "
+              "(GOLD: B); aborted before any write"); return 5
     anchors = []
     for s in a.anchor:
         d, c, v = s.split(":")
@@ -643,17 +665,42 @@ def main() -> int:
         # while admitting 429,693-751,963 shares against 716,155 prints on 2022-03-07. The factor
         # is uncheckable from here: there is no split table (splits are DETECTED, not looked up),
         # and Yahoo answers for whoever holds the symbol NOW, which for these seven is the wrong
-        # company. So the only defence is the shape of the number. The floor is 3:2, the smallest
-        # ratio that both occurs as a real split in this universe and moves price out of the
-        # detector's no-fire band (PR #11's _FRACTIONAL_SPLITS makes the same cut for the same
-        # reason); VRM's declared 80 clears it by a wide margin.
-        if not (f >= 1.5 or 0 < f <= 1 / 1.5):
-            print(f"  --own-split {s}: {f:g} is not a split ratio - a real one is at least 3:2 in one "
-                  f"direction or the other. Declaring it would replace the EXACT session-volume test "
-                  f"with a 0.60-1.05 band and check nothing; refused, aborted before any write"); return 5
+        # company. So the only defence is the shape of the number: a ratio at least 3:2 in one
+        # direction or the other. THAT FLOOR IS A POLICY OF THIS TOOL, NOT A FACT ABOUT SPLITS
+        # (R869 #3): 5:4 and 4:3 are perfectly real splits, and this refuses them, because the
+        # thing being bought with a declaration here is the loss of an EXACT volume test and a
+        # 1.25 is not worth it. An earlier version of this comment cited a `_FRACTIONAL_SPLITS`
+        # constant as precedent - that constant is NOT IN THIS TREE (it lives on an open PR's
+        # branch) and it excludes 5:4 for a different reason. Do not cite it from here.
+        if not _is_split_ratio(f):
+            print(f"  --own-split {s}: {f:g} is outside this tool's declared range - it accepts only a "
+                  f"ratio of at least 3:2 in one direction or the other, and REFUSES real-but-small "
+                  f"splits (5:4, 4:3) on purpose, because declaring one replaces the EXACT "
+                  f"session-volume test with a 0.60-1.05 band; refused, aborted before any write"); return 5
         own_splits.append((dt.date.fromisoformat(d), f))
+    # AND THE BAND IS SELECTED BY THE PRODUCT, NOT BY ANY ONE FACTOR (R869 #2). `basis_gate` sets
+    # `expected` to the product of every declared factor dated AFTER the session, and `_cmp` swaps
+    # the exact volume test for the band whenever that product is not 1. So two factors that each
+    # clear the check above multiply back into the forbidden range: measured,
+    # `--own-split 2030-01-01:2 --own-split 2030-01-02:0.5001` gave PARA exit 0 with 8/8 OK and
+    # window rows reading `prints /1.0002`, admitting 2022-03-07's 716,155-share session anywhere
+    # in ~429,700-751,900 - which is R867 #3's own arithmetic, through the gate written to stop it.
+    # Every value `expected` can take is a SUFFIX PRODUCT of the date-sorted factors, so check
+    # those, not the typed inputs.
+    _sorted = sorted(own_splits)
+    for _i in range(len(_sorted)):
+        _p = 1.0
+        for _d, _f in _sorted[_i:]:
+            _p *= _f
+        if abs(_p - 1.0) >= 1e-6 and not _is_split_ratio(_p):
+            print(f"  --own-split: the factors dated on or after {_sorted[_i][0]} multiply to {_p:.6g}, "
+                  f"which is the product the basis gate would actually expect - and it is inside the "
+                  f"range this tool refuses. Each factor passing on its own is not enough: the gate "
+                  f"reads the PRODUCT. Refused, aborted before any write"); return 5
     if own_splits:
-        print(f"  declared own split(s) of the original instrument: {[(str(d), f) for d, f in own_splits]}")
+        print(f"  declared own split(s) of the original instrument: {[(str(d), f) for d, f in own_splits]}"
+              f"; suffix products the basis gate can expect: "
+              f"{[round(math.prod([f for _, f in _sorted[i:]]), 6) for i in range(len(_sorted))]}")
     client = get_client()
 
     raw = download_parquet(client, "raw", t)
@@ -686,7 +733,12 @@ def main() -> int:
             print(f"  REFUSED: --cut {cut} is not the handover date recorded for {t} in symbol_map.REASSIGNED. "
                   f"That table is the reviewed record of when each symbol changed companies; if it is wrong, "
                   f"correct it there with its evidence first. --cut-gap-min cannot relax this; nothing written")
-        elif failed == ["CUT-4"]:
+        elif "CUT-4" in failed:
+            # MEMBERSHIP, NOT LIST SHAPE (R869 #1). `failed == ["CUT-4"]` could never be true for
+            # the only ticker CUT-4 exists for: GOLD's CUT-1 is 0 weekdays on EVERY run, the
+            # correct one included (the gate passes on CUT-2's 142 silent sessions), so `failed`
+            # is always ["CUT-1", "CUT-4"] and this branch was dead the moment it was written.
+            # I ran the probe that proves it, read the exit code, and did not read the message.
             # R867 #6: CUT-0 got a cause-specific branch and CUT-4 did not, so a WRONG
             # --rebuild-from-cs symbol - the cut being right - was reported as "not at a handover
             # boundary ... before overriding --cut-gap-min", which points at the one input that
@@ -881,7 +933,12 @@ def main() -> int:
     ok_vars = None          # set inside the try; None means VERIFY never reached the variables half
     try:
         for version, df in (("raw", new_raw), ("clean", new_clean)):
-            upload_parquet(client, df, version, t, "1min"); upload_csv(client, df, version, t, "1min"); n_price += 2
+            # ONE INCREMENT PER OBJECT (R869 #4). `n_price += 2` after both calls meant a CSV
+            # failure left the parquet uploaded and uncounted, so the restore record read "after
+            # 0 upload(s)" while one object was live. Same class as R867 #1: a count that is not
+            # what happened.
+            upload_parquet(client, df, version, t, "1min"); n_price += 1
+            upload_csv(client, df, version, t, "1min"); n_price += 1
             aggs = aggregate_all(df)
             for tf in TIMEFRAMES:
                 if tf in aggs and not aggs[tf].empty:

@@ -8,8 +8,10 @@ returns two hundred lines before reaching it. The specific defect: `_served_read
 missed it and the guarded try's `except BaseException` caught it instead — RESTORE, exit 1. Every
 `--apply` run would have rolled back its own 22 correct objects.
 
-These are the parts that can be tested without R2. The apply path's exit-code routing is exercised
-by the reviewer's harness, not from here.
+These are the parts that can be tested without R2. The apply path's exit-code routing lives in
+`test_repair_apply_path.py`, in this directory and in CI - it used to say "the reviewer's harness,
+not from here", which pointed at a scratchpad file that was never checked in and was exactly what
+R867 #2 failed this tool for.
 """
 from __future__ import annotations
 

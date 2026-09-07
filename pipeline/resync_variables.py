@@ -216,23 +216,34 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # comment above claims to avoid. A real revocation always names the file it withdraws; a sentence
 # that happens to put a revoke verb beside the word "apply" does not.
 _REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0,3}APPLY\b"
-# CASE IS THE DISCRIMINATOR, and this is the second attempt at it. Requiring the tool NAME on the
-# same line (the first attempt) broke two genuine refusals the suite already pinned: a placeholder
-# example `REVOKE-APPLY <tool>.py <sha12> <review id>`, which names no tool at all, and a
-# revocation WRAPPED over two lines, whose first line is the bare token. Both are revocations and
-# both must stop the run. What separates them from prose is that the token is WRITTEN IN CAPS -
-# "we cancel apply and restore." and "The cancel-apply path is exit 1." are sentences, not tokens.
-REVOKE_MENTION_RE = _re.compile(_REVOKE_SHAPE)                      # deliberately NOT re.I
-REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # lower case, but then it must
-TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # name the tool to count
-# PLAIN ENGLISH ABOUT *THIS* REVIEW ID, and only that (R868, the reviewer's remaining case:
-# "AR-043 is REVOKED - superseded by AR-044, do not use"). Revocation must fail OPEN, so a
-# sentence that withdraws the very id being claimed has to stop the run. It is scoped to the
-# claimed id on purpose: measured on the live PASSED.md, THREE lines carry a revocation verb
-# beside SOME AR-id (69, 70, 71 - AR-025/AR-026 "withdrawn"/"superseded"), so refusing on any
-# id would brick the gate against its own file on every run, which is R858 exactly.
-PROSE_REVOKE_RE = _re.compile(
-    r"\b(?:revok\w*|withdraw\w*|rescind\w*|unapprov\w*|supersed\w*|do not use|no longer valid)\b", _re.I)
+# POSITION IS THE DISCRIMINATOR. Third attempt at this line, and the first two are instructive:
+#
+#   attempt 1 - require the tool NAME on the line. Broke two genuine refusals the suite already
+#     pins: the placeholder `REVOKE-APPLY <tool>.py <sha12> <review id>`, which names no tool, and
+#     a revocation WRAPPED over two lines whose first line is the bare token.
+#   attempt 2 - require the token in CAPS. Measured false: `A MISMATCH MUST CANCEL APPLY AND
+#     RESTORE.` refuses every run, and 12 of the live PASSED.md's 92 lines carry a run of three or
+#     more ALL-CAPS words. Prose in this register is often shouted; caps is not a token marker.
+#
+# What a TOKEN actually is, and prose is not, is a line that STARTS with it - the same property the
+# approval side has required at column 0 since R757 #3. `A MISMATCH MUST CANCEL APPLY...` puts its
+# verb mid-sentence; `REVOKE-APPLY <tool>.py ...` and a bare wrapped `REVOKE-APPLY` do not. A
+# leading quote/bullet/blockquote marker is allowed, because a revocation must fail OPEN and those
+# do not hide it from a reader.
+REVOKE_MENTION_RE = _re.compile(r"^[\s>*\-|`\"']{0,8}" + _REVOKE_SHAPE, _re.I)
+REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # anywhere on the line, but then
+TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # it must name the tool
+#
+# THE PLAIN-ENGLISH BRANCH IS GONE, and its removal is the fix, not a regression (R870 #1). It
+# refused any line carrying a revocation verb beside the CLAIMED id. R868's addendum justified
+# scoping it to that id by measuring verbs beside OTHER ids - and never asked about the claimed
+# id's OWN PASS row, which is the one row guaranteed to discuss it. Measured on the live file:
+# **2 of its 36 review ids (AR-025, AR-026) could not be granted at all**, and 4 of 6 realistic
+# PASS rows for the next id would brick it - "withdrawn", "superseded", "do not use", and the
+# file's own `<!-- AR-nnn (date): ... -->` note idiom, 21 of which already exist. A gate that
+# cannot be granted is R858 exactly, and it was buying three test cases. The token is the
+# revocation mechanism; PASSED.md says so, and prose next to a token is a contradiction whose
+# remedy is to delete the token.
 # A LOOSE reading of the approval line, for the REFUSAL MESSAGE ONLY - never for authorisation
 # (R868 #5). The strict pattern is anchored at column 0 with an exact hash, so an indented token,
 # a stale sha, or `pipeline/resync_variables.py` all produced the same "carries no approval line",
@@ -406,10 +417,17 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                         _say(f"  --reviewed {rid}: {passed_file}:{n} carries a REVOKE-APPLY line for "
                              f"it - refused")
                         return False
-                if not revoke.search(ln) and (
-                        REVOKE_MENTION_RE.search(ln)
-                        or (REVOKE_MENTION_CI_RE.search(ln) and TOOL_MENTION_RE.search(ln))
-                        or (PROSE_REVOKE_RE.search(ln) and _re.search(r"\b" + _re.escape(rid) + r"\b", ln))):
+                # A PARSEABLE REVOCATION FOR ANOTHER ID MUST NOT SUPPRESS THE SCAN FOR THE REST OF
+                # THE LINE (R870 #3). `not revoke.search(ln)` meant one well-formed revocation
+                # anywhere on the line silenced every other shape on it - R858 #4's defect, which
+                # was fixed on the parsing half and left standing here.
+                _parsed_here = list(revoke.finditer(ln))
+                _shapes = list(REVOKE_MENTION_CI_RE.finditer(ln))
+                _looks = bool(REVOKE_MENTION_RE.search(ln)) or (
+                    bool(_shapes) and bool(TOOL_MENTION_RE.search(ln)))
+                # COUNT them, do not just ask whether one parsed: a line carrying a well-formed
+                # revocation for ANOTHER id used to silence every other shape beside it.
+                if _looks and len(_shapes) > len(_parsed_here):
                     unparsed_revokes.append((n, ln.strip()[:90]))
 
                 # ...and only now, for the APPROVE path, drop quotation.

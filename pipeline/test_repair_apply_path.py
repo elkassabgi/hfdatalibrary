@@ -240,6 +240,97 @@ def test_a_real_split_ratio_is_still_accepted(monkeypatch, tmp_path, factor):
     assert len(calls["uploads"]) == 18
 
 
+def test_two_own_splits_that_each_pass_cannot_multiply_back_into_the_band(monkeypatch, tmp_path):
+    """R869 #2. `basis_gate` expects the PRODUCT of the factors dated after a session, and `_cmp`
+    swaps the exact volume test for a 0.60-1.05 band whenever that product is not 1. So checking
+    each typed factor was checking the wrong number: 2 and 0.5001 each clear the floor and
+    multiply to 1.0002."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "prod"),
+                                      "--own-split", "2030-01-01:2", "--own-split", "2030-01-02:0.5001"])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 5
+    assert calls["uploads"] == []
+
+
+def test_two_own_splits_whose_product_is_a_real_split_are_still_accepted(monkeypatch, tmp_path):
+    """The control. 2 and 40 multiply to 80 - VRM's real ratio - and must not be refused."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "prod_ok"),
+                                      "--own-split", "2030-01-01:2", "--own-split", "2030-01-02:40"])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 0, "a product of 80 is a real split and must pass"
+    assert len(calls["uploads"]) == 18
+
+
+def test_a_rebuild_without_an_independent_oracle_is_refused(monkeypatch, tmp_path):
+    """R869 #5. Without --verify-against, VERIFY (b) is skipped and every remaining check on the
+    rebuilt range derives from the prints it was built from."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "norebuild"),
+                                      "--rebuild-from-cs", "B", "--until", "2026-03-27"])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 5
+    assert calls["uploads"] == []
+
+
+def test_a_cut_gate_failure_is_exit_2_and_names_the_check_that_refused(monkeypatch, tmp_path, capsys):
+    """R869 #1. The CUT-4 branch keyed on `failed == ["CUT-4"]`, and for the only ticker CUT-4
+    exists for, CUT-1 fails on every run - including the correct one - so `failed` is always
+    ["CUT-1", "CUT-4"] and the branch was dead. It must key on membership."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(R, "cut_gate", lambda *a, **k: (
+        [("CUT-1", "served discontinuity: 0 weekday(s)", "FAIL"),
+         ("CUT-4", "anchored by the main pass", "FAIL")], False))
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "cut4"),
+                                      "--rebuild-from-cs", "B", "--until", "2026-03-27",
+                                      "--verify-against", "B"])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 2
+    assert calls["uploads"] == []
+    out = capsys.readouterr().out
+    assert "--rebuild-from-cs" in out, out
+    assert "--cut-gap-min" not in out, "a CUT-4 failure must not point at an override that cannot help"
+
+
+def test_a_failed_restore_after_writes_is_exit_4(monkeypatch, tmp_path):
+    """Exit 4 - written, restore FAILED, served state UNKNOWN - had no test at all."""
+    # The failure has to happen AFTER the first upload: a pre-write refusal is exit 2, which is
+    # what my first version of this test actually produced.
+    calls = _install(monkeypatch, "upload_raises", 22)
+
+    def boom(client, snap_dir):
+        calls["restores"] += 1
+        raise OSError("simulated R2 failure during the restore")
+    monkeypatch.setattr(seam_rebase, "restore", boom)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--snapshot-dir", str(tmp_path / "exit4")])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 4
+    assert calls["restores"] == 1
+    assert any("RESTORE FAILED" in r for r in calls["records"]), calls["records"]
+    assert calls["uploads"], "exit 4 must mean objects were written and the restore failed"
+
+
 def test_the_done_record_names_every_input_that_could_change_the_verdict(monkeypatch, tmp_path):
     """R867 #3: --own-split could relax the gate and was absent from the run record, while its own
     help text says "Cite the source in the run record"."""

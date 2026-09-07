@@ -886,10 +886,23 @@ def main() -> int:
                 "refused (exit 2)": refused,
                 "unmeasurable (exit 3)": unmeasurable}
         _named = "; ".join(f"{len(v)} {k}" for k, v in _why.items() if v)
-        print(f"  NOT ONE of the {n} ticker(s) attempted this run completed: {_named}. Nothing was written. "
-              f"A whole-batch no-op is almost always ONE cause, not {n} coincidences - a stale --reviewed id "
-              f"(every edit to the tool invalidates the approval bound to its hash), a `gh` that cannot answer "
-              f"so daily_run_state() reads 'unknown', or an expired credential. Find that cause before re-running.")
+        # "NOTHING WAS WRITTEN" IS FALSE FOR EXIT 6 (R870 #2). Exit 6 is "PRICES VERIFIED but
+        # variables/quality sync failed - NOT RESTORING": the rebased price objects are LIVE and
+        # the four variables/quality objects are stale. Saying nothing was written, as the last
+        # line the operator reads, contradicts the SERVING INCOMPLETE warning printed just above it
+        # and points at pre-write causes that cannot produce a 6.
+        _wrote = bool(incomplete) or bool(unmeasurable)
+        print(f"  NOT ONE of the {n} ticker(s) attempted this run completed: {_named}."
+              + ("" if _wrote else " Nothing was written.")
+              + (f" {len(incomplete)} of them DID write their price objects and left variables/quality "
+                 f"stale (exit 6) - read the SERVING INCOMPLETE line above; those are live."
+                 if incomplete else "")
+              + (f" {len(unmeasurable)} wrote and could not be verified (exit 3) - data is live."
+                 if unmeasurable else "")
+              + (f" A whole-batch no-op is almost always ONE cause, not {n} coincidences - a stale "
+                 f"--reviewed id (every edit to the tool invalidates the approval bound to its hash), "
+                 f"a `gh` that cannot answer so daily_run_state() reads 'unknown', or an expired "
+                 f"credential. Find that cause before re-running." if not _wrote else ""))
     return 1 if stopped or (n and achieved == 0) else 0
 
 

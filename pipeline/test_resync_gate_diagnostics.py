@@ -198,27 +198,46 @@ def test_a_line_whose_raw_blocks_all_close_does_not_quote_what_follows(gate):
 
 
 @pytest.mark.parametrize("line", [
+    # The CLAIMED id's own PASS row is the one row guaranteed to discuss it, and a rule that read
+    # prose withdrew the gate from itself: measured, 2 of the live file's 36 ids (AR-025, AR-026)
+    # could not be granted at all. R870 #1 - the plain-English branch is DELETED, not narrowed.
     ID + " is REVOKED - superseded by AR-044, do not use",
     "The " + ID + " approval is withdrawn.",
-    "Treat " + ID + " as rescinded.",
+    "| " + ID + " | resync_variables.py | **FAIL** | ... the earlier verdict was superseded |",
+    "<!-- " + ID + " (2026-09-07): the ecb expansion was WITHDRAWN after the review. -->",
+    "AR-025 was withdrawn as unsafe; see the row above.",
+    "AR-026 supersedes it and AR-025 is no longer valid.",
+    # R870 #4: prose in this register is often shouted - 12 of the live file's 92 lines carry a
+    # run of three or more ALL-CAPS words - so CAPS cannot be the token marker either.
+    "A MISMATCH MUST CANCEL APPLY AND RESTORE.",
+    "THE GUARD MUST REVOKE APPLY PERMISSION ONLY ON A REAL TOKEN.",
 ])
-def test_plain_English_withdrawing_THIS_id_refuses(gate, line):
-    """Revocation fails OPEN. A sentence that withdraws the very id being claimed has to stop the
-    run even though it is not the token - we cannot honour "somebody tried to withdraw this" by
-    ignoring it."""
-    assert gate(GOOD + "\n" + line) is False, line
+def test_prose_about_a_revocation_never_bricks_the_gate(gate, line):
+    """A gate that cannot be GRANTED is R858, and it is worse than one that misses a prose
+    revocation: no token means no approval anyway, so the default is already refusal."""
+    assert gate(GOOD + "\n" + line) is True, line
 
 
 @pytest.mark.parametrize("line", [
-    "AR-025 was withdrawn as unsafe; see the row above.",
-    "AR-026 supersedes it and AR-025 is no longer valid.",
-    "The ecb expansion was WITHDRAWN (36c3634a5) after the review.",
+    "REVOKE-APPLY <tool>.py <sha12> <review id>",
+    "REVOKE-APPLY",
+    "Revoke-Apply resync_variables.py " + SHA12 + " " + ID,
+    "> REVOKE-APPLY something",
+    "  WITHDRAW_APPLY resync_variables.py",
 ])
-def test_plain_English_about_a_DIFFERENT_id_still_authorises(gate, line):
-    """The control, and the reason the rule is scoped to the claimed id. Measured on the live
-    PASSED.md: THREE lines (69, 70, 71) carry a revocation verb beside some OTHER AR-id. Refusing
-    on any id would brick the gate against its own file on every run - R858 exactly."""
-    assert gate(GOOD + "\n" + line) is True, line
+def test_a_line_that_STARTS_with_a_revocation_token_refuses(gate, line):
+    """POSITION is the discriminator, not case and not the tool name. A token is written at the
+    start of a line - the same property the approval side has required since R757 #3 - while prose
+    puts its verb mid-sentence. The first two shapes are pinned by test_resync_review_gate.py and
+    an earlier tool-name rule broke both."""
+    assert gate(GOOD + "\n" + line) is False, line
+
+
+def test_a_parsed_revocation_for_another_id_does_not_silence_the_rest_of_its_line(gate):
+    """R870 #3: `not revoke.search(ln)` let one well-formed revocation suppress every other shape
+    beside it - R858 #4's defect, fixed on the parsing half and left standing on the mention half."""
+    other = "REVOKE-APPLY resync_variables.py " + SHA12 + " AR-001"
+    assert gate(GOOD + "\n" + other + " and REVOKE APPLY resync_variables.py") is False
 
 
 @pytest.mark.parametrize("prose", [
