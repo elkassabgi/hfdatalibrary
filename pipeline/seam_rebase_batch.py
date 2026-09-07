@@ -81,8 +81,16 @@ STOP_TEXT_RESYNC = {
     3: ("STOPPING - THE LAST TICKER'S FOUR OBJECTS ARE WRITTEN AND UNVERIFIED. resync_variables.py "
         "exit 3 is 'UNVERIFIABLE, DATA LIVE - nothing restored': the uploads succeeded and the "
         "read-back comparison did not complete, so served state for that ticker is UNKNOWN and it "
-        "is NOT the pre-resync state. Do not treat this as a skip. Re-run the tool for that one "
-        "ticker to re-verify, or restore from its snapshot directory, before continuing the batch."),
+        "is NOT the pre-resync state. Do not treat this as a skip.\n"
+        "  WHAT A PLAIN RE-RUN PROVES, AND WHAT IT DOES NOT (R856 #3): a re-run reaches MEASURE "
+        "first, which compares at rtol=1e-9 - NOT the exact equality the failed VERIFY used - and "
+        "on agreement returns 2, printing 'already consistent - nothing to do' directly beneath "
+        "this message. That is a weaker test answering a different question, and reading it as "
+        "reassurance is how an unknown served state becomes a closed one.\n"
+        "  WHAT SETTLES IT: (a) restore from the snapshot directory named in the ticker's "
+        "_RESULT.txt, which puts back objects whose size and ETag are verified against the "
+        "manifest from R2; or (b) compare the four served objects against the store yourself, at "
+        "exact equality, the way VERIFY does. Only then continue the batch."),
 }
 
 
