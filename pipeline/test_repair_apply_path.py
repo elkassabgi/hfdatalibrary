@@ -406,6 +406,11 @@ def test_an_unreachable_oracle_refuses_BEFORE_the_write(monkeypatch, tmp_path):
     def boom(symbol, start, end):
         raise OSError("simulated Yahoo transport failure")
     monkeypatch.setattr(R, "_yahoo_close", boom)
+    # STUB THE PRINT STORE. `--rebuild-from-cs` makes the --until gate call last_cs_session(),
+    # which walks E:\iex_hist_backfill - a path no CI checkout has. Without this the run refuses
+    # at exit 2 on the --until gate and never reaches the oracle: the test then passed here and
+    # FAILED in CI, which is R874 recurring in the other repo 90 minutes later.
+    monkeypatch.setattr(R, "last_cs_session", lambda sym, tkr, limit=15: dt.date(2026, 3, 27))
     monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
                                       "--verify-against", "B", "--rebuild-from-cs", "B",
                                       "--until", "2026-03-27",
@@ -499,6 +504,9 @@ def test_a_CUT_3_failure_is_named_even_when_CUT_4_also_fails(monkeypatch, tmp_pa
     monkeypatch.setattr(R, "cut_gate", lambda *a, **k: (
         [("CUT-3", "the first dropped session printed in the main pass", "FAIL"),
          ("CUT-4", "the last kept session is not cs-anchored", "FAIL")], False))
+    # same reason as above: no CI checkout can reach the print store, and exit 2 from the --until
+    # gate would satisfy this test's `code == 2` for entirely the wrong reason
+    monkeypatch.setattr(R, "last_cs_session", lambda sym, tkr, limit=15: dt.date(2026, 3, 27))
     monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(),
                                       "--rebuild-from-cs", "B", "--verify-against", "B",
                                       "--until", "2026-03-27"])
