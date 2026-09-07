@@ -568,6 +568,19 @@ def main() -> int:
         return p[5] if len(p) >= 6 and p[5].endswith(".py") else "seam_rebase.py"
 
     done = set(); last_line = None; last_line_tool = None
+    # "NO EXIT 4 FOUND" AND "NO LOG READ" ARE DIFFERENT ANSWERS (R866 #8). The cross-tool exit-4
+    # block below is only as wide as the ONE file --log names, and the default
+    # (D:\temp\claude\seam_rebase_batch.log) does not exist - the real pass-1 log is
+    # seam_rebase_batch_pass1.log, and it holds an exit 4. Running with the default therefore
+    # skipped the block in silence, which reads as "the log says it is safe to start".
+    if not os.path.exists(a.log):
+        import glob as _glob
+        _sib = sorted(_glob.glob(os.path.join(os.path.dirname(os.path.abspath(a.log)),
+                                              "seam_rebase_batch*.log")))
+        print(f"NOTE: {a.log} does not exist, so no prior run was read: neither the skip list nor the "
+              f"cross-tool exit-4 block ran. That is not the same as 'no breach recorded'."
+              + (f" Sibling logs beside it: {', '.join(os.path.basename(x) for x in _sib)} - pass --log "
+                 f"if one of those is this batch's history." if _sib else ""))
     if os.path.exists(a.log):
         for line in open(a.log, encoding="utf-8"):
             p = line.rstrip("\n").split("\t")
@@ -603,8 +616,14 @@ def main() -> int:
         # followed, and RELEASE told them to append code 0 "if the restore succeeded". Branch on
         # whether the directory is actually there, the same way STOP_TEXT[4] now does.
         snap_dir = os.path.join(a.snapshot_root, last_line[1]) if a.snapshot_root else None
+        # A NON-EMPTY DIRECTORY IS NOT A SNAPSHOT (R866 #3). Exits 5 and 7 both makedirs and write
+        # _RESULT.txt BEFORE any snapshot is taken, and both are retried by design - so a directory
+        # holding one _RESULT.txt satisfied `os.listdir` and the operator was sent to a `--restore`
+        # that dies on `FileNotFoundError: _MANIFEST.txt` and exits 4. That re-opened R760 #4, which
+        # is the entry about giving an operator an instruction that cannot be followed. The manifest
+        # is what restore() actually reads, so the manifest is what decides.
         try:
-            have_snap = bool(snap_dir and os.path.isdir(snap_dir) and os.listdir(snap_dir))
+            have_snap = bool(snap_dir and os.path.isfile(os.path.join(snap_dir, "_MANIFEST.txt")))
         except OSError as ex:                                # R763 #7: an unreadable dir killed main()
             have_snap = False                                # with a traceback and no refusal message
             print(f"  (could not read {snap_dir}: {type(ex).__name__}: {ex} - treating it as absent)")
@@ -614,7 +633,8 @@ def main() -> int:
                    f"none of its own). " + RELEASE)
         else:
             how = (f"its served state is UNKNOWN and THERE IS NO SNAPSHOT TO RESTORE FROM"
-                   + (f" ({snap_dir} is absent or empty)" if snap_dir else " (no --snapshot-root given)")
+                   + (f" ({snap_dir} holds no _MANIFEST.txt, which is the only thing --restore reads)"
+                      if snap_dir else " (no --snapshot-root given)")
                    + ". That means the breach happened before any snapshot was taken, so unidentified "
                    f"code ran and nothing it printed about writing can be believed. Compare "
                    f"{last_line[1]}'s served objects against the store yourself and decide; then "
@@ -629,7 +649,11 @@ def main() -> int:
     # check the setup was the one command that never checked the guarded set.
     _assert_guarded_matches_tool()
     todo = [t for t in cands if t not in done]
-    print(f"candidates {len(cands)}; already exit-0 in log {len(done & set(cands))}; to do {len(todo)}; mode {a.mode}; apply {a.apply}")
+    # R866 #7: the label said "already exit-0" while _terminal_ok admits exit 2 as well for the
+    # resync tool, so the number a human reads did not name what it counted.
+    _skip_word = "exit-0" if a.tool == "seam_rebase.py" else "exit-0 or exit-2 (already consistent)"
+    print(f"candidates {len(cands)}; skipped, {_skip_word} in log: {len(done & set(cands))}; "
+          f"to do {len(todo)}; mode {a.mode}; apply {a.apply}")
     if not a.apply:
         print("  first 20:", " ".join(todo[:20])); print("(dry run - pass --apply to run the batch)"); return 0
     detail_dir = os.path.dirname(os.path.abspath(a.log))
@@ -835,8 +859,18 @@ def main() -> int:
         print(f"unmeasurable (exit 3) - the disclose list: {' '.join(unmeasurable)}")
     if deferred:
         print(f"deferred by the daily window (exit 7) - run again outside it: {' '.join(deferred)}")
-    print(f"batch {'stopped' if stopped else 'done'}: {n} processed this run; log {a.log}; details in {detail_dir}/seam_detail_*.txt")
-    return 1 if stopped else 0
+    # A RUN THAT DEFERRED EVERYTHING IS NOT A RUN THAT SUCCEEDED (R866 #4). `daily_run_state()`
+    # answers "unknown" on any `gh` failure - an expired token, no network, a rate limit - and
+    # resync_variables.py then exits 7 without reading anything. The exit-7 path costs 2.45 s
+    # measured, so a whole 1,324-ticker list sweeps in about 54 minutes and printed "batch done"
+    # with exit 0. An unattended caller would have read that as the resync being finished.
+    outcome = "stopped" if stopped else ("deferred" if deferred and n == len(deferred) else "done")
+    print(f"batch {outcome}: {n} processed this run; log {a.log}; details in {detail_dir}/seam_detail_*.txt")
+    if outcome == "deferred":
+        print(f"  EVERY ticker attempted this run was deferred by the daily window ({n} of {n}). Nothing was "
+              f"measured and nothing was written. If `gh` cannot answer, daily_run_state() returns 'unknown' "
+              f"and every ticker defers - check that first, then run again outside the window.")
+    return 1 if stopped or (deferred and n == len(deferred)) else 0
 
 
 if __name__ == "__main__":
