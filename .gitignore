@@ -79,11 +79,26 @@ emails/
 # NUMBERS.md is the operational numbers ledger: costs, D1 detail, `D:/temp/claude/...` paths.
 # It is a sibling of .claude/MISTAKES.md in everything but its location.
 NUMBERS.md
-# run logs written beside the pipeline (the leading underscore is the scratch convention)
-pipeline/_*.log
+# run logs, ANYWHERE. This started as `pipeline/_*.log`, which was the shape I happened to be
+# looking at and could not reach `clients/python/examples/run_momentum.log`. Measured before
+# widening: `git ls-files | grep -c '\.log$'` is 0, so this is additive.
+*.log
 # a file literally named `nul` is always an accident: a Windows `> nul` redirect run under a
 # POSIX shell creates one instead of discarding output.
 nul
+#
+# SESSION HANDOFF TRANSCRIPTS. THE FIRST SWEEP CLAIMED THIS WAS ALREADY COVERED AND IT WAS NOT:
+# `git check-ignore -v .session-catchup/` printed `.gitignore:31:` with an EMPTY pattern - line 31
+# is BLANK - and I read that as a match. The instruments that answer honestly are
+# `git status --porcelain` (`?? .session-catchup/`) and `git ls-files -o --exclude-standard`,
+# which counted **20 untracked, unexcluded files** under it in the main checkout. They are decoded
+# chat transcripts carrying real e-mail addresses: the `emails/` hazard exactly, one `git add -A`
+# from publication in a PUBLIC repo.
+.session-catchup/
+# Derived data, 1.4 GB and 13 MB. `data/` tracks exactly four files (tickers, metadata,
+# ticker_meta, classify_tickers.py) and none is under either of these.
+data/clean_full/
+data/playground/
 #
 # NOT ignored, deliberately: `docs/` holds documents meant for this repo
 # (VENDOR_SEAM_BASIS_20260904.md, UNAPPLIED_SPLITS_20260905.md), and the untracked
