@@ -154,6 +154,42 @@ def test_an_unreachable_print_store_fails_the_basis_gate_instead_of_passing_it(m
     assert any(r[1].startswith("prints/NO trades_") for r in rows), rows
 
 
+def test_a_PARTIAL_print_store_fails_the_basis_gate_too(monkeypatch, tmp_path):
+    """R878 #6, second half. R872 #1 only caught the store being EMPTY, so a store holding ONE of
+    737 kept window sessions still passed `-> OK` on a single comparison - a floor of one file is
+    barely a gate, and a half-finished copy or a drive still filling looks exactly like that.
+
+    The threshold is the number of checks the OPERATOR ASKED FOR, which is why it is safe: it
+    cannot fire where the frame has fewer window sessions than that, and it cannot fire on the
+    three real tickers, which draw 4 from pools of 688, 858 and 938."""
+    days = [rr.WINDOW[0] + dt.timedelta(days=k) for k in range(1, 40)]
+    store = tmp_path / "partial"
+    # exactly ONE of them has a trades file
+    ymd = days[0].strftime("%Y%m%d")
+    (store / ymd).mkdir(parents=True)
+    (store / ymd / f"trades_{ymd}.csv").write_text("", encoding="utf-8")
+    monkeypatch.setattr(rr, "CS_ROOT", str(store))
+    monkeypatch.setattr(rr, "_print_anchor", lambda d, t, cs=None: (10.0, 300, None, None, "main"))
+    rows, ok = rr.basis_gate(_win_frame(days), "ZZ", rr.WINDOW[1], [], 4, 3)
+    assert ok is False, "one file out of many is not a gate"
+    assert any("PARTIAL print store" in str(r[1]) for r in rows), rows
+
+
+def test_a_store_that_supplies_every_check_asked_for_still_passes(monkeypatch, tmp_path):
+    """The mirror, and the one that matters: a floor that refuses a legitimate run is worse than no
+    floor. Four sessions available, four asked for -> OK."""
+    days = [rr.WINDOW[0] + dt.timedelta(days=k) for k in range(1, 40)]
+    store = tmp_path / "full"
+    for d in days:
+        ymd = d.strftime("%Y%m%d")
+        (store / ymd).mkdir(parents=True)
+        (store / ymd / f"trades_{ymd}.csv").write_text("", encoding="utf-8")
+    monkeypatch.setattr(rr, "CS_ROOT", str(store))
+    monkeypatch.setattr(rr, "_print_anchor", lambda d, t, cs=None: (10.0, 300, None, None, "main"))
+    rows, _ok = rr.basis_gate(_win_frame(days), "ZZ", rr.WINDOW[1], [], 4, 3)
+    assert not any("PARTIAL print store" in str(r[1]) for r in rows), rows
+
+
 def test_a_ticker_with_no_kept_window_session_is_not_accused_of_a_missing_store(monkeypatch, tmp_path):
     """The mirror, and why a blanket refusal would be wrong: four of the seven legitimately have no
     kept window session at all, and 41 window weekdays are market holidays with no trades file. The

@@ -561,6 +561,23 @@ def basis_gate(frame: pd.DataFrame, ticker: str, cut: dt.date, anchors: list, k_
     if in_window and not win:
         rows.append((None, f"prints/NO trades_*.csv under {CS_ROOT} for any of {len(in_window)} "
                            f"kept window session(s)", None, None, None, None, None, False))
+    # ...AND THE FLOOR WAS ONE FILE, WHICH IS BARELY A GATE (R878 #6, second half). A store holding
+    # ONE of 737 kept window sessions passed `-> OK` on a single comparison. R872 #1 only caught the
+    # store being EMPTY; a partial store - a half-finished copy, a sync still running, a drive that
+    # mounted late and is still filling - is the same defect with one file in it.
+    #
+    # THE THRESHOLD IS NOT ARBITRARY, which is what makes it safe to add: it is the number of checks
+    # the OPERATOR ASKED FOR. If the frame offers at least `k_window` kept window sessions and the
+    # store cannot supply that many, the run cannot do what was requested and says so. It cannot
+    # fire on the legitimate cases - the four tickers with no kept window session have in_window
+    # empty, and the three real ones draw 4 from pools of 688, 858 and 938 (measured, the seven
+    # declared dry runs). An operator who deliberately lowers the bar with `--basis-samples 1`
+    # lowers this floor with it, which is R867 #4's already-documented escape hatch.
+    elif in_window and len(win) < min(k_window, len(in_window)):
+        rows.append((None, f"prints/only {len(win)} of {len(in_window)} kept window session(s) have "
+                           f"a trades file under {CS_ROOT}, fewer than the {k_window} check(s) asked "
+                           f"for - a PARTIAL print store proves less than it appears to",
+                     None, None, None, None, None, False))
     sample = _pick(win, k_window)
     if last_kept in win and last_kept not in sample:
         sample.append(last_kept)
