@@ -1,0 +1,56 @@
+name: tests
+
+# WHY THIS EXISTS. Until 2026-09-07 this repository ran NO tests in CI. `backfill.yml`,
+# `daily-update.yml` and `deploy.yml` have no pytest step, so twelve test files sat in the tree
+# and nothing ran them on a push or a pull request.
+#
+# It cost something concrete the same day. An adversarial review of PR #11 - a change to the
+# production daily path that would auto-apply a whole-history split rescale - found that the PR
+# head fails `pipeline/test_split_gap_guard.py` 2 of 3, reproducing the corruption ledger entry
+# R732 records; that only came to light because a human asked for the review. A wrong conflict
+# resolution in that region would have reached the 06:00Z cron unchallenged.
+#
+# WHAT IT DOES NOT DO. It does not touch R2, D1 or the site, and it needs no secrets: both suites
+# are offline. `api/test/` is excluded - those exercise the Worker and need a JS runtime, which is
+# a separate job for whoever adds it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: install
+        run: |
+          pip install -r pipeline/requirements.txt
+          pip install pytest
+
+      - name: pipeline tests
+        # `pipeline/` imports its own modules by name, so it runs from inside the directory -
+        # the same way the tests are run by hand.
+        working-directory: pipeline
+        run: python -m pytest . -q
+
+      - name: python client tests
+        # The client is not installed; the package sits at clients/python/hfdatalibrary, so the
+        # import path is the directory above it. Measured 2026-09-07: 24 passed this way, and
+        # without it all four modules fail collection with ModuleNotFoundError.
+        env:
+          PYTHONPATH: clients/python
+        run: python -m pytest clients/python/tests -q
