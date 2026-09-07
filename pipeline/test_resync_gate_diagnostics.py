@@ -235,10 +235,16 @@ def test_prose_about_a_revocation_never_bricks_the_gate(gate, line):
     "  1. REVOKE-APPLY <tool>.py <sha12> <review id>",
     "2026-09-07 ae: REVOKE-APPLY resync_variables.py " + SHA12 + " " + ID,
     "the reviewer withdrew it in the row below - REVOKE-APPLY",           # hard wrap, token at EOL
-    # ...and the documented unresolvable tie: spelled and placed exactly like `> REVOKE-APPLY
-    # something` above, so it refuses. The remedy is to rephrase the line, never to narrow the
-    # matcher - R763 #2 and R765 #1 both narrowed it and both re-opened the revoke path.
+    # ...and the documented unresolvable ties: token-spelled prose that no rule can separate from
+    # a token-spelled withdrawal. The remedy is to rephrase the line, never to narrow the matcher
+    # - R763 #2 and R765 #1 both narrowed it and both re-opened the revoke path.
     "Withdraw-apply semantics are documented in SKILL.md.",
+    "The cancel-apply path is exit 1.",
+    # R876 #1's own corpus: the idioms this file actually uses, all of which the cell rule missed
+    "<!-- 2026-09-07: this tool's approval is REVOKE-APPLY -->",
+    "| AR-046 | 2026-09-07 | resync gate | the approval is REVOKE-APPLY as of today |",
+    "2026-09-07: REVOKE-APPLY, per the reviewer.",
+    "the reviewer said REVOKE-APPLY: see the row below.",
 ])
 def test_a_revocation_MENTION_refuses_wherever_it_is_written(gate, line):
     """THE OPERAND is the discriminator, not position, not case and not only the tool name. A
@@ -263,6 +269,19 @@ def test_ordinary_English_at_the_start_of_a_line_does_not_brick_the_gate(gate, l
     assert gate(GOOD + "\n" + line) is True, line
 
 
+@pytest.mark.parametrize("line", [
+    "resync_variables.py must cancel apply and restore on mismatch.",
+    "for resync-variables we cancel apply whenever the hashes differ",
+])
+def test_the_TOOL_NAME_disjunct_still_carries_a_space_spelled_shape(gate, line):
+    """R876 #6 - reverting the tool-name disjunct left the suite green, so one of the three ways
+    into the mention scan was uncovered. It is the way in that catches a withdrawal written as
+    ordinary prose ABOUT this tool: space-spelled, no operand, not at a cell edge. Both of these
+    are bricks in the sense that they are not really withdrawals - and both refuse, deliberately,
+    because revocation fails OPEN and the remedy is to rephrase the line."""
+    assert gate(GOOD + "\n" + line) is False, line
+
+
 def test_a_parsed_revocation_for_another_id_does_not_silence_the_rest_of_its_line(gate):
     """R870 #3: `not revoke.search(ln)` let one well-formed revocation suppress every other shape
     beside it - R858 #4's defect, fixed on the parsing half and left standing on the mention half."""
@@ -276,7 +295,12 @@ def test_a_parsed_revocation_for_another_id_does_not_silence_the_rest_of_its_lin
     "Re-apply the patch before reading this row.",
     "This supersedes nothing; the earlier verdict stands.",
     "we cancel apply and restore.",
-    "The cancel-apply path is exit 1.",
+    # `The cancel-apply path is exit 1.` MOVED to the refusing list (R876 #1). It was pinned here
+    # by R868 #3 and it is now a refusal, deliberately: a genuine withdrawal written as
+    # `| AR-046 | ... | the approval is REVOKE-APPLY as of today |` has the identical structure -
+    # token-spelled, mid-line, followed by an ordinary word - so no rule can grant one and refuse
+    # the other. Revocation fails OPEN, and the measured price of granting was 22 real
+    # withdrawals ignored. Its six space-spelled neighbours below are untouched.
     "Do not revoke apply here without reading the note.",
 ])
 def test_innocent_prose_does_not_brick_the_gate(gate, prose):

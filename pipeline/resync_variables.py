@@ -215,7 +215,7 @@ REVOKE_ANY_FMT = r"REVOKE-APPLY\s+resync_variables\.py\s+(?:{sha}|\*)\s+([A-Za-z
 # cancel-apply path is exit 1." both refused every run, bricking the gate in exactly the way the
 # comment above claims to avoid. A real revocation always names the file it withdraws; a sentence
 # that happens to put a revoke verb beside the word "apply" does not.
-_REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0,3}APPLY\b"
+_REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―−­－_\-]{0,3}APPLY\b"
 # THE OPERAND IS THE DISCRIMINATOR. Fourth attempt at this line, and the first three are each
 # instructive in a different direction:
 #
@@ -241,37 +241,62 @@ _REVOKE_SHAPE = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[\s‐-―_\-]{0
 # any one of which counts as a mention, and the shape must be present for all three:
 #   * the line NAMES this tool (attempt 1's rule, kept as one disjunct rather than the whole test);
 #   * a shape is followed immediately by an operand;
-#   * a TOKEN-SPELLED shape - hyphen or underscore, never a bare space - either starts the line or
-#     ends it. Those are the two places a token legitimately carries no operand: the placeholder
-#     line and a withdrawal hard-wrapped across two lines. Requiring the hyphen there is what
-#     stops `Cancel apply and restore whenever the hashes disagree.` from bricking the gate, which
-#     attempt 3 did to five ordinary English lines (R871 #3).
-# ONE AMBIGUITY IS UNRESOLVABLE AND THE TIE GOES TO REFUSING: `Withdraw-apply semantics are
-# documented in SKILL.md.` is spelled and placed exactly like `> REVOKE-APPLY something`, which
-# the suite pins as a refusal. Nothing structural separates them, revocation fails OPEN, so both
-# refuse - loudly, naming the line, and the remedy is the one this file has always given: delete
-# or rephrase the line, never narrow this matcher.
-_TOKEN_SPELLED = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[‐-―_\-]{1,3}APPLY\b"
+#   * a TOKEN-SPELLED shape appears ANYWHERE on the line - hyphen or underscore, never a bare
+#     space. The SPELLING is the token marker; position is not.
+#
+# THE CELL CONDITION IS GONE, and dropping it is the fix, not a widening for its own sake
+# (R876 #1). Requiring a token-spelled shape to OPEN or CLOSE its markdown cell scored perfectly
+# on the corpus that had just exposed the position anchor - 0 fail-open holes, 24/24 controls,
+# 11/11 realistic withdrawals - because every shape in that corpus was built to test POSITION.
+# Built from the FILE's own idioms instead, it ignored **28 of 36** genuine withdrawals, and 27 of
+# those were already ignored by the predecessor, so R871 #1 had been narrowed rather than closed:
+# a comma, a full stop, a colon or a trailing `-->` after the token defeats a cell-edge test, and
+# `<!-- 2026-09-07: this tool's approval is REVOKE-APPLY -->` is exactly that shape. Dropping the
+# cell condition and keeping the spelling one scores IDENTICALLY on every pinned corpus and moves
+# 8/36 -> 30/36 and 3/15 -> 13/15, with the live PASSED.md still flagging 0 of its 92 lines.
+#
+# ITS ONE COST IS A SENTENCE THE SUITE USED TO PIN AS INNOCENT, and paying it is deliberate.
+# `The cancel-apply path is exit 1.` now refuses. That is R868 #3's case, and R868 failed this
+# gate for refusing it - but the two rounds are in direct conflict and only one can be satisfied,
+# because `| AR-046 | ... | the approval is REVOKE-APPLY as of today |` is a genuine withdrawal
+# with the SAME structure: token-spelled, mid-line, followed by an ordinary word. Nothing
+# separates them, so the tie goes the way the design says it must - revocation fails OPEN, and
+# the price is one rephraseable sentence against 22 more real withdrawals caught. Exactly one of
+# the seven pinned innocent lines moves; the other six are space-spelled and still grant.
+# The remedy for a bricked line is the one this file has always given: rephrase it ("the
+# cancel/restore path is exit 1"), never narrow this matcher.
+_TOKEN_SPELLED = r"\b(?:REVOKE|WITHDRAW|UNAPPROVE|RESCIND|CANCEL)[‐-―−­－_\-]{1,3}APPLY\b"
 REVOKE_MENTION_CI_RE = _re.compile(_REVOKE_SHAPE, _re.I)            # every shape, anywhere on the line
 TOOL_MENTION_RE = _re.compile(r"resync[_\-]?variables", _re.I)      # ...then the line names the tool
-# An OPERAND, matched immediately after a shape. The sha branch demands a digit so that an
-# ordinary seven-letter word spelled out of a-f ("defaced") cannot pass for one.
+# An OPERAND, matched immediately after a shape. It only has to carry the SPACE-spelled forms
+# now - a hyphenated token is caught by its spelling wherever it sits - but it is still widened
+# where R876 #1 measured it too narrow: a leading backtick or quote, a Windows path, a URL, any
+# short extension rather than just .py/.md, and `AR046` / `#046` beside `AR-046`.
+# The sha branch demands a digit so an ordinary seven-letter word spelled out of a-f ("defaced")
+# cannot pass for one.
 OPERAND_RE = _re.compile(
-    r"[ \t]*(?:<[^<>]{1,40}>"                          # <tool>.py, <sha12>, <review id>
+    r"[ \t]*[`\"']?(?:<[^<>]{1,40}>"                   # <tool>.py, <sha12>, <review id>
     r"|\*"                                             # the wildcard id
-    r"|(?:[\w.~\-]*[/\\])*[\w.\-]+\.(?:py|md)\b"       # a path or a filename
+    r"|[a-z]+://\S+"                                   # a URL
+    r"|(?:[A-Za-z]:)?(?:[\w.~\-]*[/\\])*[\w.\-]+\.\w{1,5}\b"   # a path or filename, any extension
     r"|(?=[0-9a-f]{7,40}\b)[0-9a-f]*\d[0-9a-f]*\b"     # a sha
-    r"|AR-\d+\b)", _re.I)
-# A token carrying NO operand: only where it OPENS or CLOSES its cell, and only in the hyphenated
-# spelling. THE UNIT IS THE CELL, NOT THE LINE, because a markdown table row is how this file
-# writes its records: `| AR-045 | 2026-09-07 | REVOKE-APPLY | the approval is pulled |` is a
-# withdrawal with an empty operand column, and against the line it is neither first nor last.
-BARE_TOKEN_RE = _re.compile(r"^[\s>*\-`\"']{0,8}" + _TOKEN_SPELLED
-                            + r"|" + _TOKEN_SPELLED + r"[ \t]*[`\"')\]}]*[ \t]*$", _re.I)
+    r"|#?AR[\-_]?\d+\b|#\d+\b)", _re.I)
+# THE SPELLING, ANYWHERE ON THE LINE. A hyphen or underscore where the space would be is what
+# makes `REVOKE-APPLY` a token rather than two English words, and it stays a token wherever it is
+# written - in a table cell, inside an HTML comment, after a colon, before a full stop.
+TOKEN_SPELLED_RE = _re.compile(_TOKEN_SPELLED, _re.I)
+# ...AND A SHAPE THAT ENDS ITS CELL WITH NOTHING AFTER IT, whatever its spelling. A bare
+# `REVOKE APPLY` at column 0, at the end of a hard-wrapped line, or alone in a table cell is a
+# token even space-spelled: prose does not stop at the verb. Measured (R876 #1): those were the
+# last three space-spelled fail-open shapes, and every pinned innocent sentence carries words
+# AFTER the verb - "cancel apply AND RESTORE", "revoke apply PERMISSION", "cancel apply and
+# restore." - so none of them is touched. Trailing quotes and brackets do not count as content;
+# trailing PUNCTUATION deliberately does, which is what keeps `we cancel apply.` innocent.
+CELL_END_RE = _re.compile(_REVOKE_SHAPE + r"[ \t`\"')\]}]*$", _re.I)
 
 
-def _bare_token(line: str) -> bool:
-    return any(BARE_TOKEN_RE.search(cell) for cell in line.split("|"))
+def _cell_end(line: str) -> bool:
+    return any(CELL_END_RE.search(cell) for cell in line.split("|"))
 #
 # THE PLAIN-ENGLISH BRANCH IS GONE, and its removal is the fix, not a regression (R870 #1). It
 # refused any line carrying a revocation verb beside the CLAIMED id. R868's addendum justified
@@ -465,7 +490,8 @@ def reviewed_ok(review_id: str, passed_file: str) -> bool:
                 _looks = bool(_shapes) and (
                     bool(TOOL_MENTION_RE.search(ln))
                     or any(OPERAND_RE.match(ln, m.end()) for m in _shapes)
-                    or _bare_token(ln))
+                    or bool(TOKEN_SPELLED_RE.search(ln))
+                    or _cell_end(ln))
                 # COUNT them, do not just ask whether one parsed: a line carrying a well-formed
                 # revocation for ANOTHER id used to silence every other shape beside it.
                 if _looks and len(_shapes) > len(_parsed_here):

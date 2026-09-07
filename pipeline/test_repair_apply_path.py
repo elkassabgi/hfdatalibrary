@@ -407,13 +407,89 @@ def test_an_unreachable_oracle_refuses_BEFORE_the_write(monkeypatch, tmp_path):
         raise OSError("simulated Yahoo transport failure")
     monkeypatch.setattr(R, "_yahoo_close", boom)
     monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
-                                      "--verify-against", "B", "--snapshot-dir", str(tmp_path / "oracle")])
+                                      "--verify-against", "B", "--rebuild-from-cs", "B",
+                                      "--until", "2026-03-27",
+                                      "--snapshot-dir", str(tmp_path / "oracle")])
     try:
         code = R._guarded_main()
     except SystemExit as ex:
         code = ex.code
     assert code == 5, f"an unreachable oracle must abort before any write, got {code}"
     assert not calls["uploads"], "nothing may be written when the oracle cannot be reached"
+
+
+def test_the_oracle_preflight_does_not_fire_when_VERIFY_b_would_check_nothing(monkeypatch, tmp_path):
+    """R876 #2. VERIFY (b) compares REBUILT sessions, so without --rebuild-from-cs there are none
+    and it reports "0/0 within 1 % -> OK" - a no-op. Firing the pre-flight there aborted a correct
+    repair at exit 5 for a check that decides nothing."""
+    calls = _install(monkeypatch, "healthy", 22)
+    called = []
+
+    def boom(symbol, start, end):
+        called.append(symbol)
+        raise OSError("the oracle must not be consulted on this path")
+    monkeypatch.setattr(R, "_yahoo_close", boom)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--verify-against", "B",
+                                      "--snapshot-dir", str(tmp_path / "oracle2")])
+    try:
+        code = R._guarded_main()
+    except SystemExit as ex:
+        code = ex.code
+    assert code == 0, f"a repair whose VERIFY (b) is a no-op must not abort, got {code}"
+    assert called == [], called
+    assert calls["uploads"]
+
+
+def test_the_daily_run_state_is_printed_on_every_apply(monkeypatch, tmp_path, capsys):
+    """R876 #6 - reverting this console line left the whole suite green, so the behavioural half
+    of the R872 #4 fix was uncovered. The record in `_RESULT.txt` was tested; what the operator
+    watching the run sees was not, and those are different surfaces."""
+    calls = _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(seam_rebase, "daily_run_state", lambda: "queued")
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--allow-queued", "--snapshot-dir", str(tmp_path / "dailyline")])
+    try:
+        R._guarded_main()
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+    assert "daily run state: queued" in out, out
+    assert "OVERRIDDEN by --allow-queued" in out, out
+    assert calls["uploads"]
+
+
+def test_an_idle_apply_says_so_without_claiming_an_override(monkeypatch, tmp_path, capsys):
+    """The mirror: the line must distinguish the two, which is the whole point of adding it."""
+    _install(monkeypatch, "healthy", 22)
+    monkeypatch.setattr(sys, "argv", ["repair_reassigned.py", T, "--cut", CUT.isoformat(), "--apply",
+                                      "--allow-queued", "--snapshot-dir", str(tmp_path / "idleline")])
+    try:
+        R._guarded_main()
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+    assert "daily run state: idle" in out, out
+    assert "OVERRIDDEN" not in out, out
+
+
+def test_both_apply_only_flags_carry_help_text():
+    """R876 #6 - the two --help strings had no failing revert either. `--help` is the only place an
+    operator meets a flag that silently relaxes the write-window gate."""
+    import subprocess
+    p = subprocess.run([sys.executable, os.path.join(HERE, "repair_reassigned.py"), "--help"],
+                       capture_output=True, text=True, timeout=300)
+    assert p.returncode == 0, p.stderr[-400:]
+    for flag, phrase in (("--allow-queued", "QUEUED"), ("--snapshot-dir", "_MANIFEST.txt")):
+        assert flag in p.stdout, p.stdout
+        assert phrase in p.stdout, f"{flag} has no help text mentioning {phrase}"
+
+
+def test_the_oracle_dependency_is_declared():
+    """R876 #6 - VERIFY (b) is mandatory with --verify-against and imports yfinance lazily; the
+    declaration was added with nothing to keep it there."""
+    req = open(os.path.join(HERE, "requirements.txt"), encoding="utf-8").read()
+    assert "yfinance" in req, req
 
 
 def test_a_CUT_3_failure_is_named_even_when_CUT_4_also_fails(monkeypatch, tmp_path, capsys):

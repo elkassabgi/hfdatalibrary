@@ -109,8 +109,18 @@ def test_the_one_cause_paragraph_survives_an_exit_6_beside_the_no_writes():
     to its hash."""
     rc, out = _drive("seam_rebase.py", {"A": 6, "B": 5})
     assert rc == 1
-    assert ONE_CAUSE in out, out
     assert "stale --reviewed id" in out, out
+    # ...and it reads as English at ONE (R876 #5): "The 1 ... not 1 coincidences" printed on 16 of
+    # the 28 mixtures that reach this paragraph, so the singular has its own wording.
+    assert "The one that aborted or deferred" in out, out
+    assert ONE_CAUSE not in out, out
+
+
+def test_the_one_cause_paragraph_is_plural_when_more_than_one_made_no_write():
+    rc, out = _drive("seam_rebase.py", {"A": 6, "B": 5, "C": 5})
+    assert rc == 1
+    assert ONE_CAUSE in out, out
+    assert "The 2 that aborted or deferred" in out, out
 
 
 def test_an_all_refused_batch_is_not_told_to_hunt_for_one_cause():

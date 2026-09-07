@@ -903,17 +903,26 @@ def main() -> int:
         # write anywhere in the batch: gating it on `not _wrote` let a single exit 6 beside forty
         # exit 5s hide the stale-`--reviewed`-id diagnosis, which is the commonest cause there is.
         # exit 2 is excluded deliberately - a seam refusal is a per-ticker measurement verdict, and
-        # none of the three causes named below can produce one.
+        # none of the three causes named below can produce one. SO IS EXIT 3, for the same reason
+        # and it was left undocumented (R876 #5): "no market reference at Yahoo" is a per-ticker
+        # fact about the market, not a stale id or an expired credential. An all-exit-3 batch IS
+        # one cause - Yahoo unreachable - but it is not one of the three this paragraph names, and
+        # the "unmeasurable (exit 3) - the disclose list" line above already names every ticker.
         _nowrite = len(aborted) + len(deferred)
         print(f"  NOT ONE of the {n} ticker(s) attempted this run completed: {_named}."
               + ("" if _wrote else " Nothing was written.")
               + (f" {len(incomplete)} of them DID write their price objects and left variables/quality "
                  f"stale (exit 6) - read the SERVING INCOMPLETE line above; those are live."
                  if incomplete else "")
-              + (f" The {_nowrite} that aborted or deferred are almost always ONE cause, not "
-                 f"{_nowrite} coincidences - a stale --reviewed id (every edit to the tool invalidates the "
-                 f"approval bound to its hash), a `gh` that cannot answer so daily_run_state() reads "
-                 f"'unknown', or an expired credential. Find that cause before re-running."
+              # ...and it reads as English at 1 as well as at 40 (R876 #5): "The 1 ... not 1
+              # coincidences" was printed on 16 of the 28 mixtures that reach this paragraph.
+              + ((f" The one that aborted or deferred usually has a cause worth finding before "
+                  f"re-running" if _nowrite == 1 else
+                  f" The {_nowrite} that aborted or deferred are almost always ONE cause, not "
+                  f"{_nowrite} coincidences")
+                 + f" - a stale --reviewed id (every edit to the tool invalidates the approval "
+                   f"bound to its hash), a `gh` that cannot answer so daily_run_state() reads "
+                   f"'unknown', or an expired credential."
                  if _nowrite else ""))
     return 1 if stopped or (n and achieved == 0) else 0
 

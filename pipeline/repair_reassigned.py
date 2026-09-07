@@ -794,9 +794,13 @@ def main() -> int:
                   f"--cut {cut} may well be right; check --rebuild-from-cs {a.rebuild_from_cs!r} instead - "
                   f"if that symbol did not print on {last_keep}, the anchor came from the main pass, which "
                   f"after a handover is the NEW company. Nothing written"
-                  + (f". ALSO FAILING: {', '.join(_also)} - read those rows above as well; a failing CUT-3 "
-                     f"means the cut is too EARLY (the first dropped session did print in the main pass), "
-                     f"which the sentence above does not cover." if _also else ""))
+                  # ...and the CUT-3 sentence only when CUT-3 IS ONE OF THEM (R876 #3). Across all
+                  # 38 reachable verdict maps it printed on 4 where CUT-3 was OK or n/a, telling
+                  # the operator the cut was too early when nothing had said so.
+                  + (f". ALSO FAILING: {', '.join(_also)} - read those rows above as well"
+                     + (f"; a failing CUT-3 means the cut is too EARLY (the first dropped session "
+                        f"did print in the main pass), which the sentence above does not cover."
+                        if "CUT-3" in _also else ".") if _also else ""))
         else:
             print(f"  REFUSED: --cut {cut} is not at a handover boundary in the print stream ({', '.join(blocking)}). "
                   f"A cut inside a contiguous run keeps the NEW owner's sessions, and every gate below this one "
@@ -919,7 +923,16 @@ def main() -> int:
 
     # THE BASIS GATE - on the frame that would be uploaded, in the dry run as well
     gate_rows, gate_ok = basis_gate(new_raw, t, cut, anchors, a.basis_samples, 3, own_splits, a.rebuild_from_cs)
-    _print_gate(gate_rows, f"basis gate ({len(gate_rows)} check(s)) -> {'OK' if gate_ok else 'FAIL'}")
+    # SAY HOW BIG THE POOL WAS, NOT JUST HOW MANY CHECKS RAN (R876 #4). The CS_ROOT floor is ONE
+    # FILE: a store holding 1 of 737 window sessions passes with no warning, and "7 check(s) -> OK"
+    # reads identically whether its 3 window rows were drawn from 688 candidates or from 3. The
+    # denominator is the whole difference between a measurement and a coincidence (R704's own rule,
+    # "a clean verdict is worthless without its denominator").
+    _win_n = sum(1 for r in gate_rows if str(r[1]).startswith("prints"))
+    _win_pool = len({d for d in new_raw["datetime"].dt.date
+                     if d < cut and WINDOW[0] <= d <= WINDOW[1]})
+    _print_gate(gate_rows, f"basis gate ({len(gate_rows)} check(s), {_win_n} drawn from a pool of "
+                           f"{_win_pool} kept window session(s)) -> {'OK' if gate_ok else 'FAIL'}")
     if not gate_ok:
         print(f"  REFUSED: the kept half is not on the original instrument's basis (or an anchor is unreachable) - "
               f"nothing written. USUALLY that means a later owner's corporate action was applied to it (R732: "
@@ -979,19 +992,25 @@ def main() -> int:
     # so an unreachable Yahoo - or a missing yfinance, which pipeline/requirements.txt did not
     # declare until today - ended the run at exit 3 (DATA LIVE, unverifiable) where it can just as
     # well end at 5 with nothing written. One probe fetch, the same call VERIFY (b) makes.
-    if a.verify_against:
-        _probe_from = WINDOW[1] - dt.timedelta(days=45)
+    # ...BUT ONLY WHEN VERIFY (b) WILL ACTUALLY CHECK SOMETHING (R876 #2). VERIFY (b) compares the
+    # REBUILT sessions, so without `--rebuild-from-cs` there are none and it reports "0/0 within
+    # 1 % -> OK" - a no-op. Firing the pre-flight there aborted a correct repair at exit 5 for a
+    # check that decides nothing. And the range is the REBUILD's own, `cut..until`, not a constant
+    # 45 days before the window end: that constant asked Yahoo about a period the run may never
+    # touch.
+    if a.verify_against and a.rebuild_from_cs:
+        _probe_from, _probe_to = cut, (until or WINDOW[1])
         try:
-            _probe = _yahoo_close(a.verify_against, _probe_from, WINDOW[1])
+            _probe = _yahoo_close(a.verify_against, _probe_from, _probe_to)
         except Exception as ex:                                    # noqa: BLE001
             print(f"  REFUSED: the VERIFY (b) oracle is unreachable BEFORE any write - Yahoo fetch for "
                   f"{a.verify_against} raised {type(ex).__name__}: {str(ex)[:160]}. That check is mandatory "
                   f"and otherwise runs only once the objects are live; aborted before any write"); return 5
         if _probe is None or len(_probe) == 0:
             print(f"  REFUSED: Yahoo returned no sessions for {a.verify_against} between {_probe_from} and "
-                  f"{WINDOW[1]} - check --verify-against; aborted before any write"); return 5
+                  f"{_probe_to} - check --verify-against; aborted before any write"); return 5
         print(f"  VERIFY (b) oracle pre-flight: Yahoo {a.verify_against} returned {len(_probe)} session(s) "
-              f"for {_probe_from}..{WINDOW[1]}")
+              f"for {_probe_from}..{_probe_to}")
     snap_dir = a.snapshot_dir or os.path.join("F:\\", f"hf_r2_snapshot_reassigned_{dt.datetime.now(dt.timezone.utc):%Y%m%d}", t)
     n_snap = seam_rebase.snapshot(client, t, snap_dir)          # exits 5 on any pre-write failure
     print(f"  snapshot: {n_snap} objects -> {snap_dir} (size + MD5/ETag verified)")
