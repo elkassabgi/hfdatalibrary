@@ -69,3 +69,22 @@ emails/
 
 # Internal operational docs - never in the public tree (2026-08-31, see R531)
 .claude/
+
+# ...AND THE REST OF THE SAME CLASS, swept 2026-09-07 instead of fixing the one instance
+# that was reported. Porting `emails/` and `.claude/` off the unmergeable branch closed two
+# rules; it never asked what ELSE was untracked-but-unignored in a PUBLIC repo. Measured with
+# `git check-ignore -v`: `.session-catchup/` was already covered, these three were not, and
+# `git status` listed all three as `??` - one `git add -A` from publication.
+#
+# NUMBERS.md is the operational numbers ledger: costs, D1 detail, `D:/temp/claude/...` paths.
+# It is a sibling of .claude/MISTAKES.md in everything but its location.
+NUMBERS.md
+# run logs written beside the pipeline (the leading underscore is the scratch convention)
+pipeline/_*.log
+# a file literally named `nul` is always an accident: a Windows `> nul` redirect run under a
+# POSIX shell creates one instead of discarding output.
+nul
+#
+# NOT ignored, deliberately: `docs/` holds documents meant for this repo
+# (VENDOR_SEAM_BASIS_20260904.md, UNAPPLIED_SPLITS_20260905.md), and the untracked
+# `pipeline/*.py` and `assets/*.svg` are content decisions, not hazards.
