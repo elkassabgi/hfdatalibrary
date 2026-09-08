@@ -144,6 +144,21 @@ import daily_update                                                             
 import seam_rebase                                                                    # noqa: E402
 import symbol_map                                                                     # noqa: E402
 
+# WHICH BYTES RAN goes into the record itself (review 14 / AR-040 note b): the run record named
+# the ticker, the cut, the snapshot dir and every typed input, but not the tool - "which bytes
+# ran" rested on the worktree being clean at the time. The hash is of this file as loaded.
+try:
+    import hashlib as _hashlib
+    _SOURCE_SHA256 = _hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
+except Exception:                                                                    # noqa: BLE001
+    _SOURCE_SHA256 = "unknown"
+
+
+def _record(snap_dir: str, text: str) -> None:
+    """seam_rebase._record with this tool's own sha256 appended to every line it writes."""
+    seam_rebase._record(snap_dir, f"{text} tool_sha256={_SOURCE_SHA256}")
+
+
 CS_ROOT = "E:/iex_hist_backfill"
 SNAP_0713 = "F:/hf_r2_snapshot_20260713"
 WINDOW = (dt.date(2022, 3, 7), dt.date(2026, 3, 27))      # the retained-prints window
@@ -1214,10 +1229,10 @@ def main() -> int:
         try:
             n_back = seam_rebase.restore(client, snap_dir)
         except BaseException as ex2:                         # noqa: BLE001
-            seam_rebase._record(snap_dir, f"EXIT 4 RESTORE FAILED after {n_price + n_vars} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
+            _record(snap_dir,f"EXIT 4 RESTORE FAILED after {n_price + n_vars} upload(s); cause {why}; restore error {type(ex2).__name__}: {str(ex2)[:200]}")
             seam_rebase._say(f"  FAILED after the snapshot with {n_price + n_vars} object(s) uploaded ({why}) and the RESTORE FAILED "
                              f"({type(ex2).__name__}: {str(ex2)[:200]}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
-        seam_rebase._record(snap_dir, f"EXIT 1 RESTORED {n_back} objects after {n_price + n_vars} upload(s); cause {why}")
+        _record(snap_dir,f"EXIT 1 RESTORED {n_back} objects after {n_price + n_vars} upload(s); cause {why}")
         seam_rebase._say(f"  FAILED after the snapshot with {n_price + n_vars} object(s) uploaded ({why}) - restored {n_back} objects; "
                          f"served state is the pre-repair state"); return 1
     # A VARIABLES PROBLEM IS ANY OF: the sync raised twice, it computed nothing, fewer than four
@@ -1228,7 +1243,7 @@ def main() -> int:
         # a served object could not be read back (an R2 error, not a 404): the writes are not known
         # wrong, nothing is restored, a human re-verifies. The stale-variables list is printed FIRST
         # so an exit 3 never hides an exit 6 (R736).
-        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (read-back failed): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
+        _record(snap_dir,f"EXIT 3 UNVERIFIABLE (read-back failed): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
         if vars_bad:
             seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
         seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: the served objects could not be read back for verification - {unverifiable}. "
@@ -1237,25 +1252,25 @@ def main() -> int:
         try:
             n_back = seam_rebase.restore(client, snap_dir)
         except BaseException as e:                           # noqa: BLE001
-            seam_rebase._record(snap_dir, f"EXIT 4 NOT VERIFIED and RESTORE FAILED: {type(e).__name__}: {str(e)[:200]}")
+            _record(snap_dir,f"EXIT 4 NOT VERIFIED and RESTORE FAILED: {type(e).__name__}: {str(e)[:200]}")
             seam_rebase._say(f"  NOT VERIFIED and restore FAILED ({type(e).__name__}: {e}) - run: python seam_rebase.py {t} --restore \"{snap_dir}\""); return 4
-        seam_rebase._record(snap_dir, f"EXIT 1 NOT VERIFIED - restored {n_back} objects")
+        _record(snap_dir,f"EXIT 1 NOT VERIFIED - restored {n_back} objects")
         seam_rebase._say(f"  NOT VERIFIED - restored {n_back} objects from {snap_dir}; served state is the pre-repair state"); return 1
     if unverifiable:
-        seam_rebase._record(snap_dir, f"EXIT 3 UNVERIFIABLE (market fetch): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
+        _record(snap_dir,f"EXIT 3 UNVERIFIABLE (market fetch): {unverifiable[:200]}" + (f"; STALE {stale}" if vars_bad else ""))
         if vars_bad:
             seam_rebase._say(f"  variables/quality sync failed: {sync_failed}. STALE OBJECTS: {stale}")
         seam_rebase._say(f"  UNVERIFIABLE, DATA LIVE: (a)(c)(d)(e) passed but (b) could not be measured - {unverifiable}. Nothing restored; "
                          f"re-run the Yahoo comparison for {t} vs {a.verify_against} before calling this complete; snapshot kept at {snap_dir}"); return 3
     if vars_bad:
         why_v = sync_failed or [f"the four objects did not read back correctly (n_vars={n_vars})"]
-        seam_rebase._record(snap_dir, f"EXIT 6 prices verified, variables/quality NOT: {why_v}; STALE {stale}")
+        _record(snap_dir,f"EXIT 6 prices verified, variables/quality NOT: {why_v}; STALE {stale}")
         seam_rebase._say(f"  PRICES VERIFIED but variables/quality are not: {why_v}. STALE OBJECTS: {stale}. Not restoring; run "
                          f"sync_ticker_variables(client, version, '{t}', df, force_full=True) for each named version"); return 6
     # EVERY typed input that changed what was checked or written goes in the record (R867 #3):
     # --own-split's own help says "Cite the source in the run record", and it was the one input
     # that could relax the gate while being absent from it.
-    seam_rebase._record(snap_dir, f"EXIT 0 DONE repaired cut={cut} until={a.until} unscale={a.unscale} "
+    _record(snap_dir,f"EXIT 0 DONE repaired cut={cut} until={a.until} unscale={a.unscale} "
                                   f"kept_from={a.kept_from} cut_gap_min={a.cut_gap_min} "
                                   f"own_split={a.own_split} anchors={a.anchor} "
                                   f"basis_samples={a.basis_samples} rebuild_from_cs={a.rebuild_from_cs} "

@@ -217,6 +217,22 @@ def test_every_terminal_path_records_its_outcome(monkeypatch, tmp_path):
         assert calls["records"], f"{scenario} wrote no _RESULT.txt line"
 
 
+def test_every_record_line_carries_the_tools_own_sha256(monkeypatch, tmp_path):
+    """AR-040 note (b): the record named every typed input but not the tool, so "which bytes ran"
+    rested on the worktree being clean. Every line the tool records must end with its own file
+    hash, and the hash must be the hash of the file that ran - not a constant, not seam_rebase's."""
+    import hashlib
+    import repair_reassigned as tool
+    real = hashlib.sha256(open(tool.__file__, "rb").read()).hexdigest()
+    assert tool._SOURCE_SHA256 == real
+    for scenario in ("healthy", "upload_raises", "verify_g", "sync_raises",
+                     "readback_unverifiable", "sync_norows"):
+        _code, calls = _run(monkeypatch, tmp_path, scenario)
+        for rec in calls["records"]:
+            assert rec.endswith(f" tool_sha256={real}"), (scenario, rec[-120:])
+        assert all(rec.startswith("EXIT ") for rec in calls["records"]), calls["records"]
+
+
 # ---------------------------------------------------------------- refusals before any write
 
 @pytest.mark.parametrize("extra,why", [
