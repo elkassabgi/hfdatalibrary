@@ -52,8 +52,22 @@ runs against the LOCAL `catalog.db` (11.91 GB; it carries `series` AND the full 
 index, 13,486,342 rows each). D1 is touched only to serve users, to apply a write, and to
 VERIFY the user-facing state afterwards — small, targeted, never a scan.
 
-Why: August billed ~$200 in D1 reads, 87% of it on two days, and those two days were OUR
-catalogue maintenance, not users. The identical query runs free on this machine.
+Why: August billed ~$198 in D1 reads, 87.9% of it on two days — 2026-08-14 at 100,605,881,601
+rows and 08-15 at 95,066,683,899, out of 222,725,311,103 across 26 days. A month of every OTHER
+day costs $9.94. The identical query runs free on this machine.
+
+CORRECTED 2026-09-02, because the original attribution here was wrong and pointed prevention at
+the wrong surface: those two days were **the live worker serving visitors**, NOT our catalogue
+maintenance. Commits `c4c36762d`, `ecf3c5073` and `e1a8164c9` (all 2026-08-15) name it — a
+per-visitor `COUNT(*)` over 12.3M rows on every source-browse page hit, plus `/v1/stats` doing
+the same per request — and replaced both with a `source_counts` lookup and a 6 h edge cache.
+Rows read fell to 864,292,744 on 08-16 and have averaged 1,127,197,733 for the 18 days since,
+which is the served-system evidence R345 demands; a commit alone would prove nothing. D1 reads
+now sit at ~11.6 B against the 25 B included allowance, so they cost **$0**.
+
+The policy below is unchanged and still right — but note what the corrected fact implies: the
+expensive surface was the one that runs on every page load, so a cheap-looking query in the
+worker is worth more scrutiny than a heavy one run once by us.
 
 The verification half is not optional (R60/R107/R116): local and D1 can disagree, so a claim
 about what users see still comes from D1 or the served file. DECIDE LOCALLY, VERIFY REMOTELY.

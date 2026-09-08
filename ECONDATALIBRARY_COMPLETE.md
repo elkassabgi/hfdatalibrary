@@ -150,7 +150,7 @@ Two facts about ownership and licence that shape everything else:
 
 A third fact, which is an operating rule rather than a licence but defines what the library *is*:
 **every source comes from its own publisher, never from an aggregator.** `E:/research/econfindatalibrary/CLAUDE.md`
-opens with it — *"Do not fetch from DBnomics … Every source must come from ITS OWN PUBLISHER"* — and
+opens with it — *"Do not fetch from the relay aggregator … Every source must come from ITS OWN PUBLISHER"* — and
 gives the reason in measurable terms: 98 of the 101 datasets ever taken from that aggregator had not
 been re-indexed in over 180 days (UNCTAD: 1,581 days), and because the freshness signal was the
 aggregator's own hash, a frozen dataset would report "no change" for ever while the health gate saw a
@@ -223,7 +223,7 @@ source. (Verified by listing `catalog/site/*.html` and differencing against the 
 
 | page | what the visitor does there |
 |---|---|
-| `index.html` | Landing page. Live counters (series / observations / as-of date fetched from `/v1/stats`), six "pillar" tiles, a comparison table against FRED / DBnomics / Bloomberg, an FAQ. |
+| `index.html` | Landing page. Live counters (series / observations / as-of date fetched from `/v1/stats`), six "pillar" tiles, a comparison table against <redacted> / <redacted> / Bloomberg, an FAQ. |
 | `catalog.html` | **Browse all 321 sources.** Filter chips by pillar, dropdowns for topic and region, free-text search over name / id / licence / topic. |
 | `download.html` | **The download workbench.** Search the series catalogue, tick series, download one CSV or a multi-series **ZIP assembled in the browser**. Carries an API-key bar that stores the key in `localStorage` only. |
 | `api.html` | REST reference: base URL, endpoint table, which endpoints need a key, curl and Python quick-start. |
@@ -483,7 +483,7 @@ or the catalogue database.
 | "Every dataset here is served from our store … if we can't host a source, we don't list it" | **HOLDS in design and was enforced by deletion** (20 sources / 178,262 series purged 2026-07-23). **One documented breach** of the mechanism: ledger R490, where seven sources' pages rendered "Redistributable" from `catalog.db` while D1 said otherwise. |
 | "Individual Series" and "Observations" live counters | **STALE, and knowingly so.** They read `/v1/stats`, which reads the R2 object `_aqueduct/stats.json` — still the July census (~79.8 B observations / ~7.73 B series). The measured current figures are 33.9 B / 3.90 B. The census tool's own >20 % publish gate is what stops the update, and releasing the new number is Ahmed's decision. See §1.3.3. |
 | "Python and R clients available" | **DOES NOT HOLD for R** in this repository. See §1.2.10. |
-| Comparison table claiming FRED "~800k" series, DBnomics "1B+", Bloomberg "$25,000+/yr" | These are third parties' own published figures; the page says so in a footnote (*"Series counts are approximate for third parties (their own published figures); ours is measured live on the data store"*). I did not verify the third-party numbers, and they are outside this system. |
+| Comparison table claiming <redacted> "~800k" series, <redacted> "1B+", Bloomberg "$25,000+/yr" | These are third parties' own published figures; the page says so in a footnote (*"Series counts are approximate for third parties (their own published figures); ours is measured live on the data store"*). I did not verify the third-party numbers, and they are outside this system. |
 
 ---
 
@@ -515,7 +515,7 @@ Two of these deserve a warning, both recorded in `NUMBERS.md`:
 * **The `source` table's 349 rows exceed the 321 shown**, because gated and scaffolding sources keep
   their descriptive row (so the licence gate can still see them) while holding zero series. I
   reconciled this exactly: **349 = 322 with series + 27 with none**, and **322 = 321 with a landing
-  page + `worldbank_pink`**, which is gated. Nothing is unaccounted for. Details in §1.3.2.
+  page + `<redacted>`**, which is gated. Nothing is unaccounted for. Details in §1.3.2.
 
 The "321 + 1 = 322" arithmetic is literal: exactly one source, **`noaa`**, lives in a second D1
 database. `util.ts:500` reads `export const SHARDED_SOURCES = new Set(["noaa"])`. Its 3,138,159
@@ -569,13 +569,13 @@ count in this system gets.
 The 27 empty rows also explain the source arithmetic completely:
 
 * **349 `source` rows − 27 with no series = 322 sources served.**
-* Of those 322, **321 have a public landing page**. The one that does not is **`worldbank_pink`**,
+* Of those 322, **321 have a public landing page**. The one that does not is **`<redacted>`**,
   which holds 26 catalogue rows but is on the redistribution denylist, so no page is generated and
   `/v1/catalog` excludes it at the SQL layer (see §1.6.4).
-* The 27 empties are, in full: `central_banks`, `cftc`, `edgar_13f`, `fraser_efw`, `fred_releases`,
-  `fsi`, `gii`, `gleif`, `imf_dbnomics`, `insee_sirene`, `pxweb`, `pxweb_bfs`, `sdmx_nso`,
-  `sipri_polity`, `social_progress`, `spi`, `stat_austria`, `wiid`, `worldbank_extra`,
-  `wto_bat_bv_m`, `wto_bat_bv_x`, `wto_hs_0010/0015/0020/0025/0030/0040`. Twenty of them are the
+* The 27 empties are, in full: `<redacted>`, `cftc`, `edgar_13f`, `<redacted>` (x2),
+  `<redacted>`, `gii`, `gleif`, `<redacted>`, `insee_sirene`, `pxweb`, `<redacted>` (x2),
+  `<redacted>` (x5), `worldbank_extra`,
+  `<redacted>` (x2), `<redacted>/0015/0020/0025/0030/0040`. Twenty of them are the
   denylist's live block; the other seven (`cftc`, `edgar_13f`, `gii`, `gleif`, `insee_sirene`,
   `pxweb`, `worldbank_extra`) are ingested-but-uncatalogued stores or scaffolding ids, not gated ones.
 
@@ -607,7 +607,7 @@ The three most recent census runs, read from `E:/research/econfindatalibrary/log
 loss.** On 2026-08-23 the census tool was rescoped from "everything on local disk" to "what a user
 can actually download: objects present on R2 that `api/worker/src/util.ts` will resolve". The
 docstring is explicit: *"Local disk is not the product (statcan has 175 GB here and 0 bytes on R2),
-and presence in the bucket is not the product either (owid is gated and 404s)."* `NUMBERS.md` records
+and presence in the bucket is not the product either (a gated source is gated and 404s)."* `NUMBERS.md` records
 the same conclusion: *"the corpus GREW since July … the scope change, NOT data loss, is why the
 public answer moved."*
 
@@ -931,7 +931,7 @@ Its decision tiers, per database:
 Adversarial verdicts: **CONFIRMED = 184, DISPUTED = 7.** The seven disputes are exactly the cases
 where a one-line licence summary would have been wrong — Bundesbank ("use-only grant", not a
 redistribution grant), FAOSTAT (non-commercial + an embedded third-party carve-out that CC BY 4.0
-does not impose), Our World in Data (mixed: only OWID's *own* processing is CC BY; most of the data
+does not impose), Our World in Data (mixed: only <redacted>'s *own* processing is CC BY; most of the data
 belongs to WHO/UN/World Bank upstreams), Freedom House, IDB, World Bank Open Data (third-party
 indicators may not be redistributed), and World Bank Pink Sheet (LME, Cotlook, SICOM, ICCO/ICO prices
 inside it).
@@ -949,7 +949,7 @@ licenses:
   ecb-attrib-nomodify:  {reservable: true,  commercial_ok: true,  attribution: required, no_modify: true}
   bis-attrib-nc:        {reservable: true,  commercial_ok: false, attribution: required}   # NON-COMMERCIAL
   audit-restricted:     {reservable: false, commercial_ok: false, attribution: required}   # gated
-  dbnomics-passthrough: {reservable: per_series, note: "inherit each provider's license at ingest"}
+  <redacted>-passthrough: {reservable: per_series, note: "inherit each provider's license at ingest"}
 ```
 
 In the catalogue database the licence table carries the flags directly:
@@ -1005,35 +1005,20 @@ of modified values, so derived tiers must be labelled *"derived from EIA data"*.
 > minus the granted exceptions below, plus a legacy safety floor so a regeneration never silently
 > un-gates a previously-blocked source.
 
-It holds **49 ids** (counted 2026-08-30): **21 in the live block** plus **28 legacy/phantom** ids kept
-as a safety floor.
+The set's contents and its size were removed from this document on 2026-09-08 by the owner's order.
 
-```
-LIVE BLOCK (21):
-central_banks · fraser_efw · fred_releases · fsi · imf_dbnomics · pxweb_bfs · sdmx_nso
-sipri_polity · social_progress · spi · stat_austria · wiid · worldbank_pink
-wto_bat_bv_m · wto_bat_bv_x · wto_hs_0010 · wto_hs_0015 · wto_hs_0020 · wto_hs_0025
-wto_hs_0030 · wto_hs_0040
-
-LEGACY / PHANTOM FLOOR (28):
-cboe · cow · dbnomics · famafrench · fred · freedomhouse · gus · ibge · ine_spain · irena
-nbp · owid · polity · qog · shiller · sipri · tcmb · unesco_sci · unicef · who_gho
-wto_hs_a_0010 · wto_hs_a_0015 · wto_hs_a_0020 · wto_hs_a_0025 · wto_hs_a_0030 · wto_hs_a_0040
-wto_its_mtv_am · wto_its_mtv_ax
-```
-
-**20 of the 21 live-block ids match exactly** the sources whose licence row is `reservable = 0` in
-the local `catalog.db` (verified by SQL join, 2026-08-30). **The exception is `sdmx_nso`**: it is in
+**All but one of the live-block ids match exactly** the sources whose licence row is `reservable = 0` in
+the local `catalog.db` (verified by SQL join, 2026-08-30). **The exception is `<redacted>`**: it is in
 the live gate block, but its local licence row is `cc-by-3.0` with `reservable = 1`. The practical
-exposure is nil — my PK-range sweep shows `sdmx_nso` holds **zero** catalogued series, so there is
+exposure is nil — my PK-range sweep shows `<redacted>` holds **zero** catalogued series, so there is
 nothing to leak either way. But the two records disagree and I did not establish which is stale. This
 is the multi-place licence drift that ledger entry **R490** documents (see §1.6.7). What would settle
-it: `sdmx_nso`'s verdict in `DATABASE_LICENSES_VERBATIM.md` and its licence row in D1.
+it: `<redacted>`'s verdict in `DATABASE_LICENSES_VERBATIM.md` and its licence row in D1.
 
 **How much data actually sits behind the gate**, measured by the same sweep, checked for all 49 ids:
 
 * **20 of the 21 live-block sources hold zero catalogued series.** The twenty-first,
-  **`worldbank_pink`, holds 26** (see §1.6.6).
+  **`<redacted>`, holds 26** (see §1.6.6).
 * **All 28 legacy/phantom ids are absent from the `source` table entirely** — they are genuinely
   phantoms, exactly as the file claims, not quietly-present rows.
 
@@ -1043,7 +1028,7 @@ catalogue is 26 rows.
 
 The 28 phantoms exist because of a trap the project learned the hard way, recorded in the file and in
 `REDISTRIBUTION_COMPLIANCE.md`: *deleting a source row removes it from the `reservable=0` scan, so it
-drops out of the gate* — `irena`, `freedomhouse` and `shiller` did leak on the first regeneration
+drops out of the gate* — `<redacted>` (x3) did leak on the first regeneration
 after the 2026-07 purge. The phantom entries make un-gating impossible by accident.
 
 **Two granted exceptions are hard-coded** with their conditions:
@@ -1062,14 +1047,14 @@ third-party data:
 export const SERIES_CARVEOUTS = {
   worldbank:      ["FP.CPI.TOTL.ZG", "SL.UEM.TOTL.ZS"],   // IMF-sourced CPI, ILO-sourced unemployment
   worldbank_wdi:  ["FP.CPI.TOTL.ZG", "SL.UEM.TOTL.ZS"],   // same indicators under the other id
-  worldbank_pink: ["aluminum","copper","nickel","zinc","gold","platinum","silver"],
+  <redacted>: ["aluminum","copper","nickel","zinc","gold","platinum","silver"],
 };
 ```
 
 The `worldbank_wdi` line is instructive: the carve-out was originally keyed only on `worldbank`, so
 the identical IMF- and ILO-sourced indicators **were being served** under `worldbank_wdi` until
 2026-07-22, when a live probe found `worldbank_wdi:SL.UEM.TOTL.ZS` returning 401 (i.e. served) while
-the same indicator under `worldbank` returned 451. The `worldbank_pink` metals are gated because LME
+the same indicator under `worldbank` returned 451. The `<redacted>` metals are gated because LME
 (base metals) and LBMA/IBA (precious metals) **refused redistribution in writing** on 2026-07-15.
 
 The gate is applied in `index.ts` **before** authentication, so a gated series returns `451
@@ -1113,8 +1098,8 @@ three times and enforced 2026-07-23:
 > metadata-only pattern that is banned — so the rows are DELETED, not merely 451'd.
 
 **Removed: 20 sources / 178,262 series.** `catalog.db` went 1,395,623 → 1,217,361 series and 309 →
-289 sources; D1 matched exactly. The removed ids: the eight WTO facets, `cow`, `polity`, `sipri`,
-`nbp`, `tcmb`, `cboe`, `famafrench`, `dbnomics`, `irena`, `freedomhouse`, `shiller`, `whr`.
+289 sources; D1 matched exactly. The removed ids: the eight WTO facets, `<redacted>` (x3),
+`<redacted>` (x8), `whr`.
 
 It was made reversible on purpose: all 45,847 R2 `clean_full` objects were verified byte-identical
 locally first (76 files were *larger* locally, so overwriting would have destroyed the newer copy);
@@ -1122,13 +1107,13 @@ full-row fixtures were round-trip verified into `data/_deleted_fixtures/`; and `
 was retained.
 
 **One residual exception to that policy, found while reconciling the source counts.**
-`worldbank_pink` was **not** in the purge list, and it still holds **26 catalogue rows** in
+`<redacted>` was **not** in the purge list, and it still holds **26 catalogue rows** in
 `data/catalog.db` while being gated on the denylist. No user can see them — `catalog.ts` excludes
-denylisted sources at the SQL layer, the site generator produces no `worldbank_pink.html`, and its
+denylisted sources at the SQL layer, the site generator produces no `<redacted>.html`, and its
 data endpoint returns 451 — so this is invisible rather than harmful. But it *is* a gated-but-present
 source, which is the exact pattern the 2026-07-23 policy deleted twenty others for. **NOT
 ESTABLISHED:** whether those 26 rows also exist in D1, or only in the local catalogue. What would
-establish it: a single `SELECT COUNT(*) FROM series WHERE source_id='worldbank_pink'` on
+establish it: a single `SELECT COUNT(*) FROM series WHERE source_id='<redacted>'` on
 `econ-catalog`, or the source's absence from the live `/v1/sources`.
 
 This is why the homepage can say, truthfully: *"Everything in the library is real, downloadable data
@@ -1144,7 +1129,7 @@ data they cannot have.
 **One documented failure of that construction, worth carrying forward.** Ledger entry **R490**
 records that seven sources carried a *different* licence in `catalog.db` than in D1, and the site
 generator (`catalog/gen_site.py`) reads `catalog.db` — the one that said yes. The live API's
-`/v1/sources` reported `reservable=false` for `ei_statreview`, `worldbank_pink`, `istat`, `who_hwf`,
+`/v1/sources` reported `reservable=false` for `ei_statreview`, `<redacted>`, `istat`, `who_hwf`,
 `who_rs` and `fsi_fundforpeace` while their generated pages rendered "Redistributable" with download
 buttons. The gate is only as good as the agreement between the four-or-five places a licence lives.
 
@@ -1157,7 +1142,7 @@ buttons. The gate is only as good as the agreement between the four-or-five plac
 | family | sources | catalogued series | who |
 |---|---|---|---|
 | `unctad_*` | **134** | 792,379 | UN Conference on Trade and Development — one id per statistical dataset: bilateral trade, maritime transport, plastics trade, creative economy, FDI, commodity prices |
-| `imf_*` | **55** | 1,288,137 | International Monetary Fund — IFS, WEO, BOP, GFS, FSI, COFER, the regional economic outlooks, and the monetary/financial statistics families, each as its own id. 54 of the 55 sit under the "IMF Terms of Use (redistribution with attribution)" licence; the 55th, `imf_commodity`, carries `dbnomics-passthrough-imf_commodity` — a licence-passthrough row left from the aggregator era |
+| `imf_*` | **55** | 1,288,137 | International Monetary Fund — IFS, WEO, BOP, GFS, <redacted>, COFER, the regional economic outlooks, and the monetary/financial statistics families, each as its own id. 54 of the 55 sit under the "IMF Terms of Use (redistribution with attribution)" licence; the 55th, `imf_commodity`, carries `<redacted>-passthrough-imf_commodity` — a licence-passthrough row left from the aggregator era |
 | `fao_*` | **25** | 299,536 | FAO domain datasets — production, trade, prices, food balances, emissions, land use. (`faostat` is a separate 26th id, counted among the singletons.) |
 | `unesco_*` | **7** | 264,455 | UNESCO Institute for Statistics — education, culture, film, innovation, SDG-4 |
 | `worldbank*` | **3** | 7,651 total, of which `worldbank_wdi` is 1,486 catalogued series carrying 8,894,931 measured observations | World Bank Open Data, WDI, Sovereign ESG |
@@ -1266,11 +1251,11 @@ From `updater/registry.yaml` (282 entries, parsed 2026-08-30):
 | Current econ-only R2 bucket size | **NOT ESTABLISHED** — the only per-bucket split on record ("601 GB econ + 282 GB hf") is marked SUPERSEDED / wrong instrument | `npx wrangler r2 bucket info econ-data` |
 | econ's own download counts, bytes served, countries, institutions, top sources | **NOT ESTABLISHED** locally — they live in D1 | one unauthenticated `GET /v1/public-stats` |
 | ~~My own local re-count of catalogued series~~ | **ESTABLISHED** — the PK-range sweep completed over all 349 sources and returned **13,486,342**, matching `tools/audit_schedule_coverage.py` exactly | — |
-| Whether `worldbank_pink`'s 26 residual catalogue rows exist in D1 as well as locally | **NOT ESTABLISHED** | `SELECT COUNT(*) FROM series WHERE source_id='worldbank_pink'` on `econ-catalog`, or its absence from live `/v1/sources` |
+| Whether `<redacted>`'s 26 residual catalogue rows exist in D1 as well as locally | **NOT ESTABLISHED** | `SELECT COUNT(*) FROM series WHERE source_id='<redacted>'` on `econ-catalog`, or its absence from live `/v1/sources` |
 | The date behind "21,692 visitors against 603 accounts" | **NOT ESTABLISHED** — ledger entry R219 carries no date | the D1 snapshot that produced it, or the session log for R219 |
 | Independent academic citations of econdatalibrary.com | **NOT ESTABLISHED** — the family's `used-by` page lists hf and ip uses only | a Scholar / OpenAlex search on DOI `10.5281/zenodo.21405120` |
 | Whether the fleet is healthy as opposed to the local mirror | **PARTIALLY ESTABLISHED** — local `state.db` shows 249/249 `ok`, but that is the workstation's view; the fleet's nightly CI gate has failed 40 of 40 runs since 2026-08-13 | `/v1/last-updates` against the deployed worker |
-| Why `sdmx_nso` is gated in the Worker while its local licence row says `reservable = 1` | **NOT ESTABLISHED** — one of the two is stale and I did not determine which | its verdict in `DATABASE_LICENSES_VERBATIM.md` plus its licence row read from D1 |
+| Why `<redacted>` is gated in the Worker while its local licence row says `reservable = 1` | **NOT ESTABLISHED** — one of the two is stale and I did not determine which | its verdict in `DATABASE_LICENSES_VERBATIM.md` plus its licence row read from D1 |
 | Whether the "Ask the Data" assistant Worker is live and keyed | **NOT ESTABLISHED** — the code exists (1,022 lines) and the page posts to it, but publication state and `DEEPSEEK_API_KEY` are cloud state | a `POST /chat` against the live URL, or `npx wrangler secret list` for that Worker |
 | Whether the live `/v1/stats` object has been refreshed since July | **ESTABLISHED as NOT refreshed** by `NUMBERS.md`'s own note, but not re-verified against the live endpoint in this session | `GET /v1/stats` and read its `as_of` |
 
@@ -1644,8 +1629,8 @@ Two things to know about this list:
 * Its header comment says *"The 191 sources with an at-rest resolver"*, which is
   **stale**: the array now holds 323. The array is authoritative; the prose is not.
 
-Two ids appear in **both** `SUPPORTED_SOURCES` and the denylist — `dbnomics` and
-`worldbank_pink` — so a data request for either resolves the allowlist and is then
+Two ids appear in **both** `SUPPORTED_SOURCES` and the denylist — `<redacted>` and
+`<redacted>` — so a data request for either resolves the allowlist and is then
 refused with 451. (Measured by intersecting the two parsed sets.)
 
 For the count of what is genuinely *served*, `NUMBERS.md` (2026-08-30) records **322
@@ -2225,7 +2210,7 @@ The three sets, and why each exists:
   appears in the `reservable = 0` scan, so without a pin it would *silently fall out of
   the gate* on the next regeneration. The comment records that this actually happened
   ("verified: they DID leak on the first regeneration after the purge") for
-  `irena` / `freedomhouse` / `shiller`. Every removal from this floor is annotated with
+  `<redacted>` / `<redacted>` / `<redacted>`. Every removal from this floor is annotated with
   the licence evidence and the owner's explicit decision that authorised it.
 * **`GRANTED_EXCEPTIONS`** — sources with written permission that would otherwise be
   gated by a conservative licence row: `kof_globalization` (KOF director, 2026-07-06,
@@ -2239,10 +2224,10 @@ The three sets, and why each exists:
 Before writing anything, `main()` asserts every entry of `REQUIRED_CARVEOUTS` appears
 in the generated `SERIES_CARVEOUTS` block and **refuses to write the file otherwise**.
 The reason is recorded in the code: a 2026-07-16 regeneration silently wiped the
-`worldbank_pink` carve-outs that a hand-edit had added, because the template only
+`<redacted>` carve-outs that a hand-edit had added, because the template only
 carried the `worldbank` entry. Post-write assertions then check that no granted source
-ended up gated, and that known-restricted ids (`wto_hs_a_0010`, `cboe`, `sipri`,
-`polity`, `famafrench`) definitely are.
+ended up gated, and that known-restricted ids (`<redacted>` (x3),
+`<redacted>` (x2)) definitely are.
 
 #### 7.4 What the current denylist contains
 
@@ -2251,7 +2236,7 @@ Measured by parsing `api/worker/src/denylist.ts`:
 * **49 gated source ids**, split as **21 real** (present in the catalogue) and **28
   legacy/phantom** (not currently catalogued, kept as the safety floor).
 * **3 sources with series-level carve-outs**: `worldbank`, `worldbank_wdi`,
-  `worldbank_pink`.
+  `<redacted>`.
 
 The carve-outs, with the reasoning from the file:
 
@@ -2259,7 +2244,7 @@ The carve-outs, with the reasoning from the file:
 |---|---|---|
 | `worldbank` | `FP.CPI.TOTL.ZG`, `SL.UEM.TOTL.ZS` | CPI is IMF-sourced, unemployment is ILO-sourced; WB terms bar redistributing third-party data. (GDP, `NY.GDP.MKTP.CD`, is WB-compiled and *is* served.) |
 | `worldbank_wdi` | same two | Same indicators reached users through a second id because the carve-out was keyed only on `worldbank`. Confirmed live 2026-07-22: `worldbank_wdi:SL.UEM.TOTL.ZS` returned 401 (i.e. served, pending auth) while `worldbank`'s copy was gated |
-| `worldbank_pink` | `aluminum, copper, nickel, zinc, gold, platinum, silver` | LME (base metals) and LBMA/IBA (precious metals) **refused redistribution in writing** on 2026-07-15. These must never serve even if the source is un-gated later |
+| `<redacted>` | `aluminum, copper, nickel, zinc, gold, platinum, silver` | LME (base metals) and LBMA/IBA (precious metals) **refused redistribution in writing** on 2026-07-15. These must never serve even if the source is un-gated later |
 
 Note the derived export `SERIES_CARVEOUT_LIKE`, which turns the map into SQL prefixes
 `<src>:<ind>:` so the search queries and the handler logic cannot drift apart.
@@ -3359,9 +3344,9 @@ The **10 registry entries no scheduler selects**:
 | `gii` | manual_vintage | annual | (absent) |
 | `insee_sirene` | bulk_snapshot_if_changed | monthly | (absent) |
 | `ksh` | overwrite_if_changed | annual | false |
-| `owid` | bulk_snapshot_if_changed | monthly | false |
+| `<redacted>` | bulk_snapshot_if_changed | monthly | false |
 | `pxweb` | bulk_snapshot_if_changed | irregular | (absent) |
-| `sipri_polity` | overwrite_if_changed | annual | (absent) |
+| `<redacted>` | overwrite_if_changed | annual | (absent) |
 | `worldbank_extra` | extend_by_date | irregular | (absent) |
 | `zillow` | bulk_snapshot_if_changed | monthly | false |
 
@@ -3623,7 +3608,7 @@ Three windows are armed per unit:
 
 | Window | Length | Introduced because |
 |---|---|---|
-| `detect_change` | `_unit_window_min()` | `owid`'s probe (HTTP HEAD over ~3,786 chart URLs) ran 150 and then 212 minutes outside any cap and killed two entire daily runs. *"A probe gets the same ceiling as the fetch: any vintage check that needs longer than the unit timeout is a fetch wearing a probe's name."* |
+| `detect_change` | `_unit_window_min()` | `<redacted>`'s probe (HTTP HEAD over ~3,786 chart URLs) ran 150 and then 212 minutes outside any cap and killed two entire daily runs. *"A probe gets the same ceiling as the fetch: any vintage check that needs longer than the unit timeout is a fetch wearing a probe's name."* |
 | `strat.run` | `_unit_window_min()` | `ssb` ran 2 h 31 m inside one `update()` and took GitHub's 300-minute ceiling with it. |
 | csv phase | `max(1, min(60, remaining + 2))` | `abs`'s post-merge phase ran 115 silent minutes past every soft budget until the 285-min step kill destroyed the state push, the D1 syncs and the digest. |
 
@@ -3649,7 +3634,7 @@ leaves no trace is indistinguishable from a bug."*
 |---|---|---|
 | rollout perimeter | `rollout perimeter: N non-live source(s) not executed (AQUEDUCT_LIVE_ONLY=1)` | `live: false` on a scheduled cloud run |
 | wrong location | `WRONG LOCATION <key> — needs run_location=local, running on cloud` | merge peak exceeds a 16 GB runner |
-| protected | `PROTECTED <key> — in-flight backfill, not attempted this run (FIRSTPASS_DIRS)` | `FIRSTPASS_DIRS = {"cbs_nl", "gus_dbw", "dbnomics"}`, matched on **both** `source_id` and the unit's output directory basename |
+| protected | `PROTECTED <key> — in-flight backfill, not attempted this run (FIRSTPASS_DIRS)` | `FIRSTPASS_DIRS = {"cbs_nl", "gus_dbw", "<redacted>"}`, matched on **both** `source_id` and the unit's output directory basename |
 | budget | `RUN BUDGET N min SPENT — …` | start-gate lookahead |
 | broken adapter | `BROKEN <src> — adapter import failed: …` | module exists but raises on import; recorded `transient_fail`; run-failure if live |
 | no adapter | `PENDING <key> — no adapter built for strategy=…; not attempted` | fetcher module absent |
@@ -4398,7 +4383,7 @@ Directory: `E:/research/econfindatalibrary/.github/workflows/` — **8 files**, 
 | `updater-heavy.yml` | `0 3 * * *`, `0 15 * * *` | `workflow_dispatch` (`source`, `force`) | **300 min** per matrix job | same `aqueduct-updater` group | One dedicated runner per heavy source. `setup` emits the 34-id matrix; `heavy` runs `max-parallel: 1`, `fail-fast: false`. |
 | `sec-edgar-daily.yml` | `0 8 * * *` | `workflow_dispatch` (`days`, `dry_run`) | **60 min** | `sec-edgar-daily` | `tools/refresh_sec_edgar.py --days 4 --apply --d1`, then reads `AAPL` back out of R2 and asserts the grouped parquet and served CSV agree row-for-row. |
 | `billing-guard.yml` | `23 13 * * *` | `workflow_dispatch` | **20 min** | — | `tools/billing_guard.py`: `wrangler d1 insights --timePeriod 1d` across `econ-catalog`, `econ-catalog-climate`, `hfdatalibrary-db`. Over 5B rows/day ⇒ exit 1 (red run + Resend alert); over 2B ⇒ green run + Resend warning. |
-| `preflight.yml` | — | `push` (paths: `updater/registry.yaml`, `updater/config.py`, `updater/strategies/fetchers/**`, `tools/preflight_registry.py`, itself), `pull_request`, `workflow_dispatch` | **5 min** | `preflight-${{ github.ref }}`, cancel-in-progress | `tools/preflight_registry.py` (the `EXPECTED_SOURCE_COUNT` tripwire at push time) + `tools/audit_updater_deps.py` (static scan: a fetcher whose import fails is filed "no adapter built" and skipped forever — this has already cost `edgar_jrc`/openpyxl, `damodaran`+`sipri_polity`/xlrd, `fed_board`/lxml). |
+| `preflight.yml` | — | `push` (paths: `updater/registry.yaml`, `updater/config.py`, `updater/strategies/fetchers/**`, `tools/preflight_registry.py`, itself), `pull_request`, `workflow_dispatch` | **5 min** | `preflight-${{ github.ref }}`, cancel-in-progress | `tools/preflight_registry.py` (the `EXPECTED_SOURCE_COUNT` tripwire at push time) + `tools/audit_updater_deps.py` (static scan: a fetcher whose import fails is filed "no adapter built" and skipped forever — this has already cost `edgar_jrc`/openpyxl, `damodaran`+`<redacted>`/xlrd, `fed_board`/lxml). |
 | `tests.yml` | — | `push` to `main`, `pull_request` | none set | `tests-${{ github.ref }}`, cancel-in-progress | `python -m pytest tests/ -q`, with Node 22 installed because one test runs the Worker's TypeScript under `node --experimental-strip-types` and would otherwise **skip itself into non-existence while the job stayed green**. Deliberately **not** in the `aqueduct-updater` group: that group holds at most one pending run and a newer arrival evicts it, so a push-triggered workflow there would let every push evict a scheduled updater run. |
 | `deploy-site.yml` | — | `workflow_dispatch` **only** (the `push` block is present but commented out) | none set | `deploy-econ-site`, `cancel-in-progress: false` | `wrangler pages deploy catalog/site --project-name=econdatalibrary --branch=main`, then curls `https://econdatalibrary.com/` and `/account` expecting 200 with 6 retries — because a green wrangler step means "Cloudflare accepted the upload", not "the site serves". |
 | `hello.yml` | — | `workflow_dispatch` | **5 min** | — | Trivial smoke workflow required to go green before any real one. |
@@ -4730,7 +4715,7 @@ refuses shrinks below 97%, and reports impossible dates. Every fetcher uses it; 
 
 Three ran. All three returned against me.
 
-**Review 1 — `who_gho`: FAIL.** My store measurements all reproduced to the digit on an independent
+**Review 1 — `<redacted>`: FAIL.** My store measurements all reproduced to the digit on an independent
 engine, and the publisher confirmation widened from one indicator to three. But I had called it *"a
 served source"* affecting *"69,590 served ids"*. It has **zero catalogue rows** and sits on the
 worker's denylist returning a live **451**. I had also written that its correct-key fetcher was
@@ -4780,7 +4765,7 @@ I record these because they are the answer to Ahmed's question about repeat mist
 7. **AR-025 / AR-026 (ecb)** — the expansion mapped the wrong files; **my own probe printed
    `unparsed: 489` and I read past it.** Withdrawn, rebuilt, and the rebuild had its own errors
    (two mistakes that cancelled to a plausible number) before it was correct.
-8. **R515 → retracted** — reported `who_gho` as a served source. It serves nothing.
+8. **R515 → retracted** — reported `<redacted>` as a served source. It serves nothing.
 9. **R518** — told Ahmed **in writing** that `bea` held 11.2 million conflicting values. The true
    figure is **49,856 (0.074%)** — overstated by about **440×**, entirely because my own sweep
    pooled 592 separate per-table files into one namespace. The settling test cost one command and I
@@ -5020,7 +5005,7 @@ minutes."
 | ID | Title | Lesson | The memorable fact |
 |---|---|---|---|
 | R2 | 2:1 split is identical to a 50% crash | A signal with two causes must never auto-apply; require human confirmation | Fixed by routing through `pipeline/manual_split.py` |
-| R4 | Tableau embed hangs the screenshotter | Heavy third-party embeds break the browser-pane instrument; read the DOM instead | SPI Tableau embed |
+| R4 | Tableau embed hangs the screenshotter | Heavy third-party embeds break the browser-pane instrument; read the DOM instead | <redacted> Tableau embed |
 | R18 | Blamed a WAF for a downstream invariant | Reproduce the code's EXACT request sequence before blaming upstream | BLS CPI froze on 1.6M legacy dup rows tripping `merge.py`'s never-shrink guard (`min_ratio=0.97`), not on Akamai |
 | R19 | Hand-assembled a "superset" | A shared list replacing N per-source lists must be machine-verified as a strict superset | assert set-difference == empty |
 | R47 | Grepped `429` and matched a timestamp | Never count a bare numeric substring in a log and call it a status code | Three runs of rate-limit theory built on evidence that never existed |
@@ -5121,9 +5106,9 @@ against something known PRESENT, and a FAILED control VOIDS the run.*
 | R229 | Re-derived an analysis that already existed | Grep the tree for a component before building it; prior sessions leave REASONS, not just artefacts | A module's docstring had already rejected the approach being proposed. `ls updater/strategies/fetchers/_*.py` would have taken two seconds |
 | R233b | Grepped for the user's reported string, got 0, fixed a different bug | Grep the USER'S EXACT STRING across every surface; a string on screen but in no file is BUILT AT RUNTIME | The reported bug stayed live while a different one was fixed |
 | R238b | Told Ahmed a feature did not exist; it had been live a week | Search for the CAPABILITY, not one implementation's name; `git log` the file they named | Searched `visitor-count`, `visitor`, `visitors`, `injectVisitorCounter`, `public-stats` — all five terms came from hf's implementation. The portal uses a hidden `new Image().src` beacon, already holding 68 loads of `/` since 29 July |
-| R259 | "0 live sources use it" was true of the directory searched | Scope a sweep to the PROPERTY, not the module type — every executable surface (`py, ps1, cmd, yml, sh`) | A `RELAUNCH_GUARD.ps1` relaunched the banned DBnomics puller EVERY FIVE MINUTES, and `updater-daily.yml` called an audit tool that hit the banned host on every run |
+| R259 | "0 live sources use it" was true of the directory searched | Scope a sweep to the PROPERTY, not the module type — every executable surface (`py, ps1, cmd, yml, sh`) | A `RELAUNCH_GUARD.ps1` relaunched the banned <redacted> puller EVERY FIVE MINUTES, and `updater-daily.yml` called an audit tool that hit the banned host on every run |
 | R261 | A listing that returns `[]` instead of failing | Ask what distinguishes "nothing is there" from "I could not look"; if nothing does, that is the bug | `bea._tree_frontier` globbed a local dir absent under `backend=r2`: raw 1 file, routed-recursive **591** |
-| R276 | A uniform "not found" reads as a finding | Suspect the accessor before the data; copy the accessor from production code that already reads the structure | Called `r.get('tcmb')` on `registry.load()`'s 3-key dict, so five sources read as "NOT IN REGISTRY". All five were registered |
+| R276 | A uniform "not found" reads as a finding | Suspect the accessor before the data; copy the accessor from production code that already reads the structure | Called `r.get('<redacted>')` on `registry.load()`'s 3-key dict, so five sources read as "NOT IN REGISTRY". All five were registered |
 | R299 | "60/60 sub-units transient-failed" was a parser gap wearing an outage's clothes | Whenever one message covers a self-healing cause and a permanent one, the permanent one hides | Every one of the nine named matrices returned HTTP 200 with a real body and parsed to ZERO rows — daily (`2010M01D01`) and academic-year (`2003-2004`) axes. **5,983,026 rows recovered** |
 
 ---
@@ -5139,9 +5124,9 @@ evidence of work.*
 | R3 | Store-backed econ first passes only run on the workstation | A CI run for these sources no-ops with "source dir missing" | |
 | R14 | A watchdog reported success it never achieved | A monitor must confirm its action took effect (real post-state / HTTP status) | The HF cron watchdog reported "cancelled" it never achieved |
 | R23 | A flagged digest source is last-recorded state, not a fresh failure | Only `live:true` sources ran in the daily econ CI | 2 of 133 |
-| R33 | Compute and verify BEFORE writing | Coupled files are ONE atomic change; prove it with the consumer's own validator, and guard identifiers with exact match | The script pruned the registry to 123 while `config.py` said 133 — a hard assert refuses ALL runs on mismatch, so the entire daily updater was dead. The assert that fired was itself a false positive from `startswith` matching `sipri_polity` |
+| R33 | Compute and verify BEFORE writing | Coupled files are ONE atomic change; prove it with the consumer's own validator, and guard identifiers with exact match | The script pruned the registry to 123 while `config.py` said 133 — a hard assert refuses ALL runs on mismatch, so the entire daily updater was dead. The assert that fired was itself a false positive from `startswith` matching `<redacted>` |
 | R35 | "Configured" is not "running" | The acceptance test is a number from the run's own output, compared to what SHOULD have been processed | Four days of green CI processing **2 sources of 113** in ~85 seconds. Every run printed `=== 2 unit(s) processed ===` |
-| R44 | `tally.structural_unit()` is a whole-source veto | One odd file must be `empty_unit()`, not structural | owid merged 0 of 150 charts because 5 were zero-row; ons_uk 0 of 25 because 2 were; ember 0 of 32 because 11 were |
+| R44 | `tally.structural_unit()` is a whole-source veto | One odd file must be `empty_unit()`, not structural | <redacted> merged 0 of 150 charts because 5 were zero-row; ons_uk 0 of 25 because 2 were; ember 0 of 32 because 11 were |
 | R50 | A green run is not a proof | Require units>0 and rows counted; cadence gates make `--source` runs vacuous — use `--force` | "0 units processed" + exit 0 is a FAILED proof |
 | R51 | Validate a gate against ground truth before scaling it | Check the SOURCE, not just our copy; account for the partial period; round before comparing | |
 | R64 | A test that cannot fail proves nothing | Verify the test detects the bug's PRESENCE; control time with an injected clock, not by patching a shared module | Patching `M.time.sleep` made the fake request's own sleep a no-op — all 5 attempts ran in 0.00s |
@@ -5356,15 +5341,15 @@ permission is legal exposure.*
 | R21 | Un-gating has three parts | Remove from `denylist.ts` (deploy the worker) + set D1 `source.license_id` to a reservable licence + regenerate the site; verify 451 → 401 live | |
 | R24 | Verify the DATA-SERVICE terms verbatim at source | A catalog "NEEDS-REVIEW" means un-reviewed, not restricted | UNdata's terms, not un.org's website terms |
 | R29 | No metadata-only listings, EVER | Host it fully or do not list it; give a source its OWN licence row if a shared one is blocked | Ahmed: "no meta data, if i cant host it dont even mention it" |
-| R32 | Verify a destructive proposal at the grain the action operates on | Deleting SERIES requires series-level duplication evidence, never "we have that provider" | 7 of 21 dbnomics series were UNIQUE; the plan would also have silently un-gated a live source. The same review found a REAL live leak: `SERIES_CARVEOUTS` keyed on `worldbank` only, so `worldbank_wdi:SL.UEM.TOTL.ZS` served 401 |
-| R34 | Gating is not compliance — delete | Refusal, silence > 2 weeks, and never-assessed all mean DELETE; never re-escalate a call the user has answered | Deleted all 15 gated sources (14,469 objects, 0 errors). A narrow sweep had missed `polity` holding **5,672 derived, servable CSVs** |
+| R32 | Verify a destructive proposal at the grain the action operates on | Deleting SERIES requires series-level duplication evidence, never "we have that provider" | 7 of 21 <redacted> series were UNIQUE; the plan would also have silently un-gated a live source. The same review found a REAL live leak: `SERIES_CARVEOUTS` keyed on `worldbank` only, so `worldbank_wdi:SL.UEM.TOTL.ZS` served 401 |
+| R34 | Gating is not compliance — delete | Refusal, silence > 2 weeks, and never-assessed all mean DELETE; never re-escalate a call the user has answered | Deleted all 15 gated sources (14,469 objects, 0 errors). A narrow sweep had missed `<redacted>` holding **5,672 derived, servable CSVs** |
 | R86 | A licence recorded too permissively is worse than none at all | Check licence METADATA against the licence's actual terms; never copy a row between sources | yale_epi carried `commercial_ok=1, attribution_required=0, no_modify=1` for a CC BY-NC-SA source — every term inverted, with an unrelated organisation's URL |
 | R113 | A `reservable=1` flag is not a licence clearance | Require BOTH the flag and an entry in the verbatim audit | Proposed hosting 8 sources (581M obs); five had NO entry — 495M observations would have been published on unverified flags |
 | R117 | The verbatim audit is the authority — not `catalog.db`, not D1, and never a diff between them | A diff finds disagreement, never shared error | Repairing seven FAO sources relabelled **211,924** series as commercially usable; local said cc-by-4.0, the audit says non-commercial |
 | R120 | Text about a restriction contains the words of that restriction | Classify on machine-readable verdicts, never English phrases inside quoted terms | Two checker versions accused sources using text that explicitly REFUTED them. Six fixtures caught what four rounds of eyeballing did not |
 | R128 | A migration you decide not to run must be deleted with the decision | "I chose not to run this" exists only in your head | 85 abandoned statements left in `data/` beside four sibling files that HAD been applied; running it would have relicensed 299,583 series against the audit |
 | R136 | A licence with three conditions is not satisfied by meeting one | Split a quote into its numbered obligations and verify each against the SERVED response | Etalab 2.0 requires source, the date of last update when known, and unaltered meaning. Shipped with `last_updated: null` on all 139 flows — INSEE hands the date over freely at `/melodi/catalog/{FLOW}` |
-| R150 | Check the licence BEFORE a tool that auto-catalogues | A repair tool is a publishing tool | `make_servable` on `owid` would have catalogued **1,048,968 series over 72,514,320 rows** — and owid's verbatim verdict is DISPUTED / NEEDS HUMAN REVIEW |
+| R150 | Check the licence BEFORE a tool that auto-catalogues | A repair tool is a publishing tool | `make_servable` on `<redacted>` would have catalogued **1,048,968 series over 72,514,320 rows** — and <redacted>'s verbatim verdict is DISPUTED / NEEDS HUMAN REVIEW |
 | R194 | Put 1,143,250 series live in breach of a licence condition just verified | "The licence permits X" and "we satisfy the licence's conditions for X" are different claims | Fetch a real body and READ the citation header; never assert a condition met via substring search over a blob containing the source id |
 | R215b | One command from publishing data under a citation never checked | Read where the data ACTUALLY came from — the ingest's URL list and its log | Fourteen unfamiliar country codes in a dry run were the only visible symptom of a wrong provenance chain |
 | R226b | Served a source the owner had explicitly retired | Before serving a dark source, ask WHY it is dark; check the git log for the source id | A retired source leaves fingerprints: a fetcher whose ingest is gone, a frozen store mtime, a sibling with the same publisher and more rows. "May we host this?" and "should this exist?" are different questions |
@@ -5797,7 +5782,7 @@ surface and prove it with a zero-result check* — is the parent rule for this g
 | R306 | Derived a class from the label text and shipped half of it as "the fix" | Define a class by what the code DOES, not by how it reads | Grep on `transient_unit(.*defer` found 11 fetchers; the behavioural definition (what follows `if dl.spent():`) found **21**. Four queued "investigations" were all deferrals |
 | R310(a) | The count-cap half of the deferral class was clean, and I checked instead of assuming | After fixing a class, ask what OTHER mechanism produces the same observable | Three count-cap candidates, all **false positives** of the window. A sweep that finds nothing is still a result |
 | R310(b) | A fix cleared two callers as safe in writing, and one was crashing in production | A grep for a function name finds callers; it does not find CONSUMERS of the value | bcrp's state row: `AttributeError('str' object has no attribute 'isoformat')` stamped **six hours after** the commit declaring it safe |
-| R311(a) | "Verified repo-wide" meant the two directories I happened to search | For a standing ban, search for the HOST STRING across every file type | `connectors/dbnomics/connector.py` was a complete working client for the banned host, listed among **23** names in `jobs/ingest_all.py` |
+| R311(a) | "Verified repo-wide" meant the two directories I happened to search | For a standing ban, search for the HOST STRING across every file type | `connectors/<redacted>/connector.py` was a complete working client for the banned host, listed among **23** names in `jobs/ingest_all.py` |
 | R313 | "Cleared by behaviour" is only as good as the STATE the behaviour was observed in | A self-draining queue and a truncation differ only when the item at the head never completes | **10 of 12** ons_uk slots were held by permanent non-publishers; 297 datasets pending, draining ~2/run → **~143 runs**, 83% of bandwidth re-fetching discards |
 | R320 | The impossible-date class was never confined to PxWeb, and nobody had asked all 141 stores | "Fix every parser of type X" is completeness only with respect to X | **273,980 SERVED rows** dated 2999-12-31 to 9999-12-31 across six sources, one of them SDMX not PxWeb. The tool that found it in **four minutes** had never been run |
 | R322 | "273,980 fabricated rows" was less than half, because the audit tested one direction | A one-sided test on a two-sided failure mode produces a number that LOOKS like a measurement | Real figure ~**637,000** across seven sources. One stat_slovenia key held 5,863 observations dated years **1, 2, 3 … 6152**, and 41,091 rows landed in 1900..2200 where no bound can separate them |
@@ -5849,7 +5834,7 @@ close each came.
 |---|---|---|---|
 | R331 | A missing date grammar does not produce missing data, it produces confident wrong data | A parser returning None does not abstain — it votes for every other column | SCB municipality codes **0114..2584** became the years 114..2026 across 87,358 rows. After the guards landed, the same gap produced **0 rows** instead — silently |
 | R333 | Shipped the parser fix to the backfill path; shipping it to the live path would have duplicated | A parser change that alters AXIS SELECTION is a re-grain, not a bug fix | Old and new keys never collide, so both survive and never-shrink cannot see it. That is exactly how ons_uk reached **20,198,302 rows for 10,099,151 observations** |
-| R364 | The whr derive PUT 1,927 CSVs for a 1,749-row catalogue | A derive for source X must PUT exactly catalogue(X) objects; any excess names the contamination | The dry run printed "2 shards" and "1,927"; I read past both. **178** provenance-tainted OWID-era CSVs landed on R2 |
+| R364 | The whr derive PUT 1,927 CSVs for a 1,749-row catalogue | A derive for source X must PUT exactly catalogue(X) objects; any excess names the contamination | The dry run printed "2 shards" and "1,927"; I read past both. **178** provenance-tainted <redacted>-era CSVs landed on R2 |
 | R383 | Mass-rewrote served data from a scratch mirror without checking it against the store | Prove the copy is not behind the store BY CONTENT before writing from it | ~**250,000** CSVs re-derived across fifteen sources. stat_slovenia: local 2,629 rows to 2024 vs R2's **2,771 to 2025**; hagstofa 1,884,485 vs **2,222,916** |
 | R384 | Saw a difference, named it "stale", and launched a 2.4-million-object rewrite | A byte difference is a SYMPTOM; establish WHICH side is wrong and WHY | The RESOLVER was broken — a legacy wid monolith (1.93M series) beside 412 per-country shards (2.86M) returning both for one id. Several thousand objects were rewritten into the broken shape before a tool someone else wrote **refused** at 242/300 |
 | R386 | A served company lost 18 years of data because the refresher replaced instead of merging | An upstream identifier is not a stable primary key; a shrinking write needs an assertion at the write | Exxon re-registered: `XOM.parquet` went **20,629 rows to 274**. **Seven** CIKs have been re-assigned; six were still armed. My next action would have overwritten the last surviving copy |
@@ -5876,15 +5861,15 @@ catalogue row correspond to one series, or to a table containing many?*
 | R403 | An id-level number presented as recoverable series; value verification refuted the re-key | An id-crosswalk hit is NOT a continuation licence; shared-period VALUES must agree | The approved plan cited "27%→79% recovered". Value-verified, the crosswalk mapped **7 of 7,650** — FAOSTAT had moved to AR5 GWP factors (CH4 21/25 → **28**), so keys reproduce 1:1 while values are rescaled |
 | R497 | AR FAIL: "nothing served changed" for eia sampled the wrong property | Check the SERVING resolver's predicate, not the catalogue's id strings | eia's 268,495 catalogue ids are table-grain served by dot-PREFIX. The proposed green run would have silently frozen **598 served EBA CSVs forever**; the cursor set was cap-saturated at 50,000 besides |
 | R498 | AR-016 FAIL: the dst plan's bulk-derive was wrong-grain, and its own verify gate would have passed it | Assert `COUNT(DISTINCT store keys) == catalogue rows` before any per-key bulk derive | `derive_csv_bulk` emits one object per distinct store key: **916,416** against dst's **2,264** catalogue ids. Its `--verify` resolves an id constructed BY the tool under test, so it byte-matches the wrong grain perfectly |
-| R515 | A source merged distinct WHO series into one id, and the correct key was already in the repo | A duplicate `(key, date)` pair with CONFLICTING values is a key-collision — the key is missing a dimension | `who_gho` keyed `Indicator:Spatial`, dropping WHO's `Dim1..Dim3`: **42.7%** of 162,790 ids conflict, **80.4%** of 8,188,819 rows hidden. Publisher confirmed: `HCF_REL_ELECTRICITY` SEN 2019 returns URB 53.0 / RUR 3.0 / TOTL 45.0 |
+| R515 | A source merged distinct WHO series into one id, and the correct key was already in the repo | A duplicate `(key, date)` pair with CONFLICTING values is a key-collision — the key is missing a dimension | `<redacted>` keyed `Indicator:Spatial`, dropping WHO's `Dim1..Dim3`: **42.7%** of 162,790 ids conflict, **80.4%** of 8,188,819 rows hidden. Publisher confirmed: `HCF_REL_ELECTRICITY` SEN 2019 returns URB 53.0 / RUR 3.0 / TOTL 45.0 |
 
-**R515 carries two retractions, both written before Ahmed acted on it.** (1) `who_gho` is **not
+**R515 carries two retractions, both written before Ahmed acted on it.** (1) `<redacted>` is **not
 served** — zero catalogue rows, no registry entry, gated 451 by the worker's denylist. The harm was
 overstated; the served members are `damodaran` (721 conflicting keys) and two UNCTAD stores
 (**16,835** and **15,402** conflicting keys). (2) The sweep was not exhaustive: it reported "308 of
 308 stores" when the real population is **430** directories and it measured **299 (69.5%)**, because
-the script globbed `<dir>/<dir>.parquet` only and silently excluded every multi-file store — ibge
-(12,125 files), statcan (8,207), eurostat (7,213), cbs_nl (5,511), owid (3,787).
+the script globbed `<dir>/<dir>.parquet` only and silently excluded every multi-file store — A gated source
+(12,125 files), statcan (8,207), eurostat (7,213), cbs_nl (5,511), a gated source (3,787).
 
 ---
 
@@ -5975,7 +5960,7 @@ Anything a stranger can check: a licence string, a public number, an email, a pa
 | R455 | Published a LIVE API key to a public repo, after a secret sweep I called clean | Auditing what a push contains means READING THE FILE LIST, not grepping for a regex | `.uspto_key` — a bare 30-character token, no `=`, no quotes — matched no assignment pattern and sat in a listing I had already printed. Public for ~**3 minutes**, 0 forks, key compromised regardless |
 | R459 | The number on the public site carries a published accuracy claim false in both halves | A published number carries its published METHOD, and both are claims you own the moment you re-publish | `/v1/stats` served 3,190,863,550 with "HyperLogLog estimate, ~1% error; conservative floor". Measured against exact counts: whr **+19.3%**, wid **+15.7%**, usda **−14.0%**. Not ~1%, and not a floor. Exact counting is affordable: **29.4M distinct keys in 99 s** |
 | R471 | Checked that a licence verdict EXISTED, not that the guard could read it | Satisfy THE GUARD, not your own reading of the property | The verdicts were in a dated addendum; the test parses only the `## Per-database index` table. `pytest tests/test_licence_gate_matches_docs.py` takes **1.7 s** and would have caught it |
-| R472 | Verified the SERIES licence and published the SOURCE licence | A source has more than one licence field; assert they agree before publishing | gus_dbw's 194 series all carry `gus-pl-open` (attribution **plus PSI disclosure**); the parent row said `cc-by-4.0`, and the D1 sync published the parent. `gus-pl-open` did not exist in D1 at all |
+| R472 | Verified the SERIES licence and published the SOURCE licence | A source has more than one licence field; assert they agree before publishing | gus_dbw's 194 series all carry `<redacted>-pl-open` (attribution **plus PSI disclosure**); the parent row said `cc-by-4.0`, and the D1 sync published the parent. `<redacted>-pl-open` did not exist in D1 at all |
 | R479 | Told Ahmed his data was NOT being used, contradicting my own verified registry | When a question has a recorded answer in an artifact you built, QUERY THE ARTIFACT | The page carries a full attribution with the DOI and the licence. `data/used_by.json`, which I built the same session, held that exact quote with `verified_utc: 2026-08-24`, and the page I handed him listed it |
 | R482 | Announced a "user-visible" search defect from a shadow-table row count, then disproved it | When a claim is about what a USER sees, measure the user-facing surface first | 24,291,715 FTS rows against 10,348,125 series looked like duplicate results. The live API: **400 returned, 400 distinct**; `q=disposable&source=wid` total **33,390** against a true 33,390 — inflation 1.00x |
 | R486 | RETRACTED a real user-visible defect by testing the one source where it was invisible | A retraction needs at least the evidence of the claim it withdraws; test the WORST ratio | boc is **8.00x** duplicated (102,882 FTS rows / 12,862 ids) and a search page is **84% repeats**. I had the per-source ratios in front of me — wid 4.00x, cepii_gravity 3.04x, boc 8.00x — and picked from the middle. The finding was **REOPENED** |
@@ -6099,8 +6084,8 @@ that stopped it was the guard I was proposing to weaken."*
 | **R504** | The stated cause. Having established only that *403 carries no information about the key*, I wrote "**What it actually was:** an intermittent throttle" into the entry, a commit title and a code comment. Measured afterwards it is **refuted**: 40 calls, 20 at 0.2 s spacing — five times faster — returned **zero** 403s | The primary finding stands (the key worked all along). The mechanism is **NOT ESTABLISHED**; the timing fits key propagation after Ahmed's 13:34 rotation, but that is an inference and is labelled as one. New rule: *"what it actually was" is the most dangerous sentence in any post-mortem* |
 | **R509** | Corrected same day: the "all 8 pairs measured identical" comparison was run against the **grouped** tier, not the store the fetcher reads. In `clean_full/worldbank/worldbank.parquet` the eight are **absent entirely** — 684 series, **zero** with a 2-char geo | The defect is **worse** than the entry first said. One reviewer claim was checked and **NOT adopted**: that the eight had "already frozen", from `end_date` 2024-12-31 — a control (`…:USA`, an ordinary working id) carries the same date, so the gap is indicator-wide |
 | **R513** | The hazard does not exist. The entry's own assertion tested one half of a two-sided predicate; a digit-extended sibling falls **below** the lower bound, so `[s+':', s+';')` is exactly the `s:` prefix set unconditionally. The registry guard added was a **false tripwire** and was removed | The shipped optimisation is correct (5,228x on cso: 0.00 s vs 7.13 s warm, 389 s cold). Added rule: *when the thing under test is an INTERVAL, assert BOTH bounds* |
-| **R515** | Two retractions, both before Ahmed acted. (1) **`who_gho` is not served** — 0 catalogue rows, no registry entry, 451 on the live API. (2) **The sweep was not exhaustive** — reported "308 of 308 stores", real population **430**, measured **299 (69.5%)**, because the script globbed `<dir>/<dir>.parquet` and excluded every multi-file store | The collision is real and publisher-confirmed. The *served* damage is `damodaran` + two UNCTAD stores ≈ **32,958 series** shipping conflicting duplicate rows |
-| **R516** | Corrects R515 further: `_who_gho.py` is not "parked" — it is a shared base module imported by three registered fetchers, two of which ran three days earlier. Also: `who_gho` is deliberately **gated**, and my stated reason for the silence was wrong (health.py builds its world from `registry.load()`, and who_gho has no entry) | One claim R515 flagged as its likeliest overreach turned out **correct** — the derive does not dedupe (`_DEDUP_ON` holds only ecb and bea), proven on real bytes. The entry's own closing note: *"every single one inflated the finding"* |
+| **R515** | Two retractions, both before Ahmed acted. (1) **`<redacted>` is not served** — 0 catalogue rows, no registry entry, 451 on the live API. (2) **The sweep was not exhaustive** — reported "308 of 308 stores", real population **430**, measured **299 (69.5%)**, because the script globbed `<dir>/<dir>.parquet` and excluded every multi-file store | The collision is real and publisher-confirmed. The *served* damage is `damodaran` + two UNCTAD stores ≈ **32,958 series** shipping conflicting duplicate rows |
+| **R516** | Corrects R515 further: `_who_gho.py` is not "parked" — it is a shared base module imported by three registered fetchers, two of which ran three days earlier. Also: `<redacted>` is deliberately **gated**, and my stated reason for the silence was wrong (health.py builds its world from `registry.load()`, and <redacted> has no entry) | One claim R515 flagged as its likeliest overreach turned out **correct** — the derive does not dedupe (`_DEDUP_ON` holds only ecb and bea), proven on real bytes. The entry's own closing note: *"every single one inflated the finding"* |
 | **R518** | Corrects the sweep of R515/R516: bea's "11.2 million conflicting date-points" is **49,856 of 67,458,349 pairs (0.074%)** — overstated **~440x** — because the sweep pooled every file in a directory into one namespace | The single-file findings are unchanged by construction: damodaran stays at exactly **721**, and the two UNCTAD stores hold one parquet each |
 | **R519** | Corrects a premise repeated all session: "the fresh pull's row count equals our DISTINCT count exactly". Re-pulled 1995–2023 with the fetcher's own rules: `fresh_parsed_rows = 648,241`, not 362,203, and an identical multiset to the store | The remedy would have deleted **603,467 rows** — specifically **every Imports row** — and nothing would have 404'd |
 
@@ -6332,7 +6317,7 @@ produce few, whether or not more was broken.
 
 #### 0.3 A glossary of the jargon, first use
 
-* **Source** — one publisher dataset family (e.g. `who_gho`, `eia`, `unctad_biotrademerch`).
+* **Source** — one publisher dataset family (e.g. `<redacted>`, `eia`, `unctad_biotrademerch`).
   349 source rows exist in the local catalogue; 322 are "served" (catalogued *and* listed in the
   worker's resolver).
 * **Series** — one time series, addressed by a `series_id` like `fao_fo:5510.1.1600`.
@@ -6817,7 +6802,7 @@ harm reaches users most directly.
 
 **Examples with numbers.**
 
-* **R515 — `who_gho` drops WHO's `Dim1..Dim3`.** Keyed `IndicatorCode:SpatialDim`, while WHO
+* **R515 — `<redacted>` drops WHO's `Dim1..Dim3`.** Keyed `IndicatorCode:SpatialDim`, while WHO
   dimensions rows by sex, age and residence area. `jobs/ingest_who_gho.py:72` requests only
   `$select=SpatialDim,TimeDim,NumericValue,TimeDimensionValue` and builds `f"{code}:{geo}"` at
   line 98. Measured on the store: **69,590 of 162,790 ids (42.7%)** hold conflicting values,
@@ -7404,8 +7389,8 @@ disk — which converts your assumption into apparent confirmation.
 * The 2026-08-30 duplicate sweep: v1 built candidates as `<dir>/<dir>.parquet` **only**, so every
   multi-file store — i.e. all the largest — fell out silently while the script printed a reassuring
   count. Reported as **"308 of 308 stores scanned"**; actually **299 of 430**, with **122 never
-  attempted**, of which **77 hold parquet** (`ibge` 12,125 files, `statcan` 8,207, `eurostat` 7,213,
-  `cbs_nl` 5,511, `owid` 3,787…). The tell walked past: *"a whole-store sweep should have a
+  attempted**, of which **77 hold parquet** (`<redacted>` 12,125 files, `statcan` 8,207, `eurostat` 7,213,
+  `cbs_nl` 5,511, `<redacted>` 3,787…). The tell walked past: *"a whole-store sweep should have a
   denominator near the catalogue's 322, and 308 is neither 322 nor 430."*
 
 **The cheap test.** Print the **resolved** target, never the flag; and check the denominator against
@@ -7937,7 +7922,7 @@ A source can be perfectly current in the parquet store and still serve stale fil
 
 Measured from each source's latest run record: **73,125 changed series keys across 20 sources map
 to no catalogue id at all**, led by `eia` (50,000 — which is exactly `CURSOR_CAP`, so that figure is
-a cap, not a count), `owid` (12,192) and `sipri_polity` (6,513). For `eia` that means a run banking
+a cap, not a count), `<redacted>` (12,192) and `<redacted>` (6,513). For `eia` that means a run banking
 **+235,050,106 new rows** delivered nothing to a single user.
 
 Separately, **231,782 series sit in the CSV retry queue**, oldest entry 12 days. **183,735 of them
@@ -7999,7 +7984,7 @@ period-start dates against period-end dates and returned NO-OVERLAP on 6,776 of 
 **2. Asserting from an artefact instead of the running system.** A doc said a source was gated; the
 worker had never gated it (R408). A task list said SSO was unverified; the database held 1,006
 users and 845 logins (R432). A summary file said a source was resurrected; the store said zero rows
-(R365). This session: I called `who_gho` "a served source" — it has zero catalogue rows and returns
+(R365). This session: I called `<redacted>` "a served source" — it has zero catalogue rows and returns
 451 (R516).
 
 **3. Claiming deployment from a commit.** Reporting 425,462 series "live" while the worker holding
@@ -8076,7 +8061,7 @@ Programs and reviewers do.
 This is the single most useful fact in this document for auditing me.
 
 In this session I made ten recorded errors. **Every one of them made the finding bigger, or the
-system look worse, than the truth**: `bea` overstated ~440×, `who_gho` reported as serving 69,590
+system look worse, than the truth**: `bea` overstated ~440×, `<redacted>` reported as serving 69,590
 ids when it serves none, "istat has banned us" when nothing was blocked, "the local route is dead"
 when two sources had succeeded inside the very pass I called starved, "these six sources share a
 cause" when four were not work at all.
@@ -8228,7 +8213,7 @@ ran on 2026-08-29. They do real work nightly and are marked `partial` because so
 by budget.
 
 And the set is not random — **it is disproportionately the largest sources**: `eurostat`, `oecd`,
-`abs`, `eia`, `census`, `ilostat`, `noaa`, `owid`, `ssb`, `cso`, `idb`, `insee_melodi`,
+`abs`, `eia`, `census`, `ilostat`, `noaa`, `<redacted>`, `ssb`, `cso`, `idb`, `insee_melodi`,
 `stat_slovenia`, and **all eleven UNCTAD giants**, including both collision sources. The mechanism
 explains the correlation: the more sub-units a source has, the likelier one of them defers, so the
 biggest sources are exactly the ones no freshness measure can see. This is ledger R359's disease in
@@ -8248,7 +8233,7 @@ nobody:
 
 | class | sources | keys | leaders |
 |---|---|---|---|
-| `csv coherence unmet` (changed keys map to nothing) | 5 | **69,029** | eia 50,000; owid 12,192; sipri_polity 6,513; ecb 315; norgesbank 9 |
+| `csv coherence unmet` (changed keys map to nothing) | 5 | **69,029** | eia 50,000; <redacted> 12,192; <redacted> 6,513; ecb 315; norgesbank 9 |
 | `csv coverage note` (no catalog row) | 15 | 4,096 | defillama 2,730; ipea 257; who_sdg 235; rba 225 |
 
 `eia`'s 50,000 is **exactly `CURSOR_CAP`**, so it is a cap, not a count — the true number is larger.
@@ -8284,14 +8269,14 @@ hand-computed answers before use). **416 of 430 stores measured, 5,021,237,117 r
 |---|---|---|---|---|
 | `unctad_tradefoodproccatprocrca` | 312,791 | 79.16% | 1 | **SERVED** (19,087 ids) |
 | `unctad_tradefoodproccatcatrca` | 281,400 | 77.69% | 1 | **SERVED** (17,617 ids) |
-| `who_gho` | 797,557 | 49.80% | 1 | gated — 0 catalogue rows, live 451 |
+| `<redacted>` | 797,557 | 49.80% | 1 | gated — 0 catalogue rows, live 451 |
 | `idb` | 132,238 | 39.83% | 554 | **SERVED** (18,838 ids) |
-| `ibge` | 110,807 | 30.30% | 12,125 | gated — 0 catalogue rows |
+| `<redacted>` | 110,807 | 30.30% | 12,125 | gated — 0 catalogue rows |
 | `damodaran` | 721 | 2.92% | 1 | **SERVED** (24,687 ids) |
-| `cow` | 2,081 | 0.55% | 7 | gated — 0 catalogue rows |
+| `<redacted>` | 2,081 | 0.55% | 7 | gated — 0 catalogue rows |
 | `bea` | 49,856 | 0.074% | 592 | **SERVED** |
 | `defillama` | 10,559 | 0.034% | 113 | **SERVED** |
-| `ine_spain` | 17,375 | 0.014% | 98 | **SERVED** |
+| `<redacted>` | 17,375 | 0.014% | 98 | **SERVED** |
 | `istat` | 16,271 | 0.003% | 2,442 | **SERVED** |
 
 Plus **`eia`**, which the sweep cannot see because it keys on `series_id` — measured separately:
@@ -8306,7 +8291,7 @@ files it holds **6,057,375 conflicting pairs (3.49%)**.
   files, which is normal because bea ids are `bea:<table>:<series>` and each resolves inside its own
   file. Settling test: 400 bea ids derived emit **zero** duplicate dates, against a damodaran
   positive control that emits three rows for one date.
-* **`who_gho` was reported as "a served source" affecting 69,590 served ids. That is withdrawn.**
+* **`<redacted>` was reported as "a served source" affecting 69,590 served ids. That is withdrawn.**
   It has zero catalogue rows and returns HTTP 451.
 * **"308 of 308 stores scanned" is withdrawn.** The real population is 430 and the first sweep
   measured 299.
@@ -8318,13 +8303,13 @@ files it holds **6,057,375 conflicting pairs (3.49%)**.
 absorbed:
 
 * **15 stores fully unmeasurable**, in three kinds — a *different id column* (`bls`, `eia`,
-  `insee_bdm`, `ofr`, `worldbank_esg`, `worldbank_extra`, `fred`); *no value column* (`census`,
+  `insee_bdm`, `ofr`, `worldbank_esg`, `worldbank_extra`, `<redacted>`); *no value column* (`census`,
   `fhfa`, `treasury`); and *genuinely not series-shaped* (`cftc`, the three `edgar_*` trees,
   `gleif`).
 * **7 stores partially measured**, and this qualifies one published figure: `defillama`'s
   **0.0335% was computed on 48 of 113 files**, so it is a lower bound over a subset, not a
   store-wide rate. Every *other* offender was measured on 100% of its files. The clean results
-  for `fred` (1 of 165), `noaa` (417 of 834), `zillow` (206 of 412), `fed_board` (18 of 36),
+  for `<redacted>` (1 of 165), `noaa` (417 of 834), `zillow` (206 of 412), `fed_board` (18 of 36),
   `fdic` (1 of 5) and `cepii_baci` (1 of 3) likewise cover only part of those stores. The
   exactly-half ratios suggest a paired layout where each data file has a differently-shaped
   sidecar.
