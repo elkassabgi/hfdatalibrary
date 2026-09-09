@@ -120,7 +120,7 @@ and do not proceed until `skill-verify` prints ALL PASS.
 
 Non-negotiables enforced by hooks and CI (do not rely on memory — they are mechanical):
 
-- **db.nomics.world is BANNED** (econ CLAUDE.md §0, ledger R251). A PreToolUse hook in
+- **The relay aggregator host named in ledger R251 is BANNED** (econ CLAUDE.md §0, ledger R251). A PreToolUse hook in
   `.claude/settings.json` denies any command reaching the domain; a CI test in the econ repo
   fails any push that reintroduces it.
 - **One source at a time, end-to-end.** Before touching source X: read
