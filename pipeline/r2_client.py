@@ -179,9 +179,18 @@ def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min
 
 
 def upload_csv(client, df, version: str, ticker: str, timeframe: str = "1min") -> int:
-    """Serialize a DataFrame to CSV and upload to R2."""
+    """Serialize a DataFrame to CSV and upload to R2.
+
+    `lineterminator` is PINNED. Without it pandas uses `os.linesep`, so the same DataFrame serialises
+    with LF from the Linux CI runner and CRLF from this Windows desktop - and the served object silently
+    changes line ending depending on which machine last wrote it. That is exactly what happened on
+    2026-09-09: seven desktop repairs rewrote 14 served CSVs to CRLF while every object the daily path
+    wrote the same day stayed LF, adding a byte to ~14.1 M served lines in a region the repairs were not
+    meant to touch. Content-identical and RFC 4180-legal, but a silent, machine-dependent diff in served
+    bytes is exactly what a byte-comparison verifier is supposed to be able to trust.
+    """
     buf = io.StringIO()
-    df.to_csv(buf, index=False)
+    df.to_csv(buf, index=False, lineterminator="\n")
     data = buf.getvalue().encode("utf-8")
     upload_from_buffer(client, csv_key(version, ticker, timeframe), data, content_type="text/csv")
     return len(data)
