@@ -307,7 +307,186 @@ def _snap_ca_ratio(r: float, tol: float = 0.03):
     return best
 
 
-def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
+def _event_phrase(status: str, found, r_obs: float) -> str:
+    """One sentence for the alert, saying what the recorded-event lookup found and nothing more.
+
+    It authorises NOTHING. The decision to rescale is made on price evidence alone, above, exactly
+    where main makes it; this text tells the reader what a second source says so a human can act.
+    A phrase per state, because the states are not interchangeable: "the lookup failed" is not
+    evidence that no split happened, and "skipped" says the question could not honestly be asked.
+
+    IT ALSO OFFERS NO COMMAND OF ITS OWN, and that is a fix, not an omission (review R873 #2). It
+    used to append a second runnable `manual_split` built from the RECORDED ratio while the alert
+    around it already carried one built from the PRICE SNAP. The two are computed differently -
+    +-3 % for the snap, +-20 % for the confirmation - so they can disagree and still both appear in
+    one sentence: reproduced at observed x2.000 with Yahoo recording x0.4, the alert offered
+    `manual_split TESTX 2 ...` and `manual_split TESTX 2.5 ...`, both copy-pasteable, one wrong by
+    25 %, and the WRONG one carried the word MATCHES. One alert, one command.
+
+    AND IT NO LONGER IMPLIES THE RECORDED RATIO IS UNIQUE (R873 #3). At the +-20 % band a single
+    clean observation admits up to THREE distinct ratios from _CA_RATIOS - 1/9 and 1/10 both admit
+    {8, 9, 10} - and 15 of the 17 adjacent pairs overlap. The band is deliberately wide (a 3x
+    leveraged ETF moves ~10 % intraday on its split day), so the honest sentence reports both
+    numbers and says what the band does and does not settle."""
+    if status == "match":
+        return (f"A recorded split event within one business day is CONSISTENT with the move, at "
+                f"x{found:.6g} recorded against x{r_obs:.6g} observed. The check is +-20 %, which is "
+                f"wide enough that one observation can be consistent with more than one round ratio "
+                f"(measured: up to three), so this does NOT pin the ratio and no command is given for "
+                f"it - the one command in this alert is the only one to run, and only after a human "
+                f"decides which ratio is right.")
+    return {
+        "no_match": "No recorded split event on the day matches.",
+        "lookup_failed": "The recorded-event lookup FAILED, so nothing was checked - that is not "
+                         "evidence that no split happened.",
+        "skipped": "The recorded-event lookup was SKIPPED: this symbol was reassigned to another "
+                   "issuer (symbol_map.REASSIGNED), so a lookup keyed on it answers for the wrong "
+                   "company - R732's mechanism.",
+    }[status]
+
+
+def _confirm_split_event(ticker: str, day, r_obs: float, r_open: float | None = None):
+    """SECOND SIGNAL for a split-sized move the price-only tests could not accept.
+
+    IT NEVER AUTHORISES AN APPLY. Both callers alert exactly where main alerts and use the answer
+    as alert TEXT only (review R862). An earlier version of this branch let a match permit the
+    rescale main refuses - unattended, on the 06:00Z cron, with no snapshot and no rollback, keyed
+    on a lookup that answers for whoever holds the symbol today. That is R732 with a scheduler.
+
+    Measured 2026-09-05: 23 real splits between 2026-04-06 and 2026-08-14 (BKNG 25:1, KLAC 10:1,
+    BYND 1:30, MNST 2:1, eleven leveraged-ETF reverse splits ...) were alerted and never applied —
+    thin and sub-$1 names miss the 3 % snap or the open/late consistency test on tick noise alone,
+    and 2:1 sits under the floor by design. Every one of them had a RECORDED split event on the
+    date, and the recorded ratio is exact where the observed one is noisy (BYND observed x31.86,
+    recorded 1:30).
+
+    Returns (status, ratio): ("match", recorded price ratio new/old — 20:1 forward -> 0.05, 1:30
+    reverse -> 30.0) when a split-shaped recorded event within +-1 business day of `day` matches
+    `r_obs` (or the open-period ratio `r_open`) within 20 %; ("no_match", None) when the lookup
+    worked and nothing matched; ("lookup_failed", None) when the lookup itself failed OR the symbol
+    did not resolve; ("skipped", None) for a symbol in symbol_map.REASSIGNED, where the question
+    cannot honestly be asked. 20 %, not
+    10 %: a 3x leveraged ETF moves ~10 % intraday on its split day (SOXS 2026-07-15 observed x11.05
+    for a recorded 1:10), and with a recorded event on the day the check only has to separate 2:1
+    from 3:1 or 10 from 25, which are 50-150 % apart. The dependency is optional and this runs on
+    the ALERT path only (a handful of calls a month); a failure leaves the alert standing and says
+    the lookup failed rather than claiming nothing matched.
+    """
+    if ticker in symbol_map.REASSIGNED:
+        # NEVER LOOK UP A REASSIGNED SYMBOL (review R862 #1). Yahoo attributes a split to whoever
+        # holds the symbol NOW, and R732 is the ledger entry recording that exact lookup applying
+        # iPower's 1:8 and 1:9 and SKK Holdings' 1:10 to two ETF histories that died in 2017 and
+        # 2015. Measured 2026-09-07: `yf.Ticker("STI").splits` still offers Solidion's 1:50 (0.02)
+        # against our SunTrust series, and "GOLD" offers 2.0 against our Barrick series.
+        return "skipped", None
+    try:
+        import yfinance as yf
+    except Exception:
+        return "lookup_failed", None
+    try:
+        y = ticker.replace(".", "-")
+        s = yf.Ticker(y).splits
+        if s is None or len(s) == 0:
+            # AN EMPTY SERIES IS NOT "NO SPLITS" (review R862 #2). yfinance swallows a 404 and
+            # returns an empty Series, so an unresolved dataset spelling - `PRN-`, measured 404ing
+            # on 2026-09-07 - made this print "no recorded split event matches" about a
+            # ticker that was never looked up, and a rate-limited runner printed that sentence for
+            # every alert of the night. A symbol that resolves has SOME price history; one that
+            # does not, does not. That distinction is the whole point of the tri-state.
+            try:
+                h = yf.Ticker(y).history(period="5d")
+            except Exception as e:
+                print(f"[split_detect] {ticker}: no recorded splits and the history probe failed "
+                      f"({str(e)[:60]}) - reporting the lookup as FAILED, not as no-match", flush=True)
+                return "lookup_failed", None
+            if h is None or len(h) == 0:
+                print(f"[split_detect] {ticker}: symbol {y!r} resolves to nothing at all (no splits, "
+                      f"no history) - the lookup FAILED, it did not answer no-match", flush=True)
+                return "lookup_failed", None
+            return "no_match", None
+        idx = pd.to_datetime(s.index).tz_localize(None).normalize()
+        day = pd.Timestamp(day).normalize()
+        # +-1 business day, not +-5 calendar days: the detector fires on the split session itself and
+        # recorded dates for listed equities are exact to the day; a wider window would let a genuine
+        # -50 % day three sessions after an already-applied 2:1 be re-applied (reviewer's replay).
+        bday = pd.tseries.offsets.BDay(1)
+        lo, hi = day - bday, day + bday
+        for ev, shares in zip(idx, s.values):
+            shares = float(shares)
+            if not (lo <= ev <= hi and shares > 0):
+                continue
+            if not _split_shaped(shares):
+                # Yahoo records spin-off / stock-dividend ADJUSTMENT FACTORS as "splits" (DD 2.39 Qnity,
+                # RTX 1.589, EBAY 2.376, T 1.324, BDX 1.272). Those are not splits: no share count changes,
+                # and the backfill convention is round ratios only. Never apply them from here.
+                print(f"[split_detect] recorded factor {shares:g} on {ev.date()} for {ticker} is an adjustment factor, not a split - ignored", flush=True)
+                continue
+            price_ratio = 1.0 / shares
+            for obs in (r_obs, r_open):
+                if obs and abs(obs / price_ratio - 1.0) <= 0.20:
+                    return "match", price_ratio
+        return "no_match", None
+    except Exception as e:
+        print(f"[split_detect] recorded-event lookup failed for {ticker}: {str(e)[:80]}", flush=True)
+        return "lookup_failed", None
+
+
+# 3:2 and 5:2 — the fractional ratios that occur as real splits in the served universe (ODFL, PCAR, RJF,
+# ROL, WRB ... are 3:2) AND whose price move leaves the detector's no-fire band (1/1.4 .. 1.4). 5:4 and
+# 4:3 are excluded on purpose: their moves (0.8, 0.75) never fire the detector, so they could only ever
+# confirm a spin-off factor by accident (GE 2024-04-02 GEV 1.253; AA 2016 1.2484; HPE 2017 1.3348).
+# 7:2 is excluded because no genuine 7:2 exists in the universe since 2015 and MTCH's 2020 reorganisation
+# factor 3.502 would match it (reviewer's universe scan, 2026-09-05).
+_FRACTIONAL_SPLITS = (1.5, 2.5)
+
+
+def _split_shaped(shares: float) -> bool:
+    """A recorded factor is a SPLIT only if it is an integer n:1 or 1:n (n >= 2, within 0.5 %) or one of
+    the few fractional ratios that occur as real splits (within 0.3 %), in either direction. Recorded
+    spin-off / stock-dividend factors are not: DD 2.39, RTX 1.589, EBAY 2.376 (19/8 - a permissive
+    p/q grid admitted it), T 1.324, BDX 1.272, GSK 1.226, HON 0.9535, SCCO 1.005-1.012."""
+    if not shares or shares <= 0:
+        return False
+    for v in (shares, 1.0 / shares):
+        n = round(v)
+        if n >= 2 and abs(v / n - 1.0) <= 0.005:
+            return True
+        if any(abs(v / f - 1.0) <= 0.003 for f in _FRACTIONAL_SPLITS):
+            return True
+    return False
+
+
+# The durable queue's path, as a module constant so a test can point it somewhere else - it had no
+# test at all (review R873 #6: all 5 statements of _record_ca_event and all 4 of its call sites
+# never executed, because every test passed dry_run=True, the flag that suppresses them).
+CA_ALERTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "ca_alerts.jsonl")
+
+
+def _record_ca_event(kind: str, ticker: str, day, msg: str) -> None:
+    """Persist every corporate-action alert/application to data/ca_alerts.jsonl (committed by the
+    daily workflow next to data/metadata.json). The daily email already carries them; this is the
+    durable queue, so an alert that was not actioned is still there next week.
+
+    THIS FILE IS PUBLIC. `pages deploy .` publishes the whole checkout - probed 2026-09-07,
+    `https://hfdatalibrary.com/pipeline/daily_update.py` returns 200 - so committing this ledger
+    puts an unreviewed data-quality feed at `/data/ca_alerts.jsonl`, which returns 404 today. The
+    status page already links it, so that is the intent; it is recorded here because the PR that
+    added it did not say so anywhere (review R873 #7) and whether to publish is not mine to decide.
+
+    "Every" is now true. The `gap_days > MAX_OVERNIGHT_GAP_DAYS` branch used to alert without
+    recording - and that is the branch that fires on the REASSIGNED population, the one whose
+    alerts most need to survive the night."""
+    try:
+        path = CA_ALERTS_PATH
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"kind": kind, "ticker": ticker, "day": str(pd.Timestamp(day).date()),
+                                "msg": msg,
+                                "logged": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}) + "\n")
+    except Exception as e:                       # never let the ledger break the append
+        print(f"[split_detect] could not record CA event: {e}", flush=True)
+
+
+def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict, dry_run: bool = False):
     """Overnight corporate-action handling for the daily append (ports the
     2022-2026 backfill's convention forward; see
     hist_backfill_merge._adjust_to_established).
@@ -347,6 +526,12 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
                              f"{first_new_day.date()} ({gap_days} days later) - an overnight ratio is meaningless "
                              f"across that gap; split detection NOT applied, review the symbol")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        # ...AND RECORD IT (review R873 #6). This branch alerted without ever reaching the durable
+        # queue, while _record_ca_event's docstring claimed it persisted "every" alert. It is the
+        # branch that fires on a reassigned symbol, a resumed listing or an outage - exactly the
+        # alerts that must still be there next week if nobody reads the email tonight.
+        if not dry_run:
+            _record_ca_event("ALERT", ticker, first_new_day, stats["ca_alert"])
         return existing_raw, False
     prev_close = float(
         existing_raw.loc[existing_raw["datetime"].dt.normalize() == prev_last_day, "Close"].median())
@@ -363,14 +548,28 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
     snapped = _snap_ca_ratio(r)
     s_open = _snap_ca_ratio(r_open)
     s_late = _snap_ca_ratio(r_late)
+    today = nb["datetime"].dt.normalize().iloc[0]
+    ca_day = nb["datetime"].dt.normalize().min().date()
+    # THE RECORDED EVENT NEVER PERMITS AN APPLY (review of this PR, ledger R862). An earlier version
+    # of this branch let a matching recorded event authorise the rescale that main refuses, in BOTH
+    # branches below. The lookup is keyed on the SYMBOL and Yahoo attributes a split to whoever holds
+    # that symbol NOW - which is R732's mechanism (iPower's 1:8 and 1:9 and SKK Holdings' 1:10 landed
+    # on two ETF histories that died in 2017 and 2015), running unattended on the 06:00Z cron with no
+    # snapshot and no rollback. Everything below ALERTS exactly where main alerts; the recorded event
+    # only tells the reader what the lookup found, and a human applies it with manual_split.
     if snapped is None or s_open != snapped or s_late != snapped:
+        status, found = _confirm_split_event(ticker, today, r, r_open)
         stats["ca_alert"] = (f"{ticker}: overnight x{r:.3f} vs {prev_last_day.date()} "
                              f"(open x{r_open:.3f}, late x{r_late:.3f}) is split-sized but "
-                             "inconsistent/non-round — NOT applied, review")
+                             f"inconsistent/non-round — NOT applied, review. "
+                             f"{_event_phrase(status, found, r)}")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        if not dry_run:
+            _record_ca_event("ALERT", ticker, today, stats["ca_alert"])
         return existing_raw, False
     R_eff = (1 / snapped) if snapped < 1 else snapped
     if R_eff < 3:
+        status, found = _confirm_split_event(ticker, today, r, r_open)
         stats["ca_alert"] = (
             f"{ticker}: consistent {R_eff:.0f}:1 candidate split (x{r:.3f} overnight, "
             f"stable all day) — BELOW the 3:1 auto-apply floor (2:1 is crash-ambiguous). "
@@ -380,9 +579,13 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
             # was applied), so those bars would be rescaled a second time. The date is the first
             # session already on the new basis, i.e. the bars being appended right now.
             f"If confirmed a real split, run: python -m pipeline.manual_split {ticker} "
-            f"{snapped:.6g} {nb['datetime'].dt.normalize().min().date()}")
+            f"{snapped:.6g} {ca_day}. {_event_phrase(status, found, r)}")
         print(f"[split_detect] !! {stats['ca_alert']}", flush=True)
+        if not dry_run:
+            _record_ca_event("ALERT", ticker, today, stats["ca_alert"])
         return existing_raw, False
+    # Reached only at R_eff >= 3 with a round ratio stable all day - main's condition, unchanged by
+    # this PR. Nothing a recorded event said can get here.
     rescaled = existing_raw.copy()
     for c in ("Open", "High", "Low", "Close"):
         rescaled[c] = (rescaled[c] * snapped).round(6)
@@ -393,8 +596,12 @@ def _detect_and_apply_split(existing_raw, new_bars, ticker: str, stats: dict):
     vol_r[(rescaled["Volume"] > 0) & (vol_r == 0)] = 1
     rescaled["Volume"] = vol_r.astype("int64")
     kind = "forward split" if snapped < 1 else "reverse split"
-    stats["ca_applied"] = f"{ticker}: {R_eff:.0f}:1 {kind} — history rescaled x{snapped:.6g}"
+    how = "round ratio, stable all day, at or above 3:1 - price evidence only, no recorded event is consulted for an apply"
+    stats["ca_applied"] = f"{ticker}: {R_eff:.6g}:1 {kind} — history rescaled x{snapped:.6g} ({how})"
+    stats["ca_day"] = str(today.date())
     print(f"[split_detect] {stats['ca_applied']}", flush=True)
+    # the APPLIED ledger line is written by the caller AFTER the rescaled history is uploaded (a line
+    # that says "applied" before the upload succeeded would be a claim, not a record)
     return rescaled, True
 
 
@@ -435,7 +642,11 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
         if existing_raw["datetime"].dt.tz is not None:
             existing_raw["datetime"] = existing_raw["datetime"].dt.tz_localize(None)
         # 1b. overnight corporate action? rescale the served history to today's basis
-        existing_raw, ca_rescaled = _detect_and_apply_split(existing_raw, new_bars, ticker, stats)
+        existing_raw, ca_rescaled = _detect_and_apply_split(existing_raw, new_bars, ticker, stats, dry_run=dry_run)
+        if ca_rescaled and not dry_run:
+            # APPLYING before any upload: if the upload pool raises, R2 may be partially rescaled and the
+            # only other trace would be "TICKER FAILED" - this line names the ticker, day and ratio first
+            _record_ca_event("APPLYING", ticker, stats.get("ca_day", ""), stats["ca_applied"])
         merged_raw = pd.concat([existing_raw, new_bars], ignore_index=True)
     else:
         merged_raw = new_bars
@@ -514,6 +725,9 @@ def merge_ticker(client, ticker: str, new_bars: pd.DataFrame, dry_run: bool = Fa
     with ThreadPoolExecutor(max_workers=N_IO_THREADS) as upload_pool:
         upload_futures = upload_pool.map(_do_upload, upload_tasks)
         stats["uploaded_bytes"] += sum(upload_futures)
+    # every object for this ticker is uploaded: NOW the corporate-action ledger may say "applied"
+    if stats.get("ca_applied") and not dry_run:
+        _record_ca_event("APPLIED", ticker, stats.get("ca_day", ""), stats["ca_applied"])
 
     # 6. Academic variables (best-effort, fully isolated). OHLCV is already on R2
     #    by the line above; a failure here only logs and continues, so it can NEVER
@@ -891,9 +1105,14 @@ def main():
         for cd, kind, msg in ca_all:
             color = "#b45309" if kind == "ALERT" else "#166534"
             body += f"<li><strong style='color:{color}'>{kind}</strong> [{cd}] {msg}</li>"
-        body += ("</ul><p>APPLIED = history rescaled automatically (round ratio ≥3:1, "
-                 "stable all day). ALERT = needs review; a confirmed split below the "
-                 "auto floor is applied with <code>pipeline/manual_split.py</code>.</p>")
+        body += ("</ul><p>APPLIED = history rescaled automatically, on PRICE EVIDENCE ONLY: a round "
+                 "ratio ≥3:1 that is stable all day. A recorded split event never authorises an apply "
+                 "— it is keyed on the symbol, and a symbol can have changed companies. ALERT = "
+                 "everything else, and it says what the recorded-event lookup found: matched (with the "
+                 "ratio), no match, FAILED (nothing was checked — not the same as no match), or skipped "
+                 "because the symbol was reassigned to another issuer. A human applies a confirmed "
+                 "split with <code>pipeline/manual_split.py</code>, dated. "
+                 "Every event is also appended to <code>data/ca_alerts.jsonl</code>.</p>")
     if nodata:
         body += "<p>Days with no pcap published stay in the retry ledger and are re-attempted nightly.</p>"
     if deferred:

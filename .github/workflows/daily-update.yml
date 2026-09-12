@@ -63,6 +63,10 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r pipeline/requirements.txt
+      - name: Optional second signal for the split detector (never fatal)
+        # yfinance is imported inside _confirm_split_event under try/except; if this step fails the
+        # detector alerts exactly as before ("lookup FAILED (not checked)"), it never blocks the run.
+        run: pip install "yfinance>=0.2.60,<2" || echo "yfinance unavailable; split alerts fall back to review"
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -112,6 +116,9 @@ jobs:
           git config user.name "HF Data Library Bot"
           git config user.email "admin@hfdatalibrary.com"
           git add data/metadata.json
+          # corporate-action ledger (alerts + applied rescales), written by the split detector;
+          # the daily email carries the same events, this is the durable queue
+          if [ -f data/ca_alerts.jsonl ]; then git add data/ca_alerts.jsonl; fi
           if git diff --cached --quiet; then
             echo "No metadata changes to commit"
             echo "committed=false" >> "$GITHUB_OUTPUT"
