@@ -164,6 +164,17 @@ def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min
     import pyarrow as pa
     import pyarrow.parquet as pq
     table = pa.Table.from_pandas(df, preserve_index=False)
+    # String columns are PINNED to large_string, for the same reason upload_csv pins its line terminator:
+    # otherwise the served schema depends on which machine wrote the object. CI's pandas 3 / pyarrow 25
+    # produce large_string; this desktop's pandas 2.3 / pyarrow 23 produce string from object columns.
+    # On 2026-09-14 the GOLD session recovery, written from the desktop, flipped all 20 GOLD parquet
+    # objects from large_string to string (review AR-077, ledger R938). Readers coped, but a strict
+    # pa.concat_tables refuses mixed pairs, and a served schema should not encode the writer's laptop.
+    if any(pa.types.is_string(f.type) for f in table.schema):
+        pinned = pa.schema([pa.field(f.name, pa.large_string(), f.nullable, f.metadata)
+                            if pa.types.is_string(f.type) else f for f in table.schema],
+                           metadata=table.schema.metadata)
+        table = table.cast(pinned)
     meta = dict(table.schema.metadata or {})
     meta[b"citation"] = (b"Elkassabgi, A. (2026). HF Data Library: Free 1-Minute "
                         b"Intraday U.S. Equity Data. Zenodo. https://doi.org/10.5281/zenodo.19501605")
