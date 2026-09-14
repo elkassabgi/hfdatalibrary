@@ -59,10 +59,12 @@ def test_pin_changes_nothing_else(monkeypatch):
 
 
 def test_the_pin_is_what_makes_the_difference_here(monkeypatch):
-    """Planted control: on a pandas 2 machine an object column converts to `string`, so the served
-    `large_string` above can only come from the pin (a pa.Table method cannot be monkeypatched, and the
-    reverted-code run is the other half of this proof). On a pandas 3 machine from_pandas already yields
-    large_string, so the control cannot fail there and is skipped rather than passing vacuously."""
+    """Planted control: an `object`-typed column converts to Arrow `string` - on pandas 2, and on pandas 3 too
+    when the column is explicitly object dtype, as this fixture's is (review AR-079 checked it) - so the served
+    `large_string` above can only come from the pin. A pa.Table method cannot be monkeypatched; a run with the
+    pin reverted, where all four tests here fail, is the other half of this proof. If some future pandas or
+    pyarrow already yields large_string for an object column, the control cannot fail and is skipped rather
+    than passing vacuously."""
     df = _bars("object")
     unpinned = pa.Table.from_pandas(df, preserve_index=False).schema.field("source").type
     if not pa.types.is_string(unpinned):

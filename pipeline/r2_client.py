@@ -169,7 +169,8 @@ def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min
     # produce large_string; this desktop's pandas 2.3 / pyarrow 23 produce string from object columns.
     # On 2026-09-14 the GOLD session recovery, written from the desktop, flipped all 20 GOLD parquet
     # objects from large_string to string (review AR-077, ledger R938). Readers coped, but a strict
-    # pa.concat_tables refuses mixed pairs, and a served schema should not encode the writer's laptop.
+    # pa.concat_tables refuses mixed pairs. This pins the ARROW types only: the file's pandas metadata still
+    # records the writer's pandas version, and objects written before this pin keep `string` until rewritten.
     if any(pa.types.is_string(f.type) for f in table.schema):
         pinned = pa.schema([pa.field(f.name, pa.large_string(), f.nullable, f.metadata)
                             if pa.types.is_string(f.type) else f for f in table.schema],
