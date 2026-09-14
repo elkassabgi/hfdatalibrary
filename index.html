@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)</title>
-  <meta name="description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.5+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. Free TAQ/CRSP alternative.">
+  <meta name="description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.6+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. Free TAQ/CRSP alternative.">
   <meta name="author" content="Ahmed Elkassabgi">
   <link rel="canonical" href="https://hfdatalibrary.com/">
 
   <!-- Open Graph -->
   <meta property="og:title" content="HF Data Library: High-Frequency U.S. Equity Data (1-Minute OHLCV)">
-  <meta property="og:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.5+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
+  <meta property="og:description" content="Free 1-minute intraday OHLCV data for 1,391 US stocks &amp; ETFs, 2002-present (1.6+ billion bars, updated daily). Raw &amp; Clean versions, 25 academic variables. A free TAQ/CRSP alternative.">
   <meta property="og:url" content="https://hfdatalibrary.com/">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://hfdatalibrary.com/assets/og-image.png">
@@ -267,7 +267,7 @@
         <span class="stat-label">Tickers</span>
       </div>
       <div class="stat-item" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:1.25rem 1rem; box-shadow:0 4px 20px rgba(0,0,0,0.3); margin-top:-1.3125rem;">
-        <span class="stat-number" id="bars-counter" data-meta="bars-counter">1,551,364,273</span>
+        <span class="stat-number" id="bars-counter" data-meta="bars-counter">1,655,086,226</span>
         <span class="stat-label">1-Minute Bars</span>
       </div>
       <div class="stat-item">
@@ -324,13 +324,13 @@ print(df.head())
       <div class="card version-card raw">
         <span class="version-tag raw">Raw</span>
         <h3>Version 1: Raw</h3>
-        <p>Data as received from the source. No outlier removal, no gap-filling. Prices are split/dividend adjusted. <span data-meta="bars-raw-short">1.5+B</span> bars.</p>
+        <p>Data as received from the source. No outlier removal, no gap-filling. Prices are split/dividend adjusted. <span data-meta="bars-raw-short">1.6+B</span> bars.</p>
         <p><strong>Best for:</strong> Market microstructure research, missingness analysis, studying the data itself.</p>
       </div>
       <div class="card version-card clean">
         <span class="version-tag clean">Clean</span>
         <h3>Version 2: Clean</h3>
-        <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. <span data-meta="bars-clean-short">1.5+B</span> bars.</p>
+        <p>Nine-step cleaning pipeline applied: outside-hours removal, non-positive prices, OHLC violations, duplicate bars, Brownlees-Gallo outlier filter. Gaps preserved. <span data-meta="bars-clean-short">1.6+B</span> bars.</p>
         <p><strong>Best for:</strong> Volatility estimation, spread measurement, jump detection — most empirical finance.</p>
       </div>
     </div>
