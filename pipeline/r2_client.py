@@ -164,6 +164,18 @@ def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min
     import pyarrow as pa
     import pyarrow.parquet as pq
     table = pa.Table.from_pandas(df, preserve_index=False)
+    # String columns are PINNED to large_string, for the same reason upload_csv pins its line terminator:
+    # otherwise the served schema depends on which machine wrote the object. CI's pandas 3 / pyarrow 25
+    # produce large_string; this desktop's pandas 2.3 / pyarrow 23 produce string from object columns.
+    # On 2026-09-14 the GOLD session recovery, written from the desktop, flipped all 20 GOLD parquet
+    # objects from large_string to string (review AR-077, ledger R938). Readers coped, but a strict
+    # pa.concat_tables refuses mixed pairs. This pins the ARROW types only: the file's pandas metadata still
+    # records the writer's pandas version, and objects written before this pin keep `string` until rewritten.
+    if any(pa.types.is_string(f.type) for f in table.schema):
+        pinned = pa.schema([pa.field(f.name, pa.large_string(), f.nullable, f.metadata)
+                            if pa.types.is_string(f.type) else f for f in table.schema],
+                           metadata=table.schema.metadata)
+        table = table.cast(pinned)
     meta = dict(table.schema.metadata or {})
     meta[b"citation"] = (b"Elkassabgi, A. (2026). HF Data Library: Free 1-Minute "
                         b"Intraday U.S. Equity Data. Zenodo. https://doi.org/10.5281/zenodo.19501605")
@@ -179,9 +191,18 @@ def upload_parquet(client, df, version: str, ticker: str, timeframe: str = "1min
 
 
 def upload_csv(client, df, version: str, ticker: str, timeframe: str = "1min") -> int:
-    """Serialize a DataFrame to CSV and upload to R2."""
+    """Serialize a DataFrame to CSV and upload to R2.
+
+    `lineterminator` is PINNED. Without it pandas uses `os.linesep`, so the same DataFrame serialises
+    with LF from the Linux CI runner and CRLF from this Windows desktop - and the served object silently
+    changes line ending depending on which machine last wrote it. That is exactly what happened on
+    2026-09-09: seven desktop repairs rewrote 14 served CSVs to CRLF while every object the daily path
+    wrote the same day stayed LF, adding a byte to ~14.1 M served lines in a region the repairs were not
+    meant to touch. Content-identical and RFC 4180-legal, but a silent, machine-dependent diff in served
+    bytes is exactly what a byte-comparison verifier is supposed to be able to trust.
+    """
     buf = io.StringIO()
-    df.to_csv(buf, index=False)
+    df.to_csv(buf, index=False, lineterminator="\n")
     data = buf.getvalue().encode("utf-8")
     upload_from_buffer(client, csv_key(version, ticker, timeframe), data, content_type="text/csv")
     return len(data)

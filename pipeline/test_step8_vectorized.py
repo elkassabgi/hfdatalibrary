@@ -147,7 +147,12 @@ def step8_vectorized_v3(df):
     return df[keep].reset_index(drop=True)
 
 
-def test_on_ticker(name, df):
+# NOT A PYTEST TEST, despite the file name: this is a comparison script with its own
+# __main__ entry point, and this function takes arguments pytest cannot supply. Under the
+# old `test_` prefix pytest collected it and errored with "fixture 'name' not found", so
+# `pytest pipeline/` exited non-zero on main for as long as this file existed - unseen,
+# because nothing ran it in CI until now.
+def compare_on_ticker(name, df):
     print(f"\n{'='*60}")
     print(f"Testing: {name} ({len(df):,} bars)")
     print(f"{'='*60}")
@@ -228,7 +233,7 @@ def main():
         cols = [c for c in ["datetime", "Open", "High", "Low", "Close", "Volume", "source"] if c in df.columns]
         df = df[cols]
 
-        if not test_on_ticker(ticker, df):
+        if not compare_on_ticker(ticker, df):
             all_passed = False
 
     print(f"\n{'='*60}")
