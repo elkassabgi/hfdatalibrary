@@ -1,0 +1,2 @@
+{"kind": "ALERT", "ticker": "KNOW", "day": "2026-09-21", "msg": "KNOW: served history ends 2026-09-10, new prints start 2026-09-21 (11 days later) - an overnight ratio is meaningless across that gap; split detection NOT applied, review the symbol", "logged": "2026-09-22T12:11:32Z"}
+{"kind": "ALERT", "ticker": "TOK", "day": "2026-09-21", "msg": "TOK: served history ends 2026-09-02, new prints start 2026-09-21 (19 days later) - an overnight ratio is meaningless across that gap; split detection NOT applied, review the symbol", "logged": "2026-09-22T13:10:59Z"}
