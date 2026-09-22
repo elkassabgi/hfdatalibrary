@@ -41,7 +41,7 @@ Free registration required (email, ORCID, or Google). Data is available as direc
 ## What's in the dataset
 
 - **1,391 tickers** of U.S. equities and ETFs
-- **1.53 billion** 1-minute bars (clean version)
+- **1.6+ billion** 1-minute bars (clean version)
 - **December 2002 – present** (with 45 tickers extending to January 1991)
 - **Daily automated updates**
 
