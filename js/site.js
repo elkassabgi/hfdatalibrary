@@ -921,7 +921,13 @@
       .catch(function () { if (timer) clearTimeout(timer); return { key: null, reason: 'error' }; });
     keyPromise = bounded;
     bounded.then(function (res) {
-      if (!(res && res.key) && keyPromise === bounded) { keyPromise = null; lastMissAt = Date.now(); }   // never cache a miss
+      if (!(res && res.key) && keyPromise === bounded) {
+        keyPromise = null;                                              // never cache a miss
+        // Only a DEFINITIVE miss arms the quiet window. Arming it on every miss
+        // (AR-115 defect a) meant the deliberate sign-in's 2.5 s retry could never
+        // fire — including after the transient network error it exists for.
+        if (res && (res.reason === 'expired' || res.reason === 'signed_out')) lastMissAt = Date.now();
+      }
     });
     return bounded;
   }
@@ -1043,7 +1049,8 @@
     // session only (handleRegenerateKey authenticates via getSessionUser), so a
     // family session sent there is told "not logged in". The family account page
     // on accounts.elkassabgidata.com is the one that accepts their session.
-    var familyOnly = !safeGet('hfd_session') && !!safeGet('ekd_rt');
+    // The navbar's verdict when it has one; the marker only before the first paint.
+    var familyOnly = lastMode ? (lastMode === 'ekd') : (!safeGet('hfd_session') && !!safeGet('ekd_rt'));
     var accountHref = familyOnly ? 'https://accounts.elkassabgidata.com/account' : (onSubpage ? 'account' : 'pages/account');
     a.href = reason === 'expired' ? accountHref : location.href;
     a.textContent = reason === 'expired' ? 'Regenerate it on your account page.' : 'Reload the page to try again.';
@@ -1186,7 +1193,12 @@
   // while the navbar, a moment later, read "Sign in" (AR-114 residual b — the same
   // marker-versus-server split R1082 is about). Idempotent and reversible: the
   // original href is kept, so a later verdict can put it back.
+  // The navbar's latest verdict ('ekd' | 'legacy' | null), remembered so that a
+  // remedy box created AFTER the paint can choose its account link from the same
+  // verdict instead of from the marker (AR-115 defect b).
+  var lastMode = null;
   function linksForMode(mode) {
+    lastMode = mode || null;
     var links = document.querySelectorAll('a[data-hfd-account-link], a[href="account"], a[href="pages/account"], a[href="/pages/account"]');
     for (var i = 0; i < links.length; i++) {
       var a = links[i];
