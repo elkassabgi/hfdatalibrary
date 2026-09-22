@@ -43,7 +43,7 @@
   <!-- Stats -->
   <g font-family="JetBrains Mono, monospace" fill="#d4a843">
     <text x="380" y="420" font-size="52" font-weight="700" text-anchor="middle">1,391</text>
-    <text x="600" y="420" font-size="52" font-weight="700" text-anchor="middle">1.55B</text>
+    <text x="600" y="420" font-size="52" font-weight="700" text-anchor="middle">1.5B+</text>
     <text x="820" y="420" font-size="52" font-weight="700" text-anchor="middle">25</text>
   </g>
   <g font-family="Inter, sans-serif" fill="rgba(255,255,255,0.6)" font-size="18" text-anchor="middle">
