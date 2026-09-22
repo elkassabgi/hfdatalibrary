@@ -380,7 +380,16 @@
               // placeholders — fill() runs once at DOMContentLoaded, and without this
               // the navbar would show the new name while every snippet still said
               // YOUR_KEY until a reload (the exact symptom Ahmed reported).
-              if (window.HFDKeys) { try { window.HFDKeys.fill(); } catch (e) {} }
+              //
+              // FORCED, and retried once. The first version called fill() bare, and a
+              // bare call is answered by whatever resolution is already in flight or
+              // cached — a page-load lookup that gave up before this sign-in existed.
+              // force discards that; the delayed second pass covers a token that the
+              // SDK is still adopting when the event fires.
+              if (window.HFDKeys) {
+                try { window.HFDKeys.fill({ force: true }); } catch (e) {}
+                setTimeout(function () { try { window.HFDKeys.fill({ force: true }); } catch (e) {} }, 2500);
+              }
             });
             window.EKD.on('logout', function () { paintUserWidget(); });
           }
@@ -797,51 +806,93 @@
     });
   }
 
-  // Resolve the signed-in user's API key, or null. Never throws, never rejects.
+  // Resolve the signed-in user's API key. Never throws, never rejects, never hangs.
   //
-  // A null is NOT memoised. Caching it was a real defect: the first call can lose
-  // the race with the SDK above, and a cached null would then keep every snippet
-  // on the page reading YOUR_KEY for the rest of its life with no way to retry.
-  // Only a real key is worth remembering.
-  function resolveApiKey() {
-    if (keyPromise) return keyPromise;
+  // Returns { key } on success, or { key: null, reason, detail } — the REASON is
+  // load-bearing: fill() shows it. The first version returned a bare null, and a
+  // bare null has exactly one rendering, the untouched placeholder, which is what
+  // Ahmed saw on 2026-09-22 while signed in through the popup. A page that knows
+  // the user is signed in and cannot show the key must say why.
+  //
+  // opts.force — discard any in-flight or cached resolution and start over. The
+  // login handler passes it: without it, a resolution started at page load (for
+  // instance one parked behind the SDK's cross-tab 'ekd_refresh' Web Lock, or one
+  // that timed out waiting for the SDK) is what every later fill() would be handed,
+  // and the sign-in that just happened would never be consulted.
+  //
+  // A miss is NOT memoised. Only a real key is worth remembering.
+  var RESOLVE_TIMEOUT_MS = 15000;
+
+  function resolveApiKey(opts) {
+    opts = opts || {};
+    if (keyPromise && !opts.force) return keyPromise;
     var pending = (async function () {
+      var hasLegacy = !!safeGet('hfd_session');
+      var hasFamily = !!safeGet('ekd_rt');
       // Nothing to resolve for a visitor with no session marker, and asking anyway
       // would spend a D1 read on every anonymous view of the four snippet pages.
       // These are the same two markers the navbar gates on (paintUserWidget), so a
       // page can never think it is signed in while this thinks otherwise.
-      if (!safeGet('hfd_session') && !safeGet('ekd_rt')) return null;
+      if (!hasLegacy && !hasFamily) return { key: null, reason: 'signed_out' };
+      var lastDetail = '';
       // (1) legacy bearer
-      var legacy = safeGet('hfd_session');
-      if (legacy) {
+      if (hasLegacy) {
         try {
-          var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + legacy } });
-          if (r.ok) { var k = keyFrom(await r.json()); if (k) return k; }
+          var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + safeGet('hfd_session') } });
+          if (r.ok) { var k = keyFrom(await r.json()); if (k) return { key: k }; }
+          else lastDetail = 'session check returned HTTP ' + r.status;
+        } catch (e) { lastDetail = 'network error'; }
+      }
+      // (2) family/EKD session — the worker decides whether to answer. Tried BEFORE
+      // the cookie route: for a family visitor there is never a first-party cookie,
+      // so trying it first was a guaranteed D1 read for a guaranteed 401.
+      if (hasFamily) {
+        try {
+          var ekd = await waitForEkd(8000);
+          if (!ekd) lastDetail = 'sign-in SDK not ready';
+          else if (typeof ekd.getAccessToken !== 'function') lastDetail = 'sign-in SDK has no token API';
+          else {
+            var at = await ekd.getAccessToken();
+            if (!at) lastDetail = 'sign-in expired';
+            else {
+              var r3 = await fetch(API_BASE + '/v1/auth/api-key', { headers: { 'Authorization': 'Bearer ' + at } });
+              var j3 = null; try { j3 = await r3.json(); } catch (e) { j3 = null; }
+              if (r3.ok) { var k3 = keyFrom(j3); if (k3) return { key: k3 }; lastDetail = 'no key in reply'; }
+              else lastDetail = (j3 && typeof j3.error === 'string') ? j3.error : ('HTTP ' + r3.status);
+              // A 404 from that route is the worker refusing to hand back a LAPSED key
+              // — the one case with a specific remedy, so it gets a specific reason.
+              if (r3.status === 404) return { key: null, reason: 'expired', detail: lastDetail };
+            }
+          }
+        } catch (e) { lastDetail = 'network error'; }
+      }
+      // (3) first-party cookie (same-site subdomain; needs credentials) — the
+      // recovery route for a legacy session whose localStorage was cleared while
+      // its 30-day cookie lives. Last, because it costs a D1 read whenever it runs.
+      if (hasLegacy || !hasFamily) {
+        try {
+          var r2 = await fetch(API_BASE + '/v1/auth/me', { credentials: 'include' });
+          if (r2.ok) { var k2 = keyFrom(await r2.json()); if (k2) return { key: k2 }; }
         } catch (e) {}
       }
-      // (2) first-party cookie (same-site subdomain; needs credentials)
-      try {
-        var r2 = await fetch(API_BASE + '/v1/auth/me', { credentials: 'include' });
-        if (r2.ok) { var k2 = keyFrom(await r2.json()); if (k2) return k2; }
-      } catch (e) {}
-      // (3) family/EKD session — the worker decides whether to answer.
-      try {
-        var ekd = await waitForEkd(8000);
-        if (ekd && typeof ekd.getAccessToken === 'function') {
-          var at = await ekd.getAccessToken();
-          if (at) {
-            var r3 = await fetch(API_BASE + '/v1/auth/api-key', { headers: { 'Authorization': 'Bearer ' + at } });
-            if (r3.ok) { var k3 = keyFrom(await r3.json()); if (k3) return k3; }
-          }
-        }
-      } catch (e) {}
-      return null;
+      return { key: null, reason: 'unavailable', detail: lastDetail };
     })();
-    keyPromise = pending;
-    pending.then(function (k) {
-      if (!k && keyPromise === pending) keyPromise = null;   // never cache a miss
+    // Bounded: a resolution that never settles (a refresh parked behind another
+    // tab's lock, a fetch that never returns) must become a shown reason, not a
+    // promise that every later fill() silently waits on forever.
+    var timer = null;
+    var bounded = Promise.race([
+      pending,
+      new Promise(function (resolve) {
+        timer = setTimeout(function () { resolve({ key: null, reason: 'timeout', detail: 'no answer within 15 s' }); }, RESOLVE_TIMEOUT_MS);
+      })
+    ]).then(function (res) { if (timer) clearTimeout(timer); return res; })
+      .catch(function () { if (timer) clearTimeout(timer); return { key: null, reason: 'error' }; });
+    keyPromise = bounded;
+    bounded.then(function (res) {
+      if (!(res && res.key) && keyPromise === bounded) keyPromise = null;   // never cache a miss
     });
-    return pending;
+    return bounded;
   }
 
   // Replace placeholder TEXT inside snippet blocks with a marked span, so pages
@@ -913,14 +964,60 @@
     }
   }
 
-  async function fill() {
+  // A visible state for "signed in, but the key could not be shown". Rendered
+  // once, above the first snippet on the page (pages with a #keybar get it there),
+  // and removed again the moment a fill succeeds. Never shown to a signed-out
+  // visitor — for them the page's own placeholder wording is already the truth.
+  function showKeyProblem(reason, detail) {
+    var msg;
+    if (reason === 'expired') {
+      msg = 'You are signed in, but your API key has expired, so it cannot be filled in below. ';
+    } else if (reason === 'timeout' || reason === 'unavailable' || reason === 'error') {
+      msg = 'You are signed in, but your API key could not be loaded' + (detail ? ' (' + detail + ')' : '') + '. ';
+    } else {
+      return;
+    }
+    var box = document.getElementById('keybar') || document.getElementById('hfd-key-problem');
+    if (!box) {
+      var firstSnippet = document.querySelector('.ekey');
+      var host = firstSnippet ? firstSnippet.closest('pre') : null;
+      if (!host || !host.parentNode) return;
+      box = document.createElement('div');
+      box.id = 'hfd-key-problem';
+      box.style.cssText = 'background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:0.75rem 1rem;margin:0 0 0.75rem;font-size:0.9rem;color:#78350f;line-height:1.5;';
+      host.parentNode.insertBefore(box, host);
+    }
+    box.classList.remove('signed');
+    box.textContent = '';
+    var strong = document.createElement('strong');
+    strong.textContent = reason === 'expired' ? 'Key expired.' : 'Key not loaded.';
+    box.appendChild(strong);
+    box.appendChild(document.createTextNode(' ' + msg));
+    var a = document.createElement('a');
+    var onSubpage = location.pathname.indexOf('/pages/') !== -1;
+    a.href = reason === 'expired' ? (onSubpage ? 'account' : 'pages/account') : location.href;
+    a.textContent = reason === 'expired' ? 'Regenerate it on your account page.' : 'Reload the page to try again.';
+    box.appendChild(a);
+  }
+
+  function clearKeyProblem() {
+    var box = document.getElementById('hfd-key-problem');
+    if (box) box.remove();
+  }
+
+  async function fill(opts) {
     // Normalise first so .ekey is the single thing we fill, whether the page
     // author wrote the span or wrote bare text in a code block.
     try { wrapPlaceholderText(document); } catch (e) {}
     var spans = document.querySelectorAll('.ekey, .placeholder');
     if (!spans.length) return;
-    var key = await resolveApiKey();
-    if (!key) return;
+    var res = await resolveApiKey(opts);
+    var key = res && res.key;
+    if (!key) {
+      if (res && res.reason && res.reason !== 'signed_out') showKeyProblem(res.reason, res.detail);
+      return;
+    }
+    clearKeyProblem();
     for (var i = 0; i < spans.length; i++) {
       var el = spans[i];
       var txt = (el.textContent || '').trim();
@@ -1003,4 +1100,36 @@
   } else {
     fill();
   }
+
+  // A sign-in the page did not witness. Two ways a page ends up showing the
+  // user's name with the snippets still on their placeholders, both measured in
+  // Ahmed's own Chrome on 2026-09-22 (the popup path in the SAME tab was proven
+  // to fill all 4 snippets 384 ms after the login event — so it is the OTHER
+  // routes that were silent):
+  //   1. Back/forward restore. The navbar's own `pageshow` handler repaints the
+  //      name from the restored SDK state; the snippets are whatever they were
+  //      when the page was frozen — a signed-out fill.
+  //   2. Sign-in in another tab. The SDK's storage listener only propagates
+  //      LOGOUT across tabs (ekd_rt removed); a login elsewhere reaches this tab
+  //      only when it is next looked at.
+  // Both are answered the same way: re-run the fill, forced, when the page comes
+  // back into view. The resolver's own gate keeps this free for a signed-out
+  // visitor (no session marker → no request), and a page whose snippets are
+  // already filled is skipped outright.
+  function refillIfStale() {
+    var spans = document.querySelectorAll('.ekey');
+    if (!spans.length) return;
+    for (var i = 0; i < spans.length; i++) if (spans[i].hasAttribute('data-real-key')) return;
+    if (!safeGet('hfd_session') && !safeGet('ekd_rt')) return;
+    fill({ force: true });
+  }
+  window.addEventListener('pageshow', function (e) { if (e.persisted) refillIfStale(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') refillIfStale();
+  });
+  window.addEventListener('storage', function (e) {
+    // The refresh token appearing in localStorage is exactly "a sign-in happened
+    // in another tab"; nothing else on this site writes that key.
+    if (e && e.key === 'ekd_rt' && e.newValue) refillIfStale();
+  });
 })();
