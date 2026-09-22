@@ -394,7 +394,12 @@
               if (window.HFDKeys && window.HFDKeys.refill) {
                 var deliberate = !!(detail && detail.deliberate);
                 try { window.HFDKeys.refill(deliberate); } catch (e) {}
-                setTimeout(function () { try { window.HFDKeys.refill(false); } catch (e) {} }, 2500);
+                // The 2.5 s retry exists for a DELIBERATE popup sign-in whose token
+                // the SDK is still adopting. On the automatic resume the page-load
+                // resolution already awaited the SDK, so a retry there could only
+                // repeat a definitive miss — for an expired key that was a second
+                // key-route request (and audit row) per view (AR-114 residual a).
+                if (deliberate) setTimeout(function () { try { window.HFDKeys.refill(false); } catch (e) {} }, 2500);
               }
             });
             window.EKD.on('logout', function () { paintUserWidget(); });
@@ -458,6 +463,10 @@
   }
 
   function renderWidget(navLinks, user, mode) {
+    // The prose "your account page" links follow THIS verdict — the one the
+    // server gave — so a family session is sent to the family account page and
+    // a dead marker sends nobody anywhere it cannot sign in.
+    try { if (window.HFDKeys && window.HFDKeys.linksForMode) window.HFDKeys.linksForMode(user ? mode : null); } catch (e) {}
     var existing = document.getElementById('nav-user-widget');
     if (existing) existing.remove();
     var li = document.createElement('li');
@@ -912,10 +921,17 @@
       .catch(function () { if (timer) clearTimeout(timer); return { key: null, reason: 'error' }; });
     keyPromise = bounded;
     bounded.then(function (res) {
-      if (!(res && res.key) && keyPromise === bounded) keyPromise = null;   // never cache a miss
+      if (!(res && res.key) && keyPromise === bounded) { keyPromise = null; lastMissAt = Date.now(); }   // never cache a miss
     });
     return bounded;
   }
+  // When the last resolution ended in a definitive miss. A NON-forced refill that
+  // arrives moments later (the SDK's resume 'login' event lands right after the
+  // page-load resolution it shares a refresh with) would only repeat that miss —
+  // and for an expired key every repeat is another key-route request and audit
+  // row. Forced refills (a deliberate sign-in) ignore this.
+  var lastMissAt = 0;
+  var MISS_QUIET_MS = 3000;
 
   // Replace placeholder TEXT inside snippet blocks with a marked span, so pages
   // that never adopted the .ekey convention (pages/api.html) are covered too.
@@ -1164,19 +1180,30 @@
   // web-session page — a family (popup) session lands there and is told "not
   // logged in". The navbar already sends a family session to the family account
   // page; the prose links must agree with it. Same R66 class as the injectors.
-  function retargetAccountLinks() {
-    var familyOnly = !safeGet('hfd_session') && !!safeGet('ekd_rt');
-    if (!familyOnly) return;
-    var links = document.querySelectorAll('a[href="account"], a[href="pages/account"], a[href="/pages/account"]');
+  //
+  // Driven by the navbar's VERDICT (renderWidget's mode: 'ekd' | 'legacy' | null),
+  // not by the marker: a dead ekd_rt used to retarget the links at DOMContentLoaded
+  // while the navbar, a moment later, read "Sign in" (AR-114 residual b — the same
+  // marker-versus-server split R1082 is about). Idempotent and reversible: the
+  // original href is kept, so a later verdict can put it back.
+  function linksForMode(mode) {
+    var links = document.querySelectorAll('a[data-hfd-account-link], a[href="account"], a[href="pages/account"], a[href="/pages/account"]');
     for (var i = 0; i < links.length; i++) {
-      if (links[i].closest('#nav-user-widget')) continue;      // the navbar owns its own link
-      links[i].href = 'https://accounts.elkassabgidata.com/account';
-      links[i].target = '_blank';
-      links[i].rel = 'noopener';
+      var a = links[i];
+      if (a.closest('#nav-user-widget')) continue;      // the navbar owns its own link
+      if (!a.hasAttribute('data-hfd-account-link')) a.setAttribute('data-hfd-account-link', a.getAttribute('href'));
+      if (mode === 'ekd') {
+        a.href = 'https://accounts.elkassabgidata.com/account';
+        a.target = '_blank';
+        a.rel = 'noopener';
+      } else {
+        a.setAttribute('href', a.getAttribute('data-hfd-account-link'));
+        a.removeAttribute('target');
+        a.removeAttribute('rel');
+      }
     }
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', retargetAccountLinks);
-  else retargetAccountLinks();
+  window.HFDKeys.linksForMode = linksForMode;
 
   // `force` discards an in-flight resolution. Pass it ONLY for a sign-in the page
   // could not have foreseen (a deliberate popup login on a signed-out page). For
@@ -1189,6 +1216,7 @@
     if (!spans.length) return;
     for (var i = 0; i < spans.length; i++) if (spans[i].hasAttribute('data-real-key')) return;
     if (!safeGet('hfd_session') && !safeGet('ekd_rt')) return;
+    if (!force && (Date.now() - lastMissAt) < MISS_QUIET_MS) return;   // a definitive miss moments ago
     fill({ force: !!force });
   }
   window.HFDKeys.refill = refillIfStale;
