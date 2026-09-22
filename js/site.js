@@ -1069,9 +1069,19 @@
     try { wrapPlaceholderText(document); } catch (e) {}
     var spans = document.querySelectorAll('.ekey, .placeholder');
     if (!spans.length) return;
-    var res = await resolveApiKey(opts);
+    var mine = resolveApiKey(opts);
+    var res = await mine;
     var key = res && res.key;
     if (!key) {
+      // A miss from a SUPERSEDED resolution is not news. A forced fill (deliberate
+      // sign-in) replaces keyPromise while an older resolution is still pending;
+      // when that older one later times out, this call continues here — and must
+      // not re-open the problem box over snippets the newer fill has since filled.
+      // Two guards: the resolution is no longer the current one, or the snippets
+      // are already filled (the stronger statement — never a box over a filled page).
+      if (keyPromise && keyPromise !== mine) return;
+      var already = document.querySelectorAll('.ekey[data-real-key]');
+      if (already.length) { clearKeyProblem(); return; }
       if (res && res.reason && res.reason !== 'signed_out') showKeyProblem(res.reason, res.detail);
       return;
     }
