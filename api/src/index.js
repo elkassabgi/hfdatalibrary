@@ -2962,6 +2962,18 @@ async function validateFamilyToken(request, env) {
   const reg = await getRegistry(env);
   const client = reg.get(origin);
   if (!client || client.status !== 'active') return null;
+  // PARITY WITH WEB SESSIONS — the missing half of the 30-day key policy.
+  // getSessionUser() extends api_key_expires_at on every web-session request
+  // (touchApiKeyExpiry, guarded to at most one write per user per 15 days). This
+  // path never did, so an account that only ever arrives through the family
+  // popup had a key that LAPSED while its owner was actively signed in — and
+  // /v1/auth/api-key then refused it. Measured 2026-09-22 (D1, users table,
+  // small-table read): 1,145 of 2,183 active accounts (52.4%) held an expired
+  // key that day. Same predicate, same write, same actor: a validated family
+  // token is the user, and the touch revives the key they already own — it
+  // mints nothing. Cost: one PK-predicated UPDATE that writes 0 rows except once
+  // per user per 15 days.
+  await touchApiKeyExpiry(env, row);
   return { ...row, api_key: null, isFamilyToken: true };
 }
 

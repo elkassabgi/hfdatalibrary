@@ -155,13 +155,63 @@
       } catch (e) { alert('Connection error'); }
     }
 
+    // The panel used to exist for a legacy (hfd_session) sign-in only: a visitor
+    // signed in through the family popup saw no panel at all on the page that
+    // documents the key — the same blind spot the snippet filler had (R1081).
+    // The family route goes through window.HFDKeys (js/site.js), which resolves
+    // the key for either mode and, when it cannot, says why. Regenerate stays a
+    // web-session action on the worker (handleRegenerateKey → getSessionUser),
+    // so a family session is sent to the family account page for that instead.
+    function renderFamilyKeyState(res) {
+      const el = document.getElementById('api-key-info');
+      if (!el) return;
+      const acct = 'https://accounts.elkassabgidata.com/account';
+      if (res && res.key) {
+        renderApiKey({ api_key: res.key, api_key_expires_at: res.expires || null });
+        // Swap the web-only Regenerate button for the family account link.
+        const btn = el.querySelector('button[onclick="regenerateKey()"]');
+        if (btn) {
+          const a = document.createElement('a');
+          a.href = acct; a.target = '_blank'; a.rel = 'noopener';
+          a.className = btn.className; a.style.cssText = btn.style.cssText;
+          a.textContent = 'Regenerate (account page)';
+          btn.replaceWith(a);
+        }
+        return;
+      }
+      if (!res || res.reason === 'signed_out') return;
+      el.textContent = '';
+      const p = document.createElement('p');
+      p.style.cssText = 'margin-bottom:0.5rem;';
+      const strong = document.createElement('strong');
+      strong.textContent = res.reason === 'expired' ? 'Your API key has expired.' : 'Your API key could not be loaded.';
+      p.appendChild(strong);
+      p.appendChild(document.createTextNode(res.reason === 'expired'
+        ? ' Keys expire every 30 days. Regenerate it on your '
+        : (res.detail ? ' (' + res.detail + ') ' : ' ') + 'Reload the page, or open your '));
+      const a = document.createElement('a');
+      a.href = acct; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'account page';
+      p.appendChild(a);
+      p.appendChild(document.createTextNode('.'));
+      el.appendChild(p);
+    }
+
     (async function() {
       const token = localStorage.getItem('hfd_session');
-      if (!token) return;
-      try {
-        const r = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
-        if (r.ok) renderApiKey(await r.json());
-      } catch (e) {}
+      if (token) {
+        try {
+          const r = await fetch('https://api.hfdatalibrary.com/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+          if (r.ok) { renderApiKey(await r.json()); return; }
+        } catch (e) {}
+      }
+      // Family session (or a legacy session the server no longer accepts): ask the
+      // shared resolver. site.js loads after this inline script, so wait for it.
+      let tries = 0;
+      const timer = setInterval(async function () {
+        if (!window.HFDKeys || typeof window.HFDKeys.resolve !== 'function') { if (++tries > 40) clearInterval(timer); return; }
+        clearInterval(timer);
+        try { renderFamilyKeyState(await window.HFDKeys.resolve()); } catch (e) {}
+      }, 100);
     })();
     </script>
 

@@ -839,7 +839,7 @@
       if (hasLegacy) {
         try {
           var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + safeGet('hfd_session') } });
-          if (r.ok) { var k = keyFrom(await r.json()); if (k) return { key: k }; }
+          if (r.ok) { var j1 = await r.json(); var k = keyFrom(j1); if (k) return { key: k, expires: j1.api_key_expires_at || null }; }
           else lastDetail = 'session check returned HTTP ' + r.status;
         } catch (e) { lastDetail = 'network error'; }
       }
@@ -857,7 +857,7 @@
             else {
               var r3 = await fetch(API_BASE + '/v1/auth/api-key', { headers: { 'Authorization': 'Bearer ' + at } });
               var j3 = null; try { j3 = await r3.json(); } catch (e) { j3 = null; }
-              if (r3.ok) { var k3 = keyFrom(j3); if (k3) return { key: k3 }; lastDetail = 'no key in reply'; }
+              if (r3.ok) { var k3 = keyFrom(j3); if (k3) return { key: k3, expires: j3.api_key_expires_at || null }; lastDetail = 'no key in reply'; }
               else lastDetail = (j3 && typeof j3.error === 'string') ? j3.error : ('HTTP ' + r3.status);
               // A 404 from that route is the worker refusing to hand back a LAPSED key
               // — the one case with a specific remedy, so it gets a specific reason.
@@ -995,8 +995,15 @@
     box.appendChild(document.createTextNode(' ' + msg));
     var a = document.createElement('a');
     var onSubpage = location.pathname.indexOf('/pages/') !== -1;
-    a.href = reason === 'expired' ? (onSubpage ? 'account' : 'pages/account') : location.href;
+    // Mode-aware: hf's own pages/account.html and its Regenerate button are web-
+    // session only (handleRegenerateKey authenticates via getSessionUser), so a
+    // family session sent there is told "not logged in". The family account page
+    // on accounts.elkassabgidata.com is the one that accepts their session.
+    var familyOnly = !safeGet('hfd_session') && !!safeGet('ekd_rt');
+    var accountHref = familyOnly ? 'https://accounts.elkassabgidata.com/account' : (onSubpage ? 'account' : 'pages/account');
+    a.href = reason === 'expired' ? accountHref : location.href;
     a.textContent = reason === 'expired' ? 'Regenerate it on your account page.' : 'Reload the page to try again.';
+    if (familyOnly && reason === 'expired') { a.target = '_blank'; a.rel = 'noopener'; }
     box.appendChild(a);
   }
 
@@ -1036,7 +1043,15 @@
     announce(true);
   }
 
-  window.HFDKeys = { get: resolveApiKey, fill: fill };
+  // get()     → the key string or null (a window API other pages may rely on;
+  //             its shape stays what it was).
+  // resolve() → the full { key, reason, detail } result, for callers that want
+  //             to render the reason themselves (pages/api.html's key panel).
+  window.HFDKeys = {
+    get: function (opts) { return resolveApiKey(opts).then(function (r) { return (r && r.key) || null; }); },
+    resolve: resolveApiKey,
+    fill: fill
+  };
 
   // ── Saving a file without tripping Chrome's automatic-downloads block ───────
   // Every ordinary way a page starts a download — a programmatic <a download>
