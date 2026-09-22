@@ -1131,6 +1131,25 @@
   // back into view. The resolver's own gate keeps this free for a signed-out
   // visitor (no session marker → no request), and a page whose snippets are
   // already filled is skipped outright.
+  // Static "your account page" links in prose (mcp, ai-prompts: "regenerate your
+  // key from your account page") point at hf's pages/account.html, which is a
+  // web-session page — a family (popup) session lands there and is told "not
+  // logged in". The navbar already sends a family session to the family account
+  // page; the prose links must agree with it. Same R66 class as the injectors.
+  function retargetAccountLinks() {
+    var familyOnly = !safeGet('hfd_session') && !!safeGet('ekd_rt');
+    if (!familyOnly) return;
+    var links = document.querySelectorAll('a[href="account"], a[href="pages/account"], a[href="/pages/account"]');
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].closest('#nav-user-widget')) continue;      // the navbar owns its own link
+      links[i].href = 'https://accounts.elkassabgidata.com/account';
+      links[i].target = '_blank';
+      links[i].rel = 'noopener';
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', retargetAccountLinks);
+  else retargetAccountLinks();
+
   function refillIfStale() {
     var spans = document.querySelectorAll('.ekey');
     if (!spans.length) return;
