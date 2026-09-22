@@ -67,6 +67,13 @@ def _quality_bytes(vars_path: Path) -> bytes:
 
 
 def main() -> None:
+    # RETIRED 2026-09-14 (review AR-079): this bulk uploader writes served variables/quality objects with
+    # df.to_parquet directly, so it bypasses r2_client.upload_parquet - the citation and IEX attribution
+    # metadata and the large_string type pin (ledger R938). No workflow calls it; the 510 objects it wrote on
+    # 2026-07-01 are its only output. Served variables are written by variables_sync.py (the daily) and
+    # resync_variables.py (repairs), both through upload_parquet. Re-enable only after routing it there.
+    raise SystemExit("upload_variables.py is retired: it bypasses r2_client.upload_parquet. Use variables_sync.py "
+                     "or resync_variables.py, which write through upload_parquet.")
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", choices=["clean", "raw", "both"], default="both")
     ap.add_argument("--dry-run", action="store_true")
