@@ -386,9 +386,15 @@
               // cached — a page-load lookup that gave up before this sign-in existed.
               // force discards that; the delayed second pass covers a token that the
               // SDK is still adopting when the event fires.
-              if (window.HFDKeys) {
-                try { window.HFDKeys.fill({ force: true }); } catch (e) {}
-                setTimeout(function () { try { window.HFDKeys.fill({ force: true }); } catch (e) {} }, 2500);
+              // Through the "nothing filled yet" guard, and forced only for a
+              // DELIBERATE sign-in: the SDK also emits this event for the automatic
+              // resume on every page load, where the page-load fill is already in
+              // flight and a forced duplicate just spends a second and third
+              // key-route request per view (R1082).
+              if (window.HFDKeys && window.HFDKeys.refill) {
+                var deliberate = !!(detail && detail.deliberate);
+                try { window.HFDKeys.refill(deliberate); } catch (e) {}
+                setTimeout(function () { try { window.HFDKeys.refill(false); } catch (e) {} }, 2500);
               }
             });
             window.EKD.on('logout', function () { paintUserWidget(); });
@@ -835,11 +841,20 @@
       // page can never think it is signed in while this thinks otherwise.
       if (!hasLegacy && !hasFamily) return { key: null, reason: 'signed_out' };
       var lastDetail = '';
+      // A marker is not a session. The navbar decides "signed in" from the SERVER
+      // (a validated /v1/auth/me, or an SDK token) and purges a marker the server
+      // rejects; the first version of this decided from the marker alone, so a
+      // stale hfd_session or a dead ekd_rt produced "You are signed in, but…"
+      // under a navbar reading "Sign in" (R1082). Each route now records whether
+      // its marker turned out dead; if every present marker is dead and nothing
+      // succeeded, the answer is the navbar's own: signed out.
+      var legacyDead = false, familyDead = false, tokenObtained = false;
       // (1) legacy bearer
       if (hasLegacy) {
         try {
           var r = await fetch(API_BASE + '/v1/auth/me', { headers: { 'Authorization': 'Bearer ' + safeGet('hfd_session') } });
-          if (r.ok) { var j1 = await r.json(); var k = keyFrom(j1); if (k) return { key: k, expires: j1.api_key_expires_at || null }; }
+          if (r.ok) { var j1 = await r.json(); var k = keyFrom(j1); if (k) return { key: k, expires: j1.api_key_expires_at || null }; tokenObtained = true; lastDetail = 'no key on this account'; }
+          else if (r.status === 401) legacyDead = true;
           else lastDetail = 'session check returned HTTP ' + r.status;
         } catch (e) { lastDetail = 'network error'; }
       }
@@ -853,8 +868,11 @@
           else if (typeof ekd.getAccessToken !== 'function') lastDetail = 'sign-in SDK has no token API';
           else {
             var at = await ekd.getAccessToken();
-            if (!at) lastDetail = 'sign-in expired';
+            // No token off a present marker means the SDK's refresh was refused and
+            // it has (or is about to have) cleared the marker: a dead session.
+            if (!at) { familyDead = true; lastDetail = 'sign-in expired'; }
             else {
+              tokenObtained = true;
               var r3 = await fetch(API_BASE + '/v1/auth/api-key', { headers: { 'Authorization': 'Bearer ' + at } });
               var j3 = null; try { j3 = await r3.json(); } catch (e) { j3 = null; }
               if (r3.ok) { var k3 = keyFrom(j3); if (k3) return { key: k3, expires: j3.api_key_expires_at || null }; lastDetail = 'no key in reply'; }
@@ -872,9 +890,13 @@
       if (hasLegacy || !hasFamily) {
         try {
           var r2 = await fetch(API_BASE + '/v1/auth/me', { credentials: 'include' });
-          if (r2.ok) { var k2 = keyFrom(await r2.json()); if (k2) return { key: k2 }; }
+          if (r2.ok) { var j2 = await r2.json(); var k2 = keyFrom(j2); if (k2) return { key: k2, expires: j2.api_key_expires_at || null }; }
         } catch (e) {}
       }
+      // Every marker that was present is dead, and no route ever held a token:
+      // that is "signed out" by the server's verdict, whatever localStorage says.
+      var allDead = (!hasLegacy || legacyDead) && (!hasFamily || familyDead);
+      if (allDead && !tokenObtained) return { key: null, reason: 'signed_out', detail: lastDetail };
       return { key: null, reason: 'unavailable', detail: lastDetail };
     })();
     // Bounded: a resolution that never settles (a refresh parked behind another
@@ -970,10 +992,16 @@
   // visitor — for them the page's own placeholder wording is already the truth.
   function showKeyProblem(reason, detail) {
     var msg;
+    // "You are signed in" is said only when the navbar has actually painted a
+    // signed-in user (its dropdown exists) — the navbar's verdict comes from the
+    // server, this module's from markers, and the two must never disagree on
+    // the page (R1082).
+    var navSignedIn = !!document.getElementById('user-dropdown');
+    var lead = navSignedIn ? 'You are signed in, but your' : 'Your';
     if (reason === 'expired') {
-      msg = 'You are signed in, but your API key has expired, so it cannot be filled in below. ';
+      msg = lead + ' API key has expired, so it cannot be filled in below. ';
     } else if (reason === 'timeout' || reason === 'unavailable' || reason === 'error') {
-      msg = 'You are signed in, but your API key could not be loaded' + (detail ? ' (' + detail + ')' : '') + '. ';
+      msg = lead + ' API key could not be loaded' + (detail ? ' (' + detail + ')' : '') + '. ';
     } else {
       return;
     }
@@ -1150,13 +1178,20 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', retargetAccountLinks);
   else retargetAccountLinks();
 
-  function refillIfStale() {
+  // `force` discards an in-flight resolution. Pass it ONLY for a sign-in the page
+  // could not have foreseen (a deliberate popup login on a signed-out page). For
+  // the automatic resume the SDK performs on every page load, the page-load
+  // resolution is already waiting on that very SDK and will complete by itself —
+  // forcing there made three key-route requests per family view instead of one
+  // (R1082), each an audit row and a rate-limit write.
+  function refillIfStale(force) {
     var spans = document.querySelectorAll('.ekey');
     if (!spans.length) return;
     for (var i = 0; i < spans.length; i++) if (spans[i].hasAttribute('data-real-key')) return;
     if (!safeGet('hfd_session') && !safeGet('ekd_rt')) return;
-    fill({ force: true });
+    fill({ force: !!force });
   }
+  window.HFDKeys.refill = refillIfStale;
   window.addEventListener('pageshow', function (e) { if (e.persisted) refillIfStale(); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') refillIfStale();

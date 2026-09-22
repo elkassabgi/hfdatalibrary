@@ -103,7 +103,12 @@
       const expired = daysLeft !== null && daysLeft < 0;
       const warn = daysLeft !== null && daysLeft <= 7 && daysLeft >= 0;
 
-      const expiryText = expired
+      // `expires` can be null (a route that returned the key without its expiry);
+      // the last branch used to dereference it and throw, and the throw was caught
+      // silently by the caller — a panel that simply never appeared.
+      const expiryText = expires === null
+        ? '<span style="color:#6b7280;">expiry not reported</span>'
+        : expired
         ? '<span style="color:#dc2626; font-weight:600;">EXPIRED ' + Math.abs(daysLeft) + ' days ago</span>'
         : warn
         ? '<span style="color:#d97706; font-weight:600;">Expires in ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + '</span>'
