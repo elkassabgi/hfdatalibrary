@@ -920,6 +920,7 @@
     ]).then(function (res) { if (timer) clearTimeout(timer); return res; })
       .catch(function () { if (timer) clearTimeout(timer); return { key: null, reason: 'error' }; });
     keyPromise = bounded;
+    lastStarted = bounded;      // never nulled — the generation marker fill() compares against
     bounded.then(function (res) {
       if (!(res && res.key) && keyPromise === bounded) {
         keyPromise = null;                                              // never cache a miss
@@ -938,6 +939,11 @@
   // row. Forced refills (a deliberate sign-in) ignore this.
   var lastMissAt = 0;
   var MISS_QUIET_MS = 3000;
+  // The most recently STARTED resolution. keyPromise cannot serve as the
+  // generation marker because the never-cache-a-miss handler nulls it — so a
+  // stale resolution timing out after a newer one had already missed compared
+  // itself against null, passed, and overwrote the newer, correct box (R1083).
+  var lastStarted = null;
 
   // Replace placeholder TEXT inside snippet blocks with a marked span, so pages
   // that never adopted the .ekey convention (pages/api.html) are covered too.
@@ -1079,7 +1085,7 @@
       // not re-open the problem box over snippets the newer fill has since filled.
       // Two guards: the resolution is no longer the current one, or the snippets
       // are already filled (the stronger statement — never a box over a filled page).
-      if (keyPromise && keyPromise !== mine) return;
+      if (mine !== lastStarted) return;                 // superseded — a newer resolution has started since
       var already = document.querySelectorAll('.ekey[data-real-key]');
       if (already.length) { clearKeyProblem(); return; }
       if (res && res.reason && res.reason !== 'signed_out') showKeyProblem(res.reason, res.detail);
